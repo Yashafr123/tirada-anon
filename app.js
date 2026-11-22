@@ -985,6 +985,7 @@ function ghostHtml(){
 function ghostEl(){
   var el = document.createElement("div");
   el.className = "ghost-marker";
+  el.style.zIndex = "3"; /* your ghost renders (and takes taps) above place badges and friend markers */
   el.innerHTML = ghostHtml();
   return el;
 }
@@ -1128,6 +1129,22 @@ function initMapLayers(){
     }
   });
   map.on("click", "places-dots", function(e){
+    /* Marker priority: a tap that lands on ANY DOM marker (your ghost, a
+       friend, a place badge) belongs to that marker — its own popup is
+       already toggling — so a place dot underneath must not hijack it. */
+    var tgt = e.originalEvent && e.originalEvent.target;
+    if (tgt && tgt.closest && tgt.closest(".maplibregl-marker")) return;
+    /* Near-miss taps just beside your ghost (within its screen radius)
+       also belong to the ghost: open the GHOST popup, not the place's. */
+    if (meMarker){
+      var gp = map.project(meMarker.getLngLat());
+      var gdx = gp.x - e.point.x, gdy = gp.y - e.point.y;
+      if (gdx * gdx + gdy * gdy <= 32 * 32){
+        var mp = meMarker.getPopup();
+        if (mp && !mp.isOpen()) meMarker.togglePopup();
+        return;
+      }
+    }
     var f = e.features && e.features[0];
     if (!f) return;
     var pr = f.properties;
@@ -1179,8 +1196,12 @@ function initMap(){
   map = new maplibregl.Map({
     container: "map",
     style: window.TIRADA_MAP_STYLE,
-    bounds: [[34.05, 29.45], [35.95, 33.35]], /* whole country first: Israel dotted with places; zoom into a city for badges */
-    fitBoundsOptions: { padding: 8 },
+    /* Start on the USER'S city (state.city, city zoom) — never the whole
+       country. state.city is always set (karmiel by default), and mePos()
+       is that city's ghost spot; once real geolocation is granted and a
+       position arrives, applyGeo() re-centers on the user himself. */
+    center: [mePos().lng, mePos().lat],
+    zoom: 13,
     minZoom: 6, maxZoom: 18,
     attributionControl: false, /* no attribution bar (Yasha's call) */
     dragRotate: false, pitchWithRotate: false, touchPitch: false,
