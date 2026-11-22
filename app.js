@@ -17,10 +17,16 @@ var AVATARS = [
   { e:"🐼", bg:"radial-gradient(circle at 32% 28%, #e7e5e4, #57534e)" },
   { e:"😈", bg:"radial-gradient(circle at 32% 28%, #fecdd3, #9f1239)" }
 ];
-function emojiImg(e, cls){
-  return '<img class="' + cls + '" data-emoji="' + e + '" src="https://emojicdn.elk.sh/' +
-    encodeURIComponent(e) + '?style=apple" alt="' + e + '" loading="lazy">';
+function emojiUrl(e){
+  return "https://emojicdn.elk.sh/" + encodeURIComponent(e) + "?style=apple";
 }
+function emojiImg(e, cls){
+  return '<img class="' + cls + '" data-emoji="' + e + '" src="' + emojiUrl(e) + '" alt="' + e + '" loading="lazy">';
+}
+/* Warm the CDN cache for all ghost faces at startup, so the avatar
+   picker and the map marker show pictures instantly — not empty
+   circles while the CDN wakes up. */
+AVATARS.forEach(function(av){ var im = new Image(); im.src = emojiUrl(av.e); });
 function avatarFace(idx){
   var av = AVATARS[idx % AVATARS.length];
   return '<span class="avface" style="background:' + av.bg + '">' + emojiImg(av.e, "avimg") + '</span>';
@@ -1448,14 +1454,45 @@ $("#avatarFile").addEventListener("change", function(){
   img.onerror = function(){ URL.revokeObjectURL(url); toast("Не вышло прочитать фото"); };
   img.src = url;
 });
+/* ================= Nick validation =================
+   A ghost name may be written in Russian, Hebrew or Latin letters —
+   plus digits, a space, a hyphen and an underscore. Length 2–24.
+   Anything else is rejected with a plain-language reason; characters
+   are never silently stripped or cut. */
+var NICK_RE = /^[A-Za-zА-Яа-яЁё\u0590-\u05FF0-9 _-]+$/;
+function validateNick(raw){
+  var v = (raw == null ? "" : String(raw)).trim();
+  if (!v) return { ok: false, error: "Ник не может быть пустым" };
+  if (v.length < 2) return { ok: false, error: "Ник слишком короткий — нужно минимум 2 символа" };
+  if (v.length > 24) return { ok: false, error: "Ник слишком длинный — максимум 24 символа" };
+  if (!NICK_RE.test(v)) return { ok: false, error: "В нике можно только буквы (русские, иврит или латиница), цифры, пробел, дефис и подчёркивание" };
+  return { ok: true, value: v };
+}
+window.__validateNick = validateNick;
 $("#nickInput").addEventListener("change", function(){
-  state.nick = this.value.trim().slice(0, 24);
+  if (!this.value.trim()){
+    state.nick = "";
+    this.value = "";
+    lsSet("tirada_nick", state.nick);
+    renderMyAvatar();
+    scheduleCloudSync();
+    renderAccount();
+    toast("Ник сброшен");
+    return;
+  }
+  var chk = validateNick(this.value);
+  if (!chk.ok){
+    toast(chk.error);
+    this.value = state.nick || "";
+    return;
+  }
+  state.nick = chk.value;
   this.value = state.nick;
   lsSet("tirada_nick", state.nick);
   renderMyAvatar();
   scheduleCloudSync();
   renderAccount();
-  toast(state.nick ? "Ник сохранён: " + state.nick : "Ник сброшен");
+  toast("Ник сохранён: " + state.nick);
 });
 $("#shareGeoBtn").addEventListener("click", function(){
   if (!state.geo){ toast("Сначала включи геолокацию"); return; }
@@ -2202,9 +2239,14 @@ $("#authSubmit").addEventListener("click", function(){
   if (!db){ authShowError("Облако сейчас недоступно. Приложение работает и без входа 👻"); return; }
   var email = $("#authEmail").value.trim();
   var pass = $("#authPass").value;
-  var name = $("#authName").value.trim().slice(0, 24);
+  var name = $("#authName").value.trim();
   if (!email || email.indexOf("@") < 1){ authShowError("Введи email — настоящий, с @."); return; }
   if (!pass || pass.length < 6){ authShowError("Пароль слишком короткий — нужно минимум 6 символов."); return; }
+  if (authMode === "up" && name){
+    var nchk = validateNick(name);
+    if (!nchk.ok){ authShowError(nchk.error); return; }
+    name = nchk.value;
+  }
   var btn = $("#authSubmit");
   btn.disabled = true;
   btn.textContent = "Секунду…";
@@ -2297,6 +2339,7 @@ $("#geoBtn").addEventListener("click", function(){ requestGeo(true); });
 /* ================= Go ================= */
 renderCityList();
 renderMyAvatar();
+renderAvatarGrid();
 renderStats();
 renderTasks();
 var nickInit = $("#nickInput"); if (nickInit) nickInit.value = state.nick || "";

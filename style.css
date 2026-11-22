@@ -659,6 +659,13 @@ body.shots *,body.shots *::before,body.shots *::after{
 /* ===== v2.2: Emoji CDN images (emojicdn.elk.sh, style=apple) ===== */
 .avimg{width:80%;height:80%;object-fit:contain;display:block;pointer-events:none}
 .avfont{display:inline-flex;align-items:center;justify-content:center;line-height:1}
+/* If a CDN face fails, the font glyph replaces it — it must fill the
+   circle like the picture would, not sit tiny in a corner. */
+.avface{font-size:26px}
+.ghost-big .avface{font-size:62px}
+.avatar-cell .avface{font-size:34px}
+.ghost-round .avface{font-size:30px}
+.avfont{width:100%;height:100%}
 .place-art{font-size:56px}
 .art-img{
   width:80px;height:80px;object-fit:contain;position:relative;z-index:1;
