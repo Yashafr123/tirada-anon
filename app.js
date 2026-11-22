@@ -1522,44 +1522,69 @@ $("#avatarFile").addEventListener("change", function(){
 });
 /* ================= Nick validation =================
    A ghost name may be written in Russian, Hebrew or Latin letters —
-   plus digits, a space, a hyphen and an underscore. Length 2–24.
+   plus digits, a space, a hyphen, an underscore and an apostrophe
+   (' or ’ — Hebrew names are often typed with one). Length 2–24.
    Anything else is rejected with a plain-language reason; characters
    are never silently stripped or cut. */
-var NICK_RE = /^[A-Za-zА-Яа-яЁё\u0590-\u05FF0-9 _-]+$/;
+var NICK_RE = /^[A-Za-zА-Яа-яЁё\u0590-\u05FF0-9 _'\u2019-]+$/;
 function validateNick(raw){
   var v = (raw == null ? "" : String(raw)).trim();
   if (!v) return { ok: false, error: "Ник не может быть пустым" };
   if (v.length < 2) return { ok: false, error: "Ник слишком короткий — нужно минимум 2 символа" };
   if (v.length > 24) return { ok: false, error: "Ник слишком длинный — максимум 24 символа" };
-  if (!NICK_RE.test(v)) return { ok: false, error: "В нике можно только буквы (русские, иврит или латиница), цифры, пробел, дефис и подчёркивание" };
+  if (!NICK_RE.test(v)) return { ok: false, error: "В нике можно только буквы (русские, иврит или латиница), цифры, пробел, дефис, подчёркивание и апостроф" };
   return { ok: true, value: v };
 }
 window.__validateNick = validateNick;
-$("#nickInput").addEventListener("change", function(){
-  if (!this.value.trim()){
+/* A rejected nick must not look like a silent "doesn't work": besides the
+   toast, the reason stays visible as a red line under the field and the
+   field keeps a red outline until the next input. */
+function showNickError(msg){
+  var err = $("#nickError"), inp = $("#nickInput");
+  if (err){ err.textContent = msg; err.hidden = false; }
+  if (inp) inp.classList.add("nick-invalid");
+}
+function clearNickError(){
+  var err = $("#nickError"), inp = $("#nickInput");
+  if (err){ err.textContent = ""; err.hidden = true; }
+  if (inp) inp.classList.remove("nick-invalid");
+}
+function applyNick(){
+  var inp = $("#nickInput");
+  if (!inp) return;
+  if (inp.value.trim() === (state.nick || "")){ clearNickError(); return; }
+  if (!inp.value.trim()){
     state.nick = "";
-    this.value = "";
+    inp.value = "";
     lsSet("tirada_nick", state.nick);
     renderMyAvatar();
     scheduleCloudSync();
     renderAccount();
+    clearNickError();
     toast("Ник сброшен");
     return;
   }
-  var chk = validateNick(this.value);
+  var chk = validateNick(inp.value);
   if (!chk.ok){
     toast(chk.error);
-    this.value = state.nick || "";
+    showNickError(chk.error);
+    inp.value = state.nick || "";
     return;
   }
   state.nick = chk.value;
-  this.value = state.nick;
+  inp.value = state.nick;
   lsSet("tirada_nick", state.nick);
   renderMyAvatar();
   scheduleCloudSync();
   renderAccount();
+  clearNickError();
   toast("Ник сохранён: " + state.nick);
+}
+$("#nickInput").addEventListener("change", applyNick);
+$("#nickInput").addEventListener("keydown", function(e){
+  if (e.key === "Enter"){ e.preventDefault(); applyNick(); this.blur(); }
 });
+$("#nickInput").addEventListener("input", clearNickError);
 $("#shareGeoBtn").addEventListener("click", function(){
   if (!state.geo){ toast("Сначала включи геолокацию"); return; }
   var link = "https://maps.google.com/?q=" + state.geo.lat + "," + state.geo.lng;
@@ -1579,7 +1604,13 @@ function showScreen(name){
   if (name === "profile" && typeof cloudUser !== "undefined" && cloudUser) friendsLoad();
 }
 $$(".tab").forEach(function(t){
-  t.addEventListener("click", function(){ showScreen(t.getAttribute("data-screen")); });
+  t.addEventListener("click", function(){
+    /* If the nick field was edited but never confirmed (no blur/Enter on a
+       phone), apply it before leaving the profile — when it is valid. */
+    var ni = $("#nickInput");
+    if (ni && ni.value.trim() !== (state.nick || "")) applyNick();
+    showScreen(t.getAttribute("data-screen"));
+  });
 });
 
 /* ================= City picker ================= */

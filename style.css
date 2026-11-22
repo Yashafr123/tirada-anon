@@ -1284,6 +1284,11 @@ body::before{
   background:var(--card2);color:var(--text);font-size:15px;outline:none;text-align:center;
 }
 .nick-input:focus{border-color:#ff1e1e}
+.nick-input.nick-invalid{border-color:#ff2a2a;box-shadow:0 0 0 3px rgba(255,42,42,.18)}
+.nick-error{
+  margin-top:7px;font-size:13px;line-height:1.35;color:#ff6b6b;text-align:center;
+}
+.nick-error[hidden]{display:none}
 .achip small{display:block;font-size:10.5px;font-weight:600;color:var(--muted);margin-top:2px}
 .achip.locked{color:#8a8f98;background:rgba(255,255,255,.04);border-color:var(--line);filter:grayscale(.7)}
 .btn-share-geo{

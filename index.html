@@ -6,8 +6,11 @@
 <title>TiradA anon — куда тусить в городе. Прямо сейчас. Анонимно.</title>
 <meta name="description" content="TiradA anon — живой радар движа в твоём городе. Места, друзья-призраки и маршрут на вечер в один тап.">
 <meta name="theme-color" content="#050505">
+<!-- CACHE-BUSTING RULE: app.js and style.css are loaded with a ?v=N version
+     query so phones never run a stale cached build. INCREMENT N on EVERY
+     release that changes app.js or style.css (keep both in sync). -->
 <link rel="stylesheet" href="maplibre-gl.css">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=6">
 <link rel="icon" type="image/jpeg" href="tirada-logo.jpg">
 </head>
 <body>
@@ -135,6 +138,7 @@
           <div class="ghost-vibe">Без настоящего имени. Без лишнего. Только вайб.</div>
           <label class="nick-label" for="nickInput">Ник призрака</label>
           <input class="nick-input" id="nickInput" type="text" maxlength="24" placeholder="Как тебя звать на радаре?" autocomplete="off">
+          <div class="nick-error" id="nickError" role="alert" hidden></div>
           <div class="ghost-stats">
             <div class="gstat"><b id="statNights">0</b><span id="statNightsLabel">ночей в деле</span></div>
             <div class="gstat"><b id="statPlaces">0</b><span id="statPlacesLabel">мест открыто</span></div>
@@ -344,6 +348,6 @@
 <script src="map-style.js"></script>
 <script src="vendor-supabase.js"></script>
 <script src="supabase.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
