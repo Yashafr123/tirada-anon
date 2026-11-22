@@ -528,6 +528,31 @@ var RAW = {
 };
 
 function buildPlaces(city){
+  /* Real venues from Google (places-data.js) win over the generated
+     catalogue: real names, coordinates, ratings, review counts and price
+     levels. Heat stays the honest time-of-day model; song/task/tags are
+     still assigned per type, as before. */
+  var real = [];
+  if (typeof REAL_PLACES !== "undefined" && REAL_PLACES[city.id]) real = real.concat(REAL_PLACES[city.id]);
+  /* Hand-added local spots (CUSTOM_PLACES, source:"local") merge into the
+     same list: no Google rating/reviews/prices, marked «🏠 Местное место». */
+  if (typeof CUSTOM_PLACES !== "undefined" && CUSTOM_PLACES[city.id]) real = real.concat(CUSTOM_PLACES[city.id]);
+  if (real.length){
+    return real.map(function(rp, i){
+      var t = TYPES[rp.type] || TYPES.cafe;
+      var rand = rng(hashStr(city.id + "|" + rp.name));
+      var song = t.songs[Math.floor(rand() * t.songs.length)];
+      var task = t.tasks[Math.floor(rand() * t.tasks.length)];
+      return { id: city.id + "-" + i, name: rp.name, type: rp.type, typeLabel: t.label,
+        lat: rp.lat, lng: rp.lng, heat: 35 + Math.floor(rand() * 55),
+        rating: (typeof rp.rating === "number" ? rp.rating : null),
+        reviews: rp.reviews || null,
+        priceLevel: (rp.priceLevel === undefined ? null : rp.priceLevel),
+        address: rp.address || null, real: rp.source !== "local", local: rp.source === "local",
+        tags: t.tags.slice(), song: song, task: task,
+        art: t.art, grad: t.grad };
+    });
+  }
   if (city.id === "karmiel"){
     return KARMIEL_PLACES.map(function(p,i){
       var t = TYPES[p.type];
@@ -673,6 +698,7 @@ function distFromText(p){
 /* ================= Place details (demo data, deterministic) ================= */
 var STREET_POOL = ["ул. Герцль","ул. Вайцман","ул. Бен-Гурион","ул. Жаботински","ул. Бялик","ул. Соколов","ул. Ротшильд","ул. Дизенгоф","ул. Аленби","ул. Левински"];
 function placeAddress(p){
+  if (p.real || p.local) return p.address || "";
   var r = rng(hashStr("addr|" + p.id));
   return STREET_POOL[Math.floor(r() * STREET_POOL.length)] + ", " + (1 + Math.floor(r() * 120));
 }
@@ -692,7 +718,21 @@ function openStatus(p){
   return { open: false, text: "Откроется в " + fmtHour(o) };
 }
 var PRICES = { bar:"₪₪", club:"₪₪₪", cafe:"₪", beach:"Бесплатно", park:"Бесплатно", view:"Бесплатно", prom:"Бесплатно", roof:"₪₪₪", hookah:"₪₪", stage:"₪₪", market:"₪" };
-function priceOf(p){ return PRICES[p.type] || "₪"; }
+/* Google price levels for real venues: 0 free … 4 very expensive.
+   null level → no price line at all, nothing is invented. */
+var PRICE_LEVELS = { 0:"Бесплатно", 1:"₪ · недорого", 2:"₪₪ · умеренно", 3:"₪₪₪ · дорого", 4:"₪₪₪₪ · очень дорого" };
+function priceOf(p){
+  if (p.real){
+    if (p.priceLevel === null || p.priceLevel === undefined) return "";
+    return PRICE_LEVELS[p.priceLevel] || "";
+  }
+  return PRICES[p.type] || "₪";
+}
+function ratingText(p){ return (typeof p.rating === "number" && p.rating > 0) ? fmtRating(p.rating) : "—"; }
+function reviewsText(p){
+  if (!p.real || !p.reviews) return "";
+  return String(p.reviews).replace(/\B(?=(\d{3})+(?!\d))/g, " ") + " " + pluralRu(p.reviews, ["отзыв", "отзыва", "отзывов"]);
+}
 function isFree(p){ return priceOf(p) === "Бесплатно"; }
 function ageOf(p){ return (p.type === "bar" || p.type === "club" || p.type === "roof") ? "18+" : "Можно всем"; }
 
@@ -868,17 +908,19 @@ function openPlaceSheet(p){
       '<span class="art-heat ' + heatClass(h) + '">' + heatBadge(p) + "</span></div>" +
     '<div class="ps-body">' +
       '<div class="ps-name">' + p.name + "</div>" +
-      '<div class="ps-sub">' + p.typeLabel + " · ★ " + fmtRating(p.rating) + "</div>" +
+      '<div class="ps-sub">' + (p.local ? p.typeLabel + " · 🏠 Местное место" : p.typeLabel + " · ★ " + ratingText(p) + (reviewsText(p) ? " · " + reviewsText(p) : "")) + "</div>" +
       '<div class="ps-open ' + (st.open ? "is-open" : "is-closed") + '">' + st.text + "</div>" +
       (friendsAtPlaceNames(p.id).length ? '<div class="ps-friends">Здесь сейчас: 👻 ' + friendsAtPlaceNames(p.id).map(escHtml).join(", ") + "</div>" : "") +
       '<div class="ps-rows">' +
-        '<div class="ps-row"><span>📍 Адрес</span><b>' + placeAddress(p) + ", " + state.city.name + "</b></div>" +
+        '<div class="ps-row"><span>📍 Адрес</span><b>' + (placeAddress(p) ? placeAddress(p) + ", " : "") + state.city.name + "</b></div>" +
         '<div class="ps-row"><span>🕐 Часы</span><b>' + hoursText(p) + "</b></div>" +
-        '<div class="ps-row"><span>💸 Цены</span><b>' + priceOf(p) + "</b></div>" +
+        (priceOf(p) ? '<div class="ps-row"><span>💸 Цены</span><b>' + priceOf(p) + "</b></div>" : "") +
         '<div class="ps-row"><span>🔞 Возраст</span><b>' + ageOf(p) + "</b></div>" +
         '<div class="ps-row"><span>📏 Расстояние</span><b>' + distFromText(p) + "</b></div>" +
         '<div class="ps-row"><span>🎵 Вайб места</span><b>' + p.song + "</b></div>" +
       "</div>" +
+      (p.real ? '<div class="ps-google">★ Рейтинг, отзывы и цены — по данным Google</div>' : "") +
+      (p.local ? '<div class="ps-google">🏠 Местное место — добавлено по словам местных, без рейтинга Google</div>' : "") +
       '<div class="ps-task">🎯 ' + p.task + "</div>" +
       '<div class="ps-actions">' +
         '<button class="btn-yes" id="psRoute">🚗 Маршрут</button>' +
@@ -1033,7 +1075,7 @@ function popupHtml(p){
   return '<div class="pop-card">' +
     '<div class="pop-head ' + hc + '"><div class="pop-name">' + p.name + '</div>' +
     '<span class="pop-heat-badge ' + hc + '">' + heatBadge(p) + '</span></div>' +
-    '<div class="pop-meta">★ ' + fmtRating(p.rating) + ' · ' + distFromText(p) + '</div>' +
+    '<div class="pop-meta">' + (p.local ? '🏠 Местное место' : '★ ' + ratingText(p) + (reviewsText(p) ? ' · ' + reviewsText(p) : '')) + ' · ' + distFromText(p) + '</div>' +
     '<div class="pop-song">🎵 Вайб места: ' + p.song + '</div>' +
     '<button class="pop-btn route-btn" data-route-place="' + p.id + '">🚗 Маршрут сюда</button>' +
     '<button class="pop-btn" data-place-open="' + p.id + '">Смотреть место →</button></div>';
@@ -1492,6 +1534,14 @@ function placeCard(p, i){
   var fav = !!state.favs[p.id];
   var fHere = friendsAtPlaceNames(p.id);
   var fBadge = fHere.length ? '<div class="friend-here-badge">👻 Здесь: ' + fHere.map(escHtml).join(", ") + '</div>' : '';
+  var realMeta = "";
+  if (p.real){
+    var bits = [];
+    if (p.reviews) bits.push("👥 " + reviewsText(p));
+    if (priceOf(p)) bits.push("💰 Цены: " + priceOf(p));
+    if (bits.length) realMeta = '<div class="place-real-meta">' + bits.join(" · ") + '</div>';
+  }
+  if (p.local) realMeta = '<div class="place-real-meta">🏠 Местное место</div>';
   return '<article class="place-card' + (p.id === TOP_ID ? ' top-card' : '') + '" data-id="' + p.id + '" style="animation-delay:' + (Math.min(i, 10) * 0.06).toFixed(2) + 's">' +
     '<div class="place-art" style="background:' + p.grad + '">' + emojiImg(p.art, "art-img") + badge +
     '<button class="fav-btn' + (fav ? " active" : "") + '" data-fav="' + p.id + '" aria-label="В избранное">' + (fav ? "❤️" : "🤍") + '</button>' +
@@ -1499,9 +1549,9 @@ function placeCard(p, i){
     '<div class="place-body">' + fBadge +
       '<div class="place-top"><div><div class="place-name">' + p.name + '</div>' +
       '<div class="place-type">' + p.typeLabel + ' · ' + distFromText(p) + '</div></div>' +
-      '<div class="place-rating">★ ' + fmtRating(p.rating) + '</div></div>' +
+      '<div class="place-rating">' + (p.local ? "🏠" : "★ " + ratingText(p)) + '</div></div>' +
       '<div class="heat-row"><div class="heat-bar"><div class="heat-fill ' + hc + '" style="width:' + h + '%"></div></div>' +
-      '<div class="heat-label ' + hc + '">' + heatBadge(p) + '</div></div>' +
+      '<div class="heat-label ' + hc + '">' + heatBadge(p) + '</div></div>' + realMeta +
       '<div class="tags">' + p.tags.map(function(t){ return '<span class="tag">' + t + '</span>'; }).join("") + '</div>' +
       '<div class="song">🎵 <b>' + p.song + '</b> — трек под настроение места</div>' +
       '<button class="btn-route-to" data-route-card="' + p.id + '">🚗 Маршрут</button>' +
@@ -1516,7 +1566,7 @@ function renderPlaces(){
   else if (state.filter !== "all") list = list.filter(function(p){ return p.type === state.filter; });
   if (state.search) list = list.filter(function(p){ return p.name.toLowerCase().indexOf(state.search) >= 0; });
   if (state.sort === "near") list.sort(function(a,b){ return distKm(mePos(), a) - distKm(mePos(), b); });
-  else if (state.sort === "rating") list.sort(function(a,b){ return b.rating - a.rating; });
+  else if (state.sort === "rating") list.sort(function(a,b){ return (b.rating || 0) - (a.rating || 0); });
   else list.sort(function(a,b){ return heatOf(b) - heatOf(a); });
   /* Places where an accepted friend is hanging out right now float to
      the very top, keeping the chosen sort inside each group. */
