@@ -701,6 +701,7 @@ function saveStats(){ lsSet("tirada_stats", state.stats); scheduleCloudSync(); }
 function toggleFav(id){
   if (state.favs[id]) delete state.favs[id]; else state.favs[id] = 1;
   lsSet("tirada_favs", state.favs);
+  favsDirty = true;
   scheduleCloudSync();
   renderPlaces();
   toast(state.favs[id] ? "Добавлено в избранное ❤️" : "Убрано из избранного");
@@ -760,6 +761,13 @@ function myXp(){ return xpOfStats(state.stats); }
 function renderLevel(){
   var card = $("#levelCard"); if (!card) return;
   var xp = myXp(), lv = levelOf(xp), s = state.stats;
+  /* Milestone: a real level-up (vs the level this device last saw)
+     becomes a cloud event — friends and the user get a push. The
+     first sighting only seeds the marker, never fires. */
+  var prevLv = lsGet("tirada_ev_level", 0);
+  if (prevLv && lv.num > prevLv)
+    writeEvent("level_up", "⭐ " + myDisplayName() + " поднялся до уровня " + lv.num + " · " + lv.name);
+  if (lv.num !== prevLv) lsSet("tirada_ev_level", lv.num);
   var bEl = $("#levelBadge"); if (bEl) bEl.textContent = lv.num;
   var nEl2 = $("#levelName"); if (nEl2) nEl2.textContent = lv.name;
   var xEl = $("#levelXpText"); if (xEl) xEl.textContent = xp + " XP";
@@ -829,6 +837,18 @@ function renderStats(){
     { icon:"👻", name:"Первый друг", have: friendCount >= 1, need: "добавь первого друга в блоке «Друзья»" },
     { icon:"🥂", name:"Своя компания", have: friendCount >= 5, need: "ещё " + Math.max(0, 5 - friendCount) + " " + pluralRu(Math.max(0, 5 - friendCount), ["друг", "друга", "друзей"]) + " в друзья" }
   ];
+  /* Milestone: a badge that flips to earned for the first time on
+     this device becomes a cloud event (friends + the user pushed).
+     The first render only seeds the known set, never fires. */
+  var knownBadges = lsGet("tirada_ev_badges", null);
+  var haveNow = ach.filter(function(a){ return a.have; }).map(function(a){ return a.name; });
+  if (knownBadges){
+    haveNow.forEach(function(nm){
+      if (knownBadges.indexOf(nm) < 0)
+        writeEvent("badge", "🏅 " + myDisplayName() + " получил бейдж «" + nm + "»");
+    });
+  }
+  lsSet("tirada_ev_badges", haveNow);
   box.innerHTML = ach.map(function(a){
     return '<span class="achip' + (a.have ? "" : " locked") + '">' + a.icon + " " + a.name +
       (a.have ? "" : '<small>не хватает: ' + a.need + "</small>") + "</span>";
@@ -850,6 +870,7 @@ function openPlaceSheet(p){
       '<div class="ps-name">' + p.name + "</div>" +
       '<div class="ps-sub">' + p.typeLabel + " · ★ " + fmtRating(p.rating) + "</div>" +
       '<div class="ps-open ' + (st.open ? "is-open" : "is-closed") + '">' + st.text + "</div>" +
+      (friendsAtPlaceNames(p.id).length ? '<div class="ps-friends">Здесь сейчас: 👻 ' + friendsAtPlaceNames(p.id).map(escHtml).join(", ") + "</div>" : "") +
       '<div class="ps-rows">' +
         '<div class="ps-row"><span>📍 Адрес</span><b>' + placeAddress(p) + ", " + state.city.name + "</b></div>" +
         '<div class="ps-row"><span>🕐 Часы</span><b>' + hoursText(p) + "</b></div>" +
@@ -874,6 +895,8 @@ function openPlaceSheet(p){
   $("#psRoute").addEventListener("click", function(){ closePlaceSheet(); routeTo(p); });
   $("#psFav").addEventListener("click", function(){ toggleFav(p.id); openPlaceSheet(p); });
   $("#psCheckin").addEventListener("click", function(){
+    if (eventCooldownOk("tirada_ev_checkin", p.id, 30 * 60000))
+      writeEvent("checkin", "📍 " + myDisplayName() + " чекинится: " + p.name);
     startPhotoFlow(p, function(){ toast("Ты здесь! 📍 Чек-ин засчитан"); });
   });
   loadPlaceGallery(p.id);
@@ -906,6 +929,7 @@ function startGeoWatch(){
     if (meMarker) meMarker.setLngLat([state.geo.lng, state.geo.lat]);
     trackMySpeed(state.geo.lat, state.geo.lng);
     cloudGeoSync();
+    checkSelfAtPlace();
   }, function(){}, { enableHighAccuracy: false, maximumAge: 60000, timeout: 20000 });
 }
 function applyGeo(lat, lng){
@@ -917,6 +941,7 @@ function applyGeo(lat, lng){
   if (meMarker) meMarker.setLngLat([lng, lat]);
   if (map) map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15), duration: 800 });
   cloudGeoSync();
+  checkSelfAtPlace();
   startGeoWatch();
 }
 function requestGeo(manual){
@@ -1465,11 +1490,13 @@ function placeCard(p, i){
   var badge = (p.id === TOP_ID) ? '<span class="art-badge">👑 ТОП движа</span>'
     : (h >= 85 ? '<span class="art-badge heat-badge">⚡ Сейчас жарко</span>' : '');
   var fav = !!state.favs[p.id];
+  var fHere = friendsAtPlaceNames(p.id);
+  var fBadge = fHere.length ? '<div class="friend-here-badge">👻 Здесь: ' + fHere.map(escHtml).join(", ") + '</div>' : '';
   return '<article class="place-card' + (p.id === TOP_ID ? ' top-card' : '') + '" data-id="' + p.id + '" style="animation-delay:' + (Math.min(i, 10) * 0.06).toFixed(2) + 's">' +
     '<div class="place-art" style="background:' + p.grad + '">' + emojiImg(p.art, "art-img") + badge +
     '<button class="fav-btn' + (fav ? " active" : "") + '" data-fav="' + p.id + '" aria-label="В избранное">' + (fav ? "❤️" : "🤍") + '</button>' +
     '<span class="art-heat ' + hc + '">' + heatBadge(p) + '</span></div>' +
-    '<div class="place-body">' +
+    '<div class="place-body">' + fBadge +
       '<div class="place-top"><div><div class="place-name">' + p.name + '</div>' +
       '<div class="place-type">' + p.typeLabel + ' · ' + distFromText(p) + '</div></div>' +
       '<div class="place-rating">★ ' + fmtRating(p.rating) + '</div></div>' +
@@ -1491,6 +1518,12 @@ function renderPlaces(){
   if (state.sort === "near") list.sort(function(a,b){ return distKm(mePos(), a) - distKm(mePos(), b); });
   else if (state.sort === "rating") list.sort(function(a,b){ return b.rating - a.rating; });
   else list.sort(function(a,b){ return heatOf(b) - heatOf(a); });
+  /* Places where an accepted friend is hanging out right now float to
+     the very top, keeping the chosen sort inside each group. */
+  if (Object.keys(friendsAtPlace).length){
+    var withF = list.filter(function(p){ return !!friendsAtPlace[p.id]; });
+    if (withF.length) list = withF.concat(list.filter(function(p){ return !friendsAtPlace[p.id]; }));
+  }
   $("#placesCount").textContent = "Показано " + list.length + " из " + all.length + " · " + state.city.name;
   if (!list.length){
     $("#placesList").innerHTML = '<div class="places-empty">' +
@@ -1806,6 +1839,7 @@ function showScreen(name){
   $$(".screen").forEach(function(s){ s.classList.toggle("active", s.id === "screen-" + name); });
   if (name === "map" && map) setTimeout(function(){ map.resize(); }, 60);
   if (name === "map") refreshFriendMarkers();
+  if (name === "places") renderPlaces();
   if (name === "profile" && typeof cloudUser !== "undefined" && cloudUser) friendsLoad();
 }
 $$(".tab").forEach(function(t){
@@ -2081,7 +2115,11 @@ function buildRoute(){
       state.routeDone[key][cb.getAttribute("data-task-check")] = cb.checked;
       lsSet("tirada_route_done", state.routeDone);
       renderRouteProgress();
-      if (routeDoneCount() === 3) toast("Маршрут пройден полностью 🎉");
+      if (routeDoneCount() === 3){
+        toast("Маршрут пройден полностью 🎉");
+        if (eventCooldownOk("tirada_ev_routedone", key, 7 * 24 * 3600000))
+          writeEvent("route_done", "🌙 " + myDisplayName() + " завершил маршрут на вечер");
+      }
     });
   });
 }
@@ -2368,6 +2406,7 @@ function renderTasks(){
           state.stats.quests++;
           saveStats(); renderStats();
           toast("Квест недели пройден! Бейдж в профиле 🏅");
+          writeEvent("quest_done", "🏆 " + myDisplayName() + " прошёл квест «" + weekQuest().theme + "»");
         } else { saveStats(); renderStats(); toast("Шаг квеста засчитан 🗺️"); }
         renderTasks();
       });
@@ -2404,6 +2443,9 @@ var db = window.TiradaDB || null;
 var SUPA_CFG = window.TiradaSupaCfg || { url: "", key: "" };
 var cloudUser = null, cloudSession = null, cloudSyncTimer = null,
     cloudHeartbeat = null, cloudVoteCounts = null, cloudBootedFor = null;
+/* Favorites sync: true while this session has fav changes the cloud
+   has not confirmed yet — applyRemoteProfile must not clobber them. */
+var favsDirty = false;
 
 function cloudStatsPayload(){
   return { nights: state.stats.nights, places: state.stats.places,
@@ -2441,6 +2483,8 @@ function cloudSyncNow(){
         showNickError(NICK_TAKEN_MSG);
         toast(NICK_TAKEN_MSG + " 👻");
       }
+    } else {
+      favsDirty = false;
     }
   }, function(){});
 }
@@ -2494,9 +2538,20 @@ function applyRemoteProfile(row){
     state.stats = rs; saveStats();
   }
   if (Array.isArray(row.favorites)){
-    state.favs = {};
-    row.favorites.forEach(function(id){ state.favs[id] = 1; });
-    lsSet("tirada_favs", state.favs);
+    if (favsDirty){
+      /* This session has fav changes the cloud has not confirmed:
+         union them with the cloud array (never lose a local toggle)
+         and let the already-scheduled sync push the merged set back.
+         Once a sync lands, the cloud array is the source of truth and
+         replaces the local one — deletions included. */
+      row.favorites.forEach(function(id){ state.favs[id] = 1; });
+      lsSet("tirada_favs", state.favs);
+      scheduleCloudSync();
+    } else {
+      state.favs = {};
+      row.favorites.forEach(function(id){ state.favs[id] = 1; });
+      lsSet("tirada_favs", state.favs);
+    }
   }
   if (row.city && row.city !== state.city.id && PLACES_BY_CITY[row.city]) applyCitySilent(row.city);
   if (row.mode && MODES[row.mode] && row.mode !== state.mode) setMode(row.mode);
@@ -2712,9 +2767,8 @@ function publishPhoto(blob, place, vis){
         return false;
       }
       var url = db.storage.from("place-photos").getPublicUrl(path).data.publicUrl;
-      return db.from("place_photos").insert(
-        { place_id: place.id, user_id: cloudUser.id, url: url, visibility: vis }
-      ).then(function(r2){
+      var row = { place_id: place.id, place_name: place.name, user_id: cloudUser.id, url: url, visibility: vis };
+      var afterInsert = function(r2){
         if (r2.error){
           console.warn("TiradA photo insert:", r2.error.message);
           toast("Фото не опубликовалось — чек-ин всё равно засчитан");
@@ -2722,6 +2776,15 @@ function publishPhoto(blob, place, vis){
         }
         refreshCityPhotoCount();
         return true;
+      };
+      return db.from("place_photos").insert(row).then(function(r2){
+        if (r2.error && /place_name/.test(r2.error.message || "")){
+          /* place_name arrives with the parent's SQL — until then
+             publish the old way instead of losing the photo. */
+          delete row.place_name;
+          return db.from("place_photos").insert(row).then(afterInsert, function(){ return false; });
+        }
+        return afterInsert(r2);
       }, function(){ return false; });
     }, function(){ toast("Фото не загрузилось в облако — чек-ин всё равно засчитан"); return false; });
 }
@@ -2961,6 +3024,10 @@ function cloudLoadMyVote(){
    already uses for everyone: profiles.online (heartbeat while signed in). */
 var friendsRows = [], friendsProfiles = {}, friendSearchResults = [],
     friendsLoaded = false, friendsLoading = false;
+/* Friends-at-places state (filled by computeFriendsAtPlaces):
+   friendsAtPlace: placeId -> [{id, name}]; friendsPlaceOf: friendId ->
+   {place, cityId, cityName}; friendsPlacesSig dedupes re-renders. */
+var friendsAtPlace = {}, friendsPlaceOf = {}, friendsPlacesSig = "";
 
 function escHtml(s){
   return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
@@ -3025,6 +3092,7 @@ function friendsLoad(){
       if (!list.length){
         friendsProfiles = {}; friendsLoaded = true;
         renderFriends(); renderFriendResults(); renderDealFriends();
+        updateFriendsAtPlaces();
         return;
       }
       var doneLoad = function(pr){
@@ -3036,6 +3104,7 @@ function friendsLoad(){
             if (friendsProfiles[id]){ friendsProfiles[id].lat = locs[id].lat; friendsProfiles[id].lng = locs[id].lng; }
           });
           friendsLoaded = true; renderFriends(); renderFriendResults(); renderDealFriends();
+          updateFriendsAtPlaces();
         });
       };
       return db.from("profiles").select("id,name,avatar,avatar_url,city,online,last_seen,mode,stats").in("id", list)
@@ -3237,6 +3306,7 @@ function friendsReset(){
   friendsLoaded = false;
   var r = $("#friendResults"); if (r) r.innerHTML = "";
   renderFriends(); updateReqBadges();
+  updateFriendsAtPlaces();
 }
 /* Accepted friends who are "in deal" right now (profiles.online) for the
    «Я в деле» overlay. Empty list → the overlay keeps its old empty text. */
@@ -3413,7 +3483,7 @@ function refreshFriendMarkers(){
       var ids = {};
       res.data.forEach(function(r){ ids[(r.requester === cloudUser.id) ? r.addressee : r.requester] = 1; });
       var list = Object.keys(ids);
-      if (!list.length){ syncFriendMarkers({}); finish(); return; }
+      if (!list.length){ syncFriendMarkers({}); updateFriendsAtPlaces(); finish(); return; }
       return db.from("profiles")
         .select("id,name,avatar,avatar_url,online,last_seen,mode,stats")
         .in("id", list)
@@ -3429,6 +3499,7 @@ function refreshFriendMarkers(){
               if (friendsProfiles[id]){ friendsProfiles[id].lat = locs[id].lat; friendsProfiles[id].lng = locs[id].lng; }
             });
             syncFriendMarkers(byId);
+            updateFriendsAtPlaces();
             /* keep the friends list on the profile screen fresh too */
             var ps = $("#screen-profile");
             if (ps && ps.classList.contains("active")) renderFriends();
@@ -3448,6 +3519,78 @@ function stopFriendMapTimer(){
 function clearFriendMarkers(){
   Object.keys(friendMarkers).forEach(function(id){ friendMarkers[id].remove(); });
   friendMarkers = {};
+}
+
+/* ================= Friends at places («Места» screen) =================
+   An accepted friend whose real coordinates (profile_locations, merged
+   into friendsProfiles by the 30 s location polls) sit within 150 m of
+   a place — in ANY city, not just the selected one — is "hanging out"
+   there. The Places screen then gets a shimmering strip at the very
+   top («👻 Имя тусит: Место · Город», tap opens that place), places
+   with friends float to the top of the list with a pulsing «Здесь»
+   badge on the card, and the place sheet names who is there. Hidden
+   ghosts (mode ghost/offline) never appear — same rule as the map.
+   Recomputed on every friends/locations refresh; the list re-renders
+   only when the set of matches actually changes. */
+var FRIEND_PLACE_RADIUS_KM = 0.15;
+function friendsAtPlaceNames(placeId){
+  return (friendsAtPlace[placeId] || []).map(function(f){ return f.name; });
+}
+function computeFriendsAtPlaces(){
+  friendsAtPlace = {}; friendsPlaceOf = {};
+  Object.keys(friendsProfiles).forEach(function(id){
+    var p = friendsProfiles[id];
+    if (!p) return;
+    var rel = friendRelation(id);
+    if (!rel || rel.kind !== "friend") return;         /* accepted only */
+    if (p.mode === "ghost" || p.mode === "offline") return;
+    if (typeof p.lat !== "number" || typeof p.lng !== "number") return;
+    var best = null, bestD = FRIEND_PLACE_RADIUS_KM;
+    CITIES.forEach(function(c){
+      (PLACES_BY_CITY[c.id] || []).forEach(function(pl){
+        var d = distKm(p, pl);
+        if (d <= bestD){ bestD = d; best = { place: pl, cityId: c.id, cityName: c.name }; }
+      });
+    });
+    if (best){
+      friendsPlaceOf[id] = best;
+      (friendsAtPlace[best.place.id] = friendsAtPlace[best.place.id] || [])
+        .push({ id: id, name: p.name || "Призрак" });
+    }
+  });
+  var sig = Object.keys(friendsPlaceOf).sort().map(function(id){
+    return id + "@" + friendsPlaceOf[id].place.id;
+  }).join("|");
+  var changed = sig !== friendsPlacesSig;
+  friendsPlacesSig = sig;
+  return changed;
+}
+function renderFriendsPlacesBar(){
+  var bar = $("#friendsPlacesBar");
+  if (!bar) return;
+  var ids = Object.keys(friendsPlaceOf);
+  if (!ids.length){ bar.hidden = true; bar.innerHTML = ""; return; }
+  bar.innerHTML = ids.map(function(id){
+    var f = friendsPlaceOf[id], p = friendsProfiles[id];
+    return '<button class="fp-chip" data-fp-place="' + f.place.id + '">' +
+      '<span class="fp-ghost">👻</span>' +
+      '<span class="fp-text"><b>' + escHtml((p && p.name) || "Призрак") + '</b> тусит: ' +
+      escHtml(f.place.name) + ' · ' + escHtml(f.cityName) + '</span>' +
+      '<span class="fp-arrow">→</span></button>';
+  }).join("");
+  bar.hidden = false;
+  bar.querySelectorAll("[data-fp-place]").forEach(function(b){
+    b.addEventListener("click", function(){ openPlaceSheetById(b.getAttribute("data-fp-place")); });
+  });
+}
+function updateFriendsAtPlaces(){
+  var changed = computeFriendsAtPlaces();
+  renderFriendsPlacesBar();
+  if (changed){
+    var ps = $("#screen-places");
+    if (ps && ps.classList.contains("active")) renderPlaces();
+  }
+  checkFriendsNear();
 }
 var friendsLoginBtn = $("#friendsLoginBtn");
 if (friendsLoginBtn) friendsLoginBtn.addEventListener("click", function(){ $("#loginModal").hidden = false; });
@@ -3536,6 +3679,7 @@ function renderAccount(){
   }
   renderFriends();
   loadMyPhotos();
+  refreshPushUI();
 }
 function cloudOnSignedIn(user){
   if (!user || cloudBootedFor === user.id) { renderAccount(); return; }
@@ -3554,6 +3698,184 @@ function cloudOnSignedIn(user){
     .then(function(){ refreshFriendMarkers(); startFriendMapTimer(); maybeShowAddFriend(); },
           function(){ refreshFriendMarkers(); startFriendMapTimer(); maybeShowAddFriend(); });
 }
+/* ================= Cloud events (fan-out pushes) =================
+   Live moments and milestones are written by the client into the
+   events table; a database webhook hands each row to the send-push
+   Edge Function, which pushes it to the actor's accepted friends
+   (friend_near goes only to the author; level_up and badge also reach
+   the author). The table arrives with the parent's SQL — until then
+   the insert simply fails in silence and nothing breaks. Per-key
+   cooldowns in localStorage keep one moment from spamming friends. */
+function writeEvent(kind, text){
+  if (!db || !cloudUser) return;
+  try {
+    db.from("events").insert({ user_id: cloudUser.id, kind: kind, text: text })
+      .then(function(){}, function(){});
+  } catch (e) {}
+}
+function eventCooldownOk(mapKey, id, ms){
+  var m = lsGet(mapKey, {});
+  var now = Date.now();
+  if (m[id] && now - m[id] < ms) return false;
+  m[id] = now; lsSet(mapKey, m);
+  return true;
+}
+function myDisplayName(){ return state.nick || "Призрак"; }
+/* I am physically at a place (real geolocation only): tell friends,
+   at most once per place per 2 hours. */
+var selfPlaceCheckAt = 0;
+function checkSelfAtPlace(){
+  if (!db || !cloudUser || !state.geo) return;
+  var now = Date.now();
+  if (now - selfPlaceCheckAt < 60000) return;
+  selfPlaceCheckAt = now;
+  var best = null, bestD = FRIEND_PLACE_RADIUS_KM;
+  CITIES.forEach(function(c){
+    (PLACES_BY_CITY[c.id] || []).forEach(function(pl){
+      var d = distKm(state.geo, pl);
+      if (d <= bestD){ bestD = d; best = { place: pl, cityName: c.name }; }
+    });
+  });
+  if (!best) return;
+  if (!eventCooldownOk("tirada_ev_atplace", best.place.id, 2 * 3600000)) return;
+  writeEvent("at_place", "👻 " + myDisplayName() + " тусит: " + best.place.name + " · " + best.cityName);
+}
+/* An accepted friend is within 500 m of me: the event is written from
+   MY name, so the function pushes it only back to me. Once per friend
+   per hour. */
+function checkFriendsNear(){
+  if (!db || !cloudUser || !state.geo) return;
+  Object.keys(friendsProfiles).forEach(function(id){
+    var p = friendsProfiles[id];
+    if (!p || typeof p.lat !== "number" || typeof p.lng !== "number") return;
+    if (p.mode === "ghost" || p.mode === "offline") return;
+    var rel = friendRelation(id);
+    if (!rel || rel.kind !== "friend") return;
+    if (distKm(state.geo, p) > 0.5) return;
+    if (!eventCooldownOk("tirada_ev_near", id, 3600000)) return;
+    writeEvent("friend_near", "👻 " + (p.name || "Призрак") + " рядом с тобой");
+  });
+}
+
+/* ================= Web Push notifications =================
+   Free Web Push (no Firebase): the browser subscription lives in the
+   push_subscriptions table (RLS: each user manages only their own
+   rows), and a Supabase Edge Function (send-push, fired by a database
+   webhook on public.friendships) delivers «новая заявка в друзья» and
+   «вы теперь друзья». The VAPID public key is safe to ship in the
+   client; the private key never leaves the function's env. */
+var VAPID_PUBLIC_KEY = "BMDuNZYxROMcehS42c_mdrJfBpMHqXVre6-A5JW7l0usgCNxZfTxBONkpVLRXjU_BlJdd1dI6zEElT-6qO6Z-Fs";
+var pushReg = null;
+function pushSupported(){
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+/* iOS: web push exists only from 16.4 and only inside the installed
+   home-screen app — in plain Safari there is no PushManager at all,
+   so detect that case and say honestly what to do instead of
+   claiming push is "not supported". No App Store build: the user's
+   rule forbids the paid developer account. */
+function isIOS(){
+  return /iphone|ipad|ipod/i.test(navigator.userAgent || "") ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function isStandalone(){
+  return window.navigator.standalone === true ||
+    (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+}
+function urlB64ToUint8(b64){
+  var pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  var raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  var out = new Uint8Array(raw.length);
+  for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+if (pushSupported()){
+  navigator.serviceWorker.register("sw.js").then(function(reg){
+    pushReg = reg; refreshPushUI();
+  }, function(err){ console.warn("TiradA SW:", err && err.message); });
+}
+function refreshPushUI(){
+  var btn = $("#pushBtn"), note = $("#pushNote");
+  if (!btn) return;
+  if (isIOS() && !isStandalone()){
+    btn.disabled = true;
+    btn.textContent = "🔔 Уведомления — после установки";
+    if (note) note.textContent = "На iPhone сначала добавь приложение на домашний экран: «Поделиться» → «На экран „Домой“». Пуши на iOS работают только из установленной иконки (iOS 16.4 и новее) — таковы правила Apple, App Store для этого не нужен.";
+    return;
+  }
+  if (!pushSupported()){
+    btn.disabled = true;
+    btn.textContent = "🔕 Не поддерживается здесь";
+    if (note) note.textContent = "Этот браузер не умеет веб-пуши. Chrome на Android и на компьютере — умеет.";
+    return;
+  }
+  if (!cloudUser){
+    btn.disabled = true;
+    btn.textContent = "🔔 Включить уведомления";
+    if (note) note.textContent = "Войди в аккаунт — и уведомления будут прилетать пушем, даже когда приложение закрыто. Работают и без геолокации: пуш — это не GPS.";
+    return;
+  }
+  if (Notification.permission === "denied"){
+    btn.disabled = true;
+    btn.textContent = "🔕 Заблокированы в браузере";
+    if (note) note.textContent = "Разрешение на уведомления отклонено — его можно вернуть в настройках сайта в браузере.";
+    return;
+  }
+  btn.disabled = false;
+  var regP = pushReg ? Promise.resolve(pushReg) : navigator.serviceWorker.ready;
+  regP.then(function(reg){ return reg.pushManager.getSubscription(); }).then(function(sub){
+    var b2 = $("#pushBtn"), n2 = $("#pushNote");
+    if (!b2) return;
+    if (sub){
+      b2.textContent = "🔔 Уведомления включены";
+      b2.setAttribute("data-on", "1");
+      if (n2) n2.textContent = "Пуши летят на это устройство. Тап по кнопке — выключить. Работают и без геолокации.";
+    } else {
+      b2.textContent = "🔔 Включить уведомления";
+      b2.removeAttribute("data-on");
+      if (n2) n2.textContent = "Все события — заявки, друзья в сети и на карте, фото, чекины и вехи — пушем на это устройство. Работают и без геолокации.";
+    }
+  }, function(){});
+}
+function pushToggle(){
+  if (!pushSupported() || !cloudUser || !db) return;
+  var regP = pushReg ? Promise.resolve(pushReg) : navigator.serviceWorker.ready;
+  regP.then(function(reg){
+    return reg.pushManager.getSubscription().then(function(sub){
+      if (sub){
+        var ep = sub.endpoint;
+        return sub.unsubscribe().then(function(){
+          return db.from("push_subscriptions").delete().eq("endpoint", ep);
+        }).then(function(){
+          toast("Уведомления выключены 🔕");
+          refreshPushUI();
+        });
+      }
+      return Notification.requestPermission().then(function(perm){
+        if (perm !== "granted"){ toast("Без разрешения пуши не прилетят 🔔"); refreshPushUI(); return; }
+        return reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8(VAPID_PUBLIC_KEY)
+        }).then(function(nsub){
+          var j = nsub.toJSON();
+          return db.from("push_subscriptions").upsert({
+            user_id: cloudUser.id,
+            endpoint: nsub.endpoint,
+            p256dh: (j.keys || {}).p256dh || "",
+            auth: (j.keys || {}).auth || ""
+          }, { onConflict: "endpoint" }).then(function(res){
+            if (res && res.error) toast("Не вышло сохранить подписку — попробуй ещё раз");
+            else toast("Уведомления включены 🔔");
+            refreshPushUI();
+          });
+        });
+      });
+    });
+  }).catch(function(){ toast("Что-то пошло не так с уведомлениями"); refreshPushUI(); });
+}
+var pushBtnEl = $("#pushBtn");
+if (pushBtnEl) pushBtnEl.addEventListener("click", pushToggle);
+
 if (db){
   db.auth.getSession().then(function(r){
     var s = r.data && r.data.session;

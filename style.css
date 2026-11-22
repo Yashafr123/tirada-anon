@@ -1687,3 +1687,45 @@ body::before{
   box-shadow:0 0 10px rgba(255,30,30,.55);
 }
 .req-badge[hidden]{display:none}
+
+/* ===== Friends at places: shimmering strip, card badge, sheet line ===== */
+.friends-places-bar{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.friends-places-bar[hidden]{display:none}
+.fp-chip{
+  position:relative;overflow:hidden;display:flex;align-items:center;gap:10px;width:100%;
+  text-align:left;padding:12px 14px;border-radius:16px;cursor:pointer;color:#fff;
+  border:1px solid rgba(255,80,80,.55);
+  background:linear-gradient(110deg,#1a0508,#3d0a10 40%,#12060a);
+  box-shadow:0 6px 22px rgba(229,9,20,.28);
+  animation:fpPulse 2.2s ease-in-out infinite;
+  font:inherit;
+}
+.fp-chip::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(115deg,transparent 30%,rgba(255,120,110,.30) 48%,rgba(255,255,255,.16) 52%,transparent 70%);
+  transform:translateX(-130%);animation:fpShine 2.8s ease-in-out infinite;
+}
+@keyframes fpShine{0%{transform:translateX(-130%)}55%,100%{transform:translateX(130%)}}
+@keyframes fpPulse{0%,100%{box-shadow:0 6px 22px rgba(229,9,20,.22)}50%{box-shadow:0 6px 30px rgba(255,40,50,.52)}}
+.fp-ghost{font-size:20px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.6))}
+.fp-text{flex:1;font-size:14px;line-height:1.35}
+.fp-text b{font-weight:900}
+.fp-arrow{font-weight:900;color:#ff8f8a}
+.friend-here-badge{
+  display:inline-flex;align-items:center;gap:6px;margin-bottom:9px;
+  font-size:12px;font-weight:900;color:#fff;padding:5px 11px;border-radius:999px;
+  background:linear-gradient(90deg,#ff2213,#e50914);
+  box-shadow:0 4px 16px rgba(229,9,20,.5);
+  animation:badgePop 2.2s ease-in-out infinite;
+}
+.ps-friends{
+  margin-top:10px;font-size:14px;font-weight:800;color:#ffb3ae;
+  background:rgba(229,9,20,.12);border:1px solid rgba(255,80,80,.4);
+  padding:9px 12px;border-radius:12px;
+  animation:fpPulse 2.2s ease-in-out infinite;
+}
+
+/* ===== Web Push toggle (profile) ===== */
+.push-btn{width:100%;margin-bottom:10px}
+.push-btn[data-on="1"]{border-color:rgba(126,226,160,.55);color:#b9f4cd}
+.push-note{margin-bottom:0}

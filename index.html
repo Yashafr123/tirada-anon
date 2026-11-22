@@ -6,12 +6,18 @@
 <title>TiradA anon — куда тусить в городе. Прямо сейчас. Анонимно.</title>
 <meta name="description" content="TiradA anon — живой радар движа в твоём городе. Места, друзья-призраки и маршрут на вечер в один тап.">
 <meta name="theme-color" content="#050505">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TiradA">
 <!-- CACHE-BUSTING RULE: app.js and style.css are loaded with a ?v=N version
      query so phones never run a stale cached build. INCREMENT N on EVERY
      release that changes app.js or style.css (keep both in sync). -->
 <link rel="stylesheet" href="maplibre-gl.css">
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=13">
 <link rel="icon" type="image/jpeg" href="tirada-logo.jpg">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 </head>
 <body>
 
@@ -75,6 +81,7 @@
     <!-- === SCREEN: PLACES === -->
     <section class="screen" id="screen-places">
       <div class="screen-inner">
+        <div class="friends-places-bar" id="friendsPlacesBar" hidden></div>
         <div class="screen-head">
           <h2>Места <span class="grad-text">сейчас</span></h2>
           <span class="block-note" id="placesCount"></span>
@@ -175,6 +182,13 @@
             <div class="account-status">🟢 в сети — тебя видно в счётчике «Я в деле»</div>
             <button class="btn-alt" id="accountLogoutBtn">Выйти</button>
           </div>
+        </div>
+
+        <!-- Push notifications (Web Push API) -->
+        <div class="account-box push-box" id="pushBox">
+          <div class="mode-label">Уведомления</div>
+          <button class="btn-alt push-btn" id="pushBtn">🔔 Включить уведомления</button>
+          <p class="account-text push-note" id="pushNote">Все события города — пушем на это устройство, даже когда приложение закрыто. Работают и без геолокации.</p>
         </div>
 
         <!-- Friends (Supabase friendships) -->
@@ -427,6 +441,6 @@
 <script src="map-style.js"></script>
 <script src="vendor-supabase.js"></script>
 <script src="supabase.js"></script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>
