@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>TiradA anon — куда тусить в городе. Прямо сейчас. Анонимно.</title>
+<meta name="description" content="TiradA anon — живой радар движа в твоём городе. Места, друзья-призраки и маршрут на вечер в один тап.">
+<meta name="theme-color" content="#050505">
+<link rel="stylesheet" href="maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" type="image/jpeg" href="tirada-logo.jpg">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===== Header ===== -->
+  <header class="topbar">
+    <div class="topbar-row">
+      <div class="logo"><img class="logo-img" src="tirada-logo.jpg" alt="TIRADA">TiradA <span class="logo-anon">anon</span></div>
+      <div class="topbar-right">
+        <button class="city-chip" id="cityBtn">📍 <span id="cityName">Кармиэль</span> <span class="city-caret">▾</span></button>
+        <button class="btn-login" id="loginBtn">Войти</button>
+      </div>
+    </div>
+    <div class="live-counter">
+      <span class="live-dot"><span class="live-ping"></span>live</span>
+      <span id="counterText">сейчас в городе: …</span>
+    </div>
+  </header>
+
+  <!-- ===== Ticker ===== -->
+  <div class="ticker" aria-hidden="true">
+    <div class="ticker-track" id="tickerTrack"></div>
+  </div>
+
+  <!-- ===== Screens ===== -->
+  <main class="screens">
+
+    <!-- === SCREEN: MAP === -->
+    <section class="screen screen-map active" id="screen-map">
+      <div id="map" class="map"></div>
+
+      <!-- Legend: one small round "i" button in the corner, tip on tap -->
+      <button class="legend-info" id="legendInfo" aria-label="Легенда карты"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="7.8" r="1.5" fill="currentColor"/></svg></button>
+      <div class="legend-tip" id="legendTip" hidden>
+        <span><i class="lg lg-hot"></i>место — жарко</span>
+        <span><i class="lg lg-mid"></i>место — средне</span>
+        <span><i class="lg lg-low"></i>место — пусто</span>
+        <span><i class="lg lg-ghost"></i>кружок с аватаркой — это ты</span>
+      </div>
+
+      <!-- Edge zoom: fully invisible touch strips on BOTH edges — drag up = zoom in, down = zoom out -->
+      <div class="edge-zoom" id="edgeZoom" aria-hidden="true"></div>
+      <div class="edge-zoom left" id="edgeZoomL" aria-hidden="true"></div>
+
+      <!-- Route chip (Waze style): distance + time while a route is active -->
+      <div class="route-chip" id="routeChip" hidden>
+        <span class="route-chip-ico" id="routeChipIco">🚗</span>
+        <div class="route-chip-text"><b id="routeChipMain">—</b><span id="routeChipSub"></span></div>
+        <button class="route-chip-x" id="routeChipX" aria-label="Сбросить маршрут">✕</button>
+      </div>
+
+      <!-- Enable-geolocation button (visible only while geo is off / demo mode) -->
+      <button class="geo-btn" id="geoBtn">📍 Включить геолокацию</button>
+    </section>
+
+    <!-- === SCREEN: PLACES === -->
+    <section class="screen" id="screen-places">
+      <div class="screen-inner">
+        <div class="screen-head">
+          <h2>Места сейчас</h2>
+          <span class="block-note" id="placesCount"></span>
+        </div>
+        <div class="places-tools">
+          <input class="place-search" id="placeSearch" type="text" placeholder="🔎 Найти место…" autocomplete="off">
+          <select class="place-sort" id="placeSort" aria-label="Сортировка мест">
+            <option value="heat">По движу</option>
+            <option value="near">Рядом</option>
+            <option value="rating">По рейтингу</option>
+          </select>
+        </div>
+        <div class="filter-row" id="typeFilter"></div>
+        <div id="placesList" class="places"></div>
+      </div>
+    </section>
+
+    <!-- === SCREEN: ROUTE === -->
+    <section class="screen" id="screen-route">
+      <div class="screen-inner">
+        <div class="screen-head">
+          <h2>🌙 Маршрут на вечер</h2>
+        </div>
+        <p class="route-sub">Три точки, три задания — ночь собрана по городу <b id="routeCity">Кармиэль</b>. Не нравится расклад — пересобери.</p>
+        <div class="transport-switch" id="transportSwitch" role="group" aria-label="Транспорт">
+          <button class="transport-btn" data-transport="walk">🚶 Пешком</button>
+          <button class="transport-btn" data-transport="bus">🚌 Автобус</button>
+          <button class="transport-btn active" data-transport="car">🚗 Машина</button>
+        </div>
+        <button class="btn-route" id="routeBtn">🎲 Пересобрать маршрут</button>
+        <div id="routeBox" class="route-timeline"></div>
+        <button class="btn-share-route" id="routeShareBtn">📤 Поделиться маршрутом</button>
+
+        <div class="tasks-box">
+          <h3 class="tasks-title">🎯 Задание дня</h3>
+          <div class="daily-task" id="dailyTaskText"></div>
+          <button class="btn-yes" id="dailyDoneBtn">Выполнено ✓</button>
+          <div class="streak-line" id="streakLine"></div>
+
+          <h3 class="tasks-title">🗺️ Квест недели: <span id="questTheme"></span></h3>
+          <div class="quest-progress">
+            <div class="quest-bar"><div class="quest-fill" id="questFill"></div></div>
+            <span class="quest-progress-text" id="questProgressText"></span>
+          </div>
+          <div class="quest-steps" id="questSteps"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- === SCREEN: PROFILE === -->
+    <section class="screen" id="screen-profile">
+      <div class="screen-inner">
+        <div class="screen-head">
+          <h2>Мой призрак</h2>
+        </div>
+
+        <div class="ghost-card">
+          <button class="ghost-big" id="ghostBig" aria-label="Выбрать аватарку призрака"></button>
+          <div class="ghost-tap-hint">тап по призраку — выбрать аватарку</div>
+          <div class="ghost-name"><span id="ghostNick">Призрак</span> #<span id="ghostNum">042</span></div>
+          <div class="ghost-vibe">Без настоящего имени. Без лишнего. Только вайб.</div>
+          <label class="nick-label" for="nickInput">Ник призрака</label>
+          <input class="nick-input" id="nickInput" type="text" maxlength="24" placeholder="Как тебя звать на радаре?" autocomplete="off">
+          <div class="ghost-stats">
+            <div class="gstat"><b id="statNights">0</b><span>ночей в деле</span></div>
+            <div class="gstat"><b id="statPlaces">0</b><span>мест открыто</span></div>
+            <div class="gstat"><b id="statRoutes">0</b><span>маршрутов построено</span></div>
+          </div>
+          <div class="achievements" id="achievements"></div>
+          <div class="streak-line profile-streak" id="profileStreak"></div>
+          <button class="btn-share-geo" id="shareGeoBtn">📍 Отправить мою геопозицию</button>
+        </div>
+
+
+        <!-- Account (Supabase) -->
+        <div class="account-box" id="accountBox">
+          <div class="mode-label">Аккаунт</div>
+          <div id="accountGuest">
+            <p class="account-text">Ты сейчас гость: призрак живёт только на этом устройстве. Войди — и ник, аватарка, статистика и голоса переедут в облако.</p>
+            <button class="btn-yes" id="accountLoginBtn">Войти / Зарегистрироваться</button>
+          </div>
+          <div id="accountUser" hidden>
+            <div class="account-email" id="accountEmail"></div>
+            <div class="account-status">🟢 в сети — тебя видно в счётчике «Я в деле»</div>
+            <button class="btn-alt" id="accountLogoutBtn">Выйти</button>
+          </div>
+        </div>
+
+        <div class="mode-box">
+          <div class="mode-label">Режим видимости</div>
+          <div class="mode-switch" data-modeswitch>
+            <button class="mode-btn active" data-mode="visible"><span class="mode-ico"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.5 12S6 5.6 12 5.6 21.5 12 21.5 12 18 18.4 12 18.4 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></span>Видимый</button>
+            <button class="mode-btn" data-mode="ghost"><span class="mode-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a7.5 7.5 0 0 0-7.5 7.5V21l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V9.5A7.5 7.5 0 0 0 12 2z"/></svg></span>Невидимка</button>
+            <button class="mode-btn" data-mode="dnd"><span class="mode-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.6 14.2A8.6 8.6 0 0 1 9.8 3.4a.6.6 0 0 0-.8-.8 10.2 10.2 0 1 0 12.4 12.4.6.6 0 0 0-.8-.8z"/></svg></span>Не беспокоить</button>
+            <button class="mode-btn" data-mode="offline"><span class="mode-ico"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="currentColor" opacity=".5"/></svg></span>Оффлайн</button>
+          </div>
+          <p class="mode-status" id="modeStatusProfile">Тебя видят друзья на карте — с аватаркой, без имени.</p>
+        </div>
+
+        <!-- Creators -->
+        <div class="creators" id="creatorsBlock">
+          <h3 class="creators-title">Создатели</h3>
+          <div class="creator creator-main">
+            <div class="creator-avatar">👑</div>
+            <div class="creator-info">
+              <div class="creator-name">Яша <span class="creator-badge">главный создатель</span></div>
+              <a class="creator-link" href="https://t.me/black_prince_18" target="_blank" rel="noopener">@black_prince_18</a>
+            </div>
+          </div>
+          <div class="creator">
+            <div class="creator-avatar">🛠️</div>
+            <div class="creator-info">
+              <div class="creator-name">Вард</div>
+              <a class="creator-link" href="https://t.me/WardDeveloper" target="_blank" rel="noopener">@WardDeveloper</a>
+            </div>
+          </div>
+          <div class="creator">
+            <div class="creator-avatar">🎨</div>
+            <div class="creator-info">
+              <div class="creator-name">Сева</div>
+              <a class="creator-link" href="https://t.me/Severarin" target="_blank" rel="noopener">@Severarin</a>
+            </div>
+          </div>
+        </div>
+
+        <footer class="site-footer">
+          <img class="footer-logo-img" src="tirada-logo.jpg" alt="TIRADA">
+          <p class="footer-slogan">Живой радар движа твоего города. Анонимно, честно, прямо сейчас.</p>
+
+          <div class="footer-social-title">Мы на связи</div>
+          <div class="footer-socials">
+            <a class="social-btn tg" href="https://t.me/+46AgVlFDuGw5NTg8" target="_blank" rel="noopener" aria-label="Telegram-канал TiradA anon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.9 4.4l-3.1 14.6c-.2 1-.8 1.3-1.7.8l-4.7-3.5-2.3 2.2c-.3.3-.5.5-1 .5l.4-4.8 8.7-7.9c.4-.3-.1-.5-.6-.2L7.6 13.2 2.9 11.7c-1-.3-1-1 .2-1.5l18.4-7.1c.9-.3 1.6.2 1.4 1.3z"/></svg>
+            </a>
+            <a class="social-btn ig" href="https://instagram.com/black_prince_1.8" target="_blank" rel="noopener" aria-label="Instagram">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4.1" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="17.3" cy="6.7" r="1.5"/></svg>
+            </a>
+            <a class="social-btn tt" href="https://www.tiktok.com/@black_prince_1.8" target="_blank" rel="noopener" aria-label="TikTok">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.6 3c.4 2 1.7 3.6 3.9 3.9v3c-1.5 0-2.9-.5-3.9-1.3v6.6a5.9 5.9 0 1 1-5.9-5.9c.3 0 .7 0 1 .1v3.1a2.9 2.9 0 1 0 1.9 2.7V3h3z"/></svg>
+            </a>
+          </div>
+
+          <div class="footer-links">
+            <button class="footer-link" id="linkCreators">👻 Создатели</button>
+            <button class="footer-link" data-info="about">📱 О приложении</button>
+            <button class="footer-link" data-info="privacy">🔒 Политика конфиденциальности</button>
+          </div>
+
+          <div class="footer-bottom">
+            <b>© 2026 TiradA anon</b> • Сделано в Израиле<br>
+            Демо-превью: данные мест — демонстрационные, вайб — настоящий.
+          </div>
+        </footer>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===== Bottom tab bar ===== -->
+  <nav class="tabbar">
+    <button class="tab active" data-screen="map"><span class="tab-pill"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21.5s-7.2-5.6-7.2-11.2a7.2 7.2 0 1 1 14.4 0C19.2 15.9 12 21.5 12 21.5z"/><circle cx="12" cy="9.8" r="2.7"/></svg></span><span class="tab-label">Карта</span></span></button>
+    <button class="tab" data-screen="places"><span class="tab-pill"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></span><span class="tab-label">Места</span></span></button>
+    <button class="tab-fab" id="fabDeal" aria-label="Я в деле">
+      <span class="orb-seat"><span class="deal-orb"><svg class="deal-orb-flame" viewBox="0 0 24 24" aria-hidden="true"><path fill="#ffffff" d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></span></span>
+      <span class="fab-label">Я в деле</span>
+    </button>
+    <button class="tab" data-screen="route"><span class="tab-pill"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="19" r="2.6"/><circle cx="18" cy="5" r="2.6"/><path d="M8.6 19H15a3.5 3.5 0 0 0 0-7h-6a3.5 3.5 0 0 1 0-7h.4"/></svg></span><span class="tab-label">Маршрут</span></span></button>
+    <button class="tab" data-screen="profile"><span class="tab-pill"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8a7.8 7.8 0 0 0-7.8 7.8v10.1l2.9-2.7 2.45 2.45L12 18.1l2.45 2.45 2.45-2.45 2.9 2.7V10.6A7.8 7.8 0 0 0 12 2.8z"/><path d="M9.2 10.2h.01M14.8 10.2h.01" stroke-width="2.4"/></svg></span><span class="tab-label">Профиль</span></span></button>
+  </nav>
+
+</div>
+
+<!-- ===== City picker sheet ===== -->
+<div class="sheet-backdrop" id="citySheet" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h3>Выбери город</h3>
+      <button class="sheet-close" id="cityClose" aria-label="Закрыть">✕</button>
+    </div>
+    <input class="city-search" id="citySearch" type="text" placeholder="Найти город…" autocomplete="off">
+    <div class="city-list" id="cityList"></div>
+  </div>
+</div>
+
+<!-- ===== Deal overlay ===== -->
+<div class="deal-overlay" id="dealOverlay" hidden>
+  <div class="deal-sheet">
+    <button class="deal-close" id="dealClose" aria-label="Закрыть">✕</button>
+    <div class="deal-head">
+      <div class="deal-flame">🔥</div>
+      <h3>Я в деле</h3>
+      <p>Один тап — и город сам собирает твою ночь.</p>
+    </div>
+    <div id="dealBody"></div>
+  </div>
+</div>
+
+<!-- ===== Login modal (Supabase auth) ===== -->
+<div class="modal-backdrop" id="loginModal" hidden>
+  <div class="modal">
+    <button class="modal-close" id="loginClose" aria-label="Закрыть">✕</button>
+    <div class="modal-ghost">👻</div>
+    <h3>Вход для своих</h3>
+    <p>Аккаунт привязывает твоего призрака к облаку: ник, аватарка, статистика и голоса — на всех устройствах.</p>
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab active" id="authTabIn" type="button">Вход</button>
+      <button class="auth-tab" id="authTabUp" type="button">Регистрация</button>
+    </div>
+    <input class="modal-input" id="authName" type="text" placeholder="Имя призрака" maxlength="24" autocomplete="nickname" hidden>
+    <input class="modal-input" id="authEmail" type="email" placeholder="Email" autocomplete="email">
+    <input class="modal-input" id="authPass" type="password" placeholder="Пароль" autocomplete="current-password">
+    <div class="auth-error" id="authError" hidden></div>
+    <button class="btn-modal" id="authSubmit">Войти</button>
+    <p class="auth-note" id="authNote">Нет аккаунта? Жми «Регистрация» — это 20 секунд.</p>
+  </div>
+</div>
+
+<!-- ===== Info modal (footer stubs) ===== -->
+<div class="modal-backdrop" id="infoModal" hidden>
+  <div class="modal">
+    <button class="modal-close" id="infoClose" aria-label="Закрыть">✕</button>
+    <div class="modal-ghost" id="infoEmoji">📱</div>
+    <h3 id="infoTitle">О приложении</h3>
+    <p id="infoBody"></p>
+    <button class="btn-modal" id="infoOk">Понятно</button>
+  </div>
+</div>
+
+<!-- ===== Place detail sheet ===== -->
+<div class="sheet-backdrop place-sheet-backdrop" id="placeSheet" hidden>
+  <div class="sheet place-sheet">
+    <div id="placeSheetBody"></div>
+  </div>
+</div>
+
+<!-- ===== Welcome sheet (first visit) ===== -->
+<div class="sheet-backdrop" id="welcomeSheet" hidden>
+  <div class="sheet welcome-sheet">
+    <div class="sheet-head">
+      <h3>👻 Ты где тусишь?</h3>
+      <button class="sheet-close" id="welcomeClose" aria-label="Закрыть">✕</button>
+    </div>
+    <p class="welcome-text">TiradA anon показывает, где твой город тусит прямо сейчас. Выбери город — или определим сами по геолокации.</p>
+    <button class="btn-yes welcome-geo" id="welcomeGeo">📍 Определить по геолокации</button>
+    <input class="city-search" id="welcomeSearch" type="text" placeholder="Найти город…" autocomplete="off">
+    <div class="city-list" id="welcomeCityList"></div>
+  </div>
+</div>
+
+<!-- ===== Avatar picker sheet ===== -->
+<div class="sheet-backdrop" id="avatarSheet" hidden>
+  <div class="sheet avatar-sheet">
+    <div class="sheet-head">
+      <h3>Аватарка призрака</h3>
+      <button class="sheet-close" id="avatarClose" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="avatar-grid" id="avatarGrid"></div>
+    <label class="btn-alt avatar-upload" for="avatarFile">📷 Загрузить своё фото</label>
+    <input type="file" id="avatarFile" accept="image/*" hidden>
+    <p class="avatar-note">Если ты вошёл в аккаунт, фото уезжает в облако и будет твоей аватаркой на всех устройствах. Без входа — хранится только здесь.</p>
+  </div>
+</div>
+
+<div class="toast-stack" id="toastStack"></div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="maplibre-gl.js"></script>
+<script src="map-style.js"></script>
+<script src="vendor-supabase.js"></script>
+<script src="supabase.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
