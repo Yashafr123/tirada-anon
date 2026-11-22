@@ -1509,6 +1509,7 @@ function showScreen(name){
   $$(".tab").forEach(function(t){ t.classList.toggle("active", t.getAttribute("data-screen") === name); });
   $$(".screen").forEach(function(s){ s.classList.toggle("active", s.id === "screen-" + name); });
   if (name === "map" && map) setTimeout(function(){ map.resize(); }, 60);
+  if (name === "profile" && typeof cloudUser !== "undefined" && cloudUser) friendsLoad();
 }
 $$(".tab").forEach(function(t){
   t.addEventListener("click", function(){ showScreen(t.getAttribute("data-screen")); });
@@ -1592,7 +1593,8 @@ function renderDeal(place){
   $("#dealBody").innerHTML =
     '<div class="indeal-card">' +
     '<div class="deal-online" id="dealOnline"></div>' +
-    '<div class="deal-empty">' +
+    '<div id="dealFriends"></div>' +
+    '<div class="deal-empty" id="dealEmpty">' +
       '<div class="deal-empty-emoji">🤫</div>' +
       '<h4>Пока никто из твоих друзей не в деле</h4>' +
       '<p class="deal-empty-text">Здесь будут друзья-призраки, когда сами нажмут «Я в деле». Позови их — и вечер соберётся сам.</p>' +
@@ -1636,6 +1638,8 @@ function renderDeal(place){
   });
   refreshOnlineLine();
   refreshVoteCounts();
+  renderDealFriends();
+  friendsLoad();
   var vs = $("#voteShare");
   if (vs) vs.addEventListener("click", function(){
     var ids = dealCandidates().map(function(p){ return p.id; }).join(",");
@@ -2141,6 +2145,266 @@ function cloudLoadMyVote(){
     }, function(){});
 }
 
+/* ---- Friends: real friendships table (search, requests, accept, list) ----
+   Rows live in public.friendships (requester/addressee/status). Profiles of
+   the other side are read from public.profiles for avatar, nick, city and
+   the online flag. "В деле" for a friend = the same presence signal the app
+   already uses for everyone: profiles.online (heartbeat while signed in). */
+var friendsRows = [], friendsProfiles = {}, friendSearchResults = [],
+    friendsLoaded = false, friendsLoading = false;
+
+function escHtml(s){
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function friendAvatarHtml(p){
+  if (p && p.avatar_url) return '<img class="avphoto" src="' + escHtml(p.avatar_url) + '" alt="">';
+  var idx = 0;
+  if (p && p.avatar){
+    for (var i = 0; i < AVATARS.length; i++)
+      if (AVATARS[i].e === p.avatar){ idx = i; break; }
+  }
+  return avatarFace(idx);
+}
+function friendCityName(p){
+  if (p && p.city && PLACES_BY_CITY[p.city]) return cityById(p.city).name;
+  return "город не указан";
+}
+function friendMetaHtml(p){
+  var on = !!(p && p.online);
+  return '<span class="' + (on ? "friend-on" : "friend-off") + '">' +
+    (on ? "🟢 в сети" : "⚪ не в сети") + "</span> · " + escHtml(friendCityName(p));
+}
+function friendRowHtml(p, actionsHtml){
+  return '<div class="friend-row">' +
+    '<span class="friend-ava">' + friendAvatarHtml(p) + '</span>' +
+    '<span class="friend-info"><span class="friend-name">' + escHtml((p && p.name) || "Призрак") + '</span>' +
+    '<span class="friend-meta">' + friendMetaHtml(p) + '</span></span>' +
+    '<span class="friend-actions">' + actionsHtml + "</span></div>";
+}
+function friendRelation(otherId){
+  if (!cloudUser) return null;
+  for (var i = 0; i < friendsRows.length; i++){
+    var r = friendsRows[i];
+    if (r.requester !== otherId && r.addressee !== otherId) continue;
+    if (r.status === "accepted") return { row: r, kind: "friend" };
+    if (r.requester === cloudUser.id && r.addressee === otherId) return { row: r, kind: "out" };
+    if (r.addressee === cloudUser.id && r.requester === otherId) return { row: r, kind: "in" };
+  }
+  return null;
+}
+function friendsLoad(){
+  if (!db || !cloudUser){ renderFriends(); return Promise.resolve(); }
+  if (friendsLoading) return Promise.resolve();
+  friendsLoading = true;
+  return db.from("friendships").select("*")
+    .or("requester.eq." + cloudUser.id + ",addressee.eq." + cloudUser.id)
+    .order("created_at", { ascending: false })
+    .then(function(res){
+      friendsLoading = false;
+      if (res.error){ console.warn("TiradA friends:", res.error.message); renderFriends(); return; }
+      friendsRows = res.data || [];
+      var ids = {};
+      friendsRows.forEach(function(r){
+        ids[(r.requester === cloudUser.id) ? r.addressee : r.requester] = 1;
+      });
+      var list = Object.keys(ids);
+      if (!list.length){
+        friendsProfiles = {}; friendsLoaded = true;
+        renderFriends(); renderFriendResults(); renderDealFriends();
+        return;
+      }
+      return db.from("profiles").select("id,name,avatar,avatar_url,city,online").in("id", list)
+        .then(function(pr){
+          if (!pr.error && pr.data) pr.data.forEach(function(p){ friendsProfiles[p.id] = p; });
+          friendsLoaded = true; renderFriends(); renderFriendResults(); renderDealFriends();
+        }, function(){ friendsLoaded = true; renderFriends(); renderFriendResults(); renderDealFriends(); });
+    }, function(){ friendsLoading = false; renderFriends(); });
+}
+function bindFriendButtons(root){
+  if (!root) return;
+  root.querySelectorAll("[data-fadd]").forEach(function(b){
+    b.addEventListener("click", function(){ friendsSend(b.getAttribute("data-fadd")); });
+  });
+  root.querySelectorAll("[data-faccept]").forEach(function(b){
+    b.addEventListener("click", function(){ friendsAccept(b.getAttribute("data-faccept")); });
+  });
+  root.querySelectorAll("[data-fdecline]").forEach(function(b){
+    b.addEventListener("click", function(){ friendsDelete(b.getAttribute("data-fdecline"), "Заявка убрана"); });
+  });
+  root.querySelectorAll("[data-fremove]").forEach(function(b){
+    b.addEventListener("click", function(){ friendsDelete(b.getAttribute("data-fremove"), "Друг удалён"); });
+  });
+}
+function renderFriends(){
+  var g = $("#friendsGuest"), u = $("#friendsUser");
+  if (!g || !u) return;
+  if (!db || !cloudUser){ g.hidden = false; u.hidden = true; return; }
+  g.hidden = true; u.hidden = false;
+  var box = $("#friendSections");
+  if (!box) return;
+  if (!friendsLoaded){ box.innerHTML = '<div class="friend-empty">Загружаю друзей…</div>'; return; }
+  var inc = [], out = [], mine = [];
+  friendsRows.forEach(function(r){
+    var otherId = (r.requester === cloudUser.id) ? r.addressee : r.requester;
+    var p = friendsProfiles[otherId] || { id: otherId, name: "Призрак" };
+    if (r.status === "accepted") mine.push({ row: r, p: p });
+    else if (r.addressee === cloudUser.id) inc.push({ row: r, p: p });
+    else out.push({ row: r, p: p });
+  });
+  var html = "";
+  if (inc.length){
+    html += '<div class="friend-sec-title">Заявки тебе · ' + inc.length + "</div>" + inc.map(function(x){
+      return friendRowHtml(x.p,
+        '<button class="friend-btn ok" data-faccept="' + x.row.id + '">Принять</button>' +
+        '<button class="friend-btn" data-fdecline="' + x.row.id + '">Отклонить</button>');
+    }).join("");
+  }
+  html += '<div class="friend-sec-title">Мои друзья · ' + mine.length + "</div>";
+  html += mine.length ? mine.map(function(x){
+    return friendRowHtml(x.p, '<button class="friend-btn danger" data-fremove="' + x.row.id + '">Удалить</button>');
+  }).join("") : '<div class="friend-empty">Пока пусто. Найди призрака по нику выше — и зови в друзья 👻</div>';
+  if (out.length){
+    html += '<div class="friend-sec-title">Ты позвал · ' + out.length + "</div>" + out.map(function(x){
+      return friendRowHtml(x.p,
+        '<span class="friend-wait">ждёт ответа…</span>' +
+        '<button class="friend-btn" data-fdecline="' + x.row.id + '">Отменить</button>');
+    }).join("");
+  }
+  box.innerHTML = html;
+  bindFriendButtons(box);
+}
+function renderFriendResults(){
+  var box = $("#friendResults");
+  if (!box) return;
+  if (!friendSearchResults.length){ box.innerHTML = ""; return; }
+  box.innerHTML = '<div class="friend-sec-title">Нашлись</div>' + friendSearchResults.map(function(p){
+    var rel = friendRelation(p.id), act;
+    if (!rel) act = '<button class="friend-btn ok" data-fadd="' + p.id + '">Добавить</button>';
+    else if (rel.kind === "friend") act = '<span class="friend-wait">вы друзья</span>';
+    else if (rel.kind === "out") act = '<span class="friend-wait">заявка отправлена</span>';
+    else act = '<button class="friend-btn ok" data-faccept="' + rel.row.id + '">Принять заявку</button>';
+    return friendRowHtml(p, act);
+  }).join("");
+  bindFriendButtons(box);
+}
+function friendsSearch(){
+  if (!db || !cloudUser) return;
+  var inp = $("#friendSearch");
+  var q = ((inp && inp.value) || "").trim();
+  if (q.length < 2){ toast("Введи хотя бы 2 символа ника"); return; }
+  var pat = "%" + q.replace(/[%_\\]/g, "\\$&") + "%";
+  var btn = $("#friendSearchBtn");
+  if (btn) btn.disabled = true;
+  db.from("profiles").select("id,name,avatar,avatar_url,city,online").ilike("name", pat).limit(20)
+    .then(function(res){
+      if (btn) btn.disabled = false;
+      if (res.error){ toast("Поиск не сработал — попробуй ещё раз"); return; }
+      friendSearchResults = (res.data || []).filter(function(p){ return p.id !== cloudUser.id; });
+      friendSearchResults.forEach(function(p){ friendsProfiles[p.id] = p; });
+      if (!friendSearchResults.length){
+        $("#friendResults").innerHTML = '<div class="friend-empty">Никого с таким ником не нашлось 👻</div>';
+        return;
+      }
+      renderFriendResults();
+    }, function(){ if (btn) btn.disabled = false; toast("Нет связи с сервером"); });
+}
+function friendsSend(otherId){
+  if (!db || !cloudUser) return;
+  if (otherId === cloudUser.id){ toast("Себя в друзья не добавить 😄"); return; }
+  var rel = friendRelation(otherId);
+  if (rel){
+    toast(rel.kind === "friend" ? "Вы уже друзья 👻"
+        : rel.kind === "out" ? "Заявка уже отправлена — ждём ответа"
+        : "Этот призрак уже позвал тебя — прими заявку в списке ниже");
+    return;
+  }
+  db.from("friendships").select("id,status,requester,addressee")
+    .or("and(requester.eq." + cloudUser.id + ",addressee.eq." + otherId + "),and(requester.eq." + otherId + ",addressee.eq." + cloudUser.id + ")")
+    .then(function(res){
+      if (!res.error && res.data && res.data.length){
+        var r = res.data[0];
+        toast(r.status === "accepted" ? "Вы уже друзья 👻"
+            : r.requester === cloudUser.id ? "Заявка уже отправлена — ждём ответа"
+            : "Этот призрак уже позвал тебя — прими заявку в списке ниже");
+        friendsLoaded = false; friendsLoad();
+        return;
+      }
+      return db.from("friendships")
+        .insert({ requester: cloudUser.id, addressee: otherId, status: "pending" })
+        .then(function(ins){
+          if (ins.error){
+            toast(/duplicate|unique/i.test(ins.error.message || "") ? "Такая заявка уже есть" : "Не вышло отправить заявку");
+            friendsLoaded = false; friendsLoad();
+            return;
+          }
+          toast("Заявка отправлена 👻");
+          friendsLoaded = false; friendsLoad(); renderFriendResults();
+        }, function(){ toast("Нет связи с сервером"); });
+    }, function(){ toast("Нет связи с сервером"); });
+}
+function friendsAccept(rowId){
+  if (!db || !cloudUser) return;
+  db.from("friendships").update({ status: "accepted" }).eq("id", rowId).eq("addressee", cloudUser.id)
+    .then(function(res){
+      if (res.error){ toast("Не вышло принять заявку"); return; }
+      toast("Теперь вы друзья 👻");
+      friendsLoaded = false; friendsLoad(); renderFriendResults();
+    }, function(){ toast("Нет связи с сервером"); });
+}
+function friendsDelete(rowId, okMsg){
+  if (!db || !cloudUser) return;
+  db.from("friendships").delete().eq("id", rowId)
+    .then(function(res){
+      if (res.error){ toast("Не вышло — попробуй ещё раз"); return; }
+      if (okMsg) toast(okMsg);
+      friendsLoaded = false; friendsLoad(); renderFriendResults();
+    }, function(){ toast("Нет связи с сервером"); });
+}
+function friendsReset(){
+  friendsRows = []; friendsProfiles = {}; friendSearchResults = [];
+  friendsLoaded = false;
+  var r = $("#friendResults"); if (r) r.innerHTML = "";
+  renderFriends();
+}
+/* Accepted friends who are "in deal" right now (profiles.online) for the
+   «Я в деле» overlay. Empty list → the overlay keeps its old empty text. */
+function dealFriendsList(){
+  if (!cloudUser) return [];
+  var out = [];
+  friendsRows.forEach(function(r){
+    if (r.status !== "accepted") return;
+    var otherId = (r.requester === cloudUser.id) ? r.addressee : r.requester;
+    var p = friendsProfiles[otherId];
+    if (p && p.online) out.push(p);
+  });
+  return out;
+}
+function renderDealFriends(){
+  var box = $("#dealFriends"), empty = $("#dealEmpty");
+  if (!box) return;
+  var list = dealFriendsList();
+  if (!list.length){ box.innerHTML = ""; if (empty) empty.hidden = false; return; }
+  if (empty) empty.hidden = true;
+  box.innerHTML = '<div class="deal-friends"><div class="friend-sec-title light">Друзья сейчас в деле · ' + list.length + "</div>" +
+    list.map(function(p){
+      return '<div class="friend-row">' +
+        '<span class="friend-ava">' + friendAvatarHtml(p) + '</span>' +
+        '<span class="friend-info"><span class="friend-name">' + escHtml(p.name || "Призрак") + '</span>' +
+        '<span class="friend-meta">' + friendMetaHtml(p) + '</span></span>' +
+        '<span class="friend-indeal">🔥 в деле</span></div>';
+    }).join("") + "</div>";
+}
+var friendsLoginBtn = $("#friendsLoginBtn");
+if (friendsLoginBtn) friendsLoginBtn.addEventListener("click", function(){ $("#loginModal").hidden = false; });
+var friendSearchBtn = $("#friendSearchBtn");
+if (friendSearchBtn) friendSearchBtn.addEventListener("click", friendsSearch);
+var friendSearchInp = $("#friendSearch");
+if (friendSearchInp) friendSearchInp.addEventListener("keydown", function(e){
+  if (e.key === "Enter"){ e.preventDefault(); friendsSearch(); }
+});
+
 /* ---- Account UI ---- */
 function renderAccount(){
   var g = $("#accountGuest"), u = $("#accountUser"), btn = $("#loginBtn");
@@ -2153,6 +2417,7 @@ function renderAccount(){
     g.hidden = false; u.hidden = true;
     btn.textContent = "Войти";
   }
+  renderFriends();
 }
 function cloudOnSignedIn(user){
   if (!user || cloudBootedFor === user.id) { renderAccount(); return; }
@@ -2167,7 +2432,7 @@ function cloudOnSignedIn(user){
     }, function(){ return cloudSyncNow(); })
     .then(function(){ return cloudPresence(true); })
     .then(function(){ startHeartbeat(); return cloudLoadMyVote(); })
-    .then(function(){}, function(){});
+    .then(function(){ friendsLoad(); }, function(){ friendsLoad(); });
 }
 if (db){
   db.auth.getSession().then(function(r){
@@ -2180,7 +2445,7 @@ if (db){
     if (ev === "SIGNED_IN" && session && session.user) cloudOnSignedIn(session.user);
     if (ev === "SIGNED_OUT"){
       cloudUser = null; cloudBootedFor = null; cloudVoteCounts = null;
-      stopHeartbeat(); renderAccount();
+      stopHeartbeat(); friendsReset(); renderAccount();
     }
   });
 } else {

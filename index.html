@@ -156,6 +156,25 @@
           </div>
         </div>
 
+        <!-- Friends (Supabase friendships) -->
+        <div class="friends-box" id="friendsBox">
+          <div class="mode-label">Друзья</div>
+          <div id="friendsGuest">
+            <p class="account-text">Друзья — это облако: заявки, свой список призраков и кто из них сейчас в деле. Войди — и собирай своих.</p>
+            <button class="btn-yes" id="friendsLoginBtn">Войти / Зарегистрироваться</button>
+          </div>
+          <div id="friendsUser" hidden>
+            <div class="friend-search-row">
+              <input class="friend-search" id="friendSearch" type="text" maxlength="24" placeholder="🔎 Найти призрака по нику…" autocomplete="off">
+              <button class="btn-yes friend-search-btn" id="friendSearchBtn">Найти</button>
+            </div>
+            <div id="friendResults"></div>
+            <div id="friendSections">
+              <div class="friend-empty">Загружаю друзей…</div>
+            </div>
+          </div>
+        </div>
+
         <div class="mode-box">
           <div class="mode-label">Режим видимости</div>
           <div class="mode-switch" data-modeswitch>
