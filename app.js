@@ -571,7 +571,7 @@ var state = {
   search: "",
   sort: "heat",
   favs: lsGet("tirada_favs", {}),
-  stats: lsGet("tirada_stats", { nights: 0, places: [], routes: 0, lastDealDay: "" }),
+  stats: lsGet("tirada_stats", { nights: 0, places: [], routes: 0, lastDealDay: "", photos: 0 }),
   vote: lsGet("tirada_vote", null),
   voteLink: null,
   routeDone: lsGet("tirada_route_done", {}),
@@ -627,9 +627,10 @@ function ghostSeed(){
   }
   return s;
 }
+function ghostNumberFor(id){ return 100 + (hashStr("ghost#" + id) % 9900); /* 100..9999 */ }
 function ghostNumber(){
   var src = (typeof cloudUser !== "undefined" && cloudUser && cloudUser.id) ? cloudUser.id : ghostSeed();
-  return 100 + (hashStr("ghost#" + src) % 9900); /* 100..9999 */
+  return ghostNumberFor(src);
 }
 
 /* Honest distance label: straight-line, and says from whom */
@@ -691,6 +692,7 @@ function renderStats(){
   nEl.textContent = state.stats.nights;
   pEl.textContent = np;
   rEl.textContent = state.stats.routes;
+  var phEl = $("#statPhotos"); if (phEl) phEl.textContent = state.stats.photos || 0;
   var nl = $("#statNightsLabel"), pl = $("#statPlacesLabel"), rl = $("#statRoutesLabel");
   if (nl) nl.textContent = pluralRu(state.stats.nights, ["ночь в деле", "ночи в деле", "ночей в деле"]);
   if (pl) pl.textContent = pluralRu(np, ["место открыто", "места открыто", "мест открыто"]);
@@ -700,7 +702,8 @@ function renderStats(){
     { icon:"🏆", name:"Первый движ", have: np >= 1, need: "открой первое место" },
     { icon:"🗺️", name:"Исследователь", have: np >= 5, need: "ещё " + (5 - np) + " " + placeWord(Math.max(0, 5 - np)) },
     { icon:"🔥", name:"7 ночей в деле", have: state.stats.nights >= 7, need: "ещё " + Math.max(0, 7 - state.stats.nights) + " " + pluralRu(Math.max(0, 7 - state.stats.nights), ["ночь", "ночи", "ночей"]) },
-    { icon:"🏅", name:"Квест недели", have: lsGet("tirada_quest_badges", 0) >= 1, need: "пройди квест недели на экране «Маршрут»" }
+    { icon:"🏅", name:"Квест недели", have: lsGet("tirada_quest_badges", 0) >= 1, need: "пройди квест недели на экране «Маршрут»" },
+    { icon:"📸", name:"Глаз города", have: (state.stats.photos || 0) >= 5, need: "ещё " + Math.max(0, 5 - (state.stats.photos || 0)) + " фото на страницах мест" }
   ];
   box.innerHTML = ach.map(function(a){
     return '<span class="achip' + (a.have ? "" : " locked") + '">' + a.icon + " " + a.name +
@@ -709,8 +712,10 @@ function renderStats(){
 }
 
 /* ================= Place detail sheet ================= */
+var currentSheetPlaceId = null;
 function openPlaceSheet(p){
   if (!p) return;
+  currentSheetPlaceId = p.id;
   markPlaceOpened(p.id);
   var h = heatOf(p), st = openStatus(p), fav = !!state.favs[p.id];
   $("#placeSheetBody").innerHTML =
@@ -732,13 +737,22 @@ function openPlaceSheet(p){
       '<div class="ps-task">🎯 ' + p.task + "</div>" +
       '<div class="ps-actions">' +
         '<button class="btn-yes" id="psRoute">🚗 Маршрут</button>' +
+        '<button class="btn-alt" id="psCheckin">📍 Я здесь</button>' +
         '<button class="btn-alt ps-fav' + (fav ? " active" : "") + '" id="psFav">' + (fav ? "❤️ В избранном" : "🤍 В избранное") + "</button>" +
+      "</div>" +
+      '<div class="ps-photos">' +
+        '<div class="ps-photos-title">📸 Фото призраков здесь</div>' +
+        '<div class="ps-photos-grid" id="psPhotosGrid"><div class="friend-empty">Загружаю фото…</div></div>' +
       "</div>" +
     "</div>";
   $("#placeSheet").hidden = false;
   $("#psClose").addEventListener("click", closePlaceSheet);
   $("#psRoute").addEventListener("click", function(){ closePlaceSheet(); routeTo(p); });
   $("#psFav").addEventListener("click", function(){ toggleFav(p.id); openPlaceSheet(p); });
+  $("#psCheckin").addEventListener("click", function(){
+    startPhotoFlow(p, function(){ toast("Ты здесь! 📍 Чек-ин засчитан"); });
+  });
+  loadPlaceGallery(p.id);
 }
 function closePlaceSheet(){ $("#placeSheet").hidden = true; }
 function openPlaceSheetById(id){
@@ -2033,7 +2047,7 @@ function renderTasks(){
   var doneToday = (st.last === todayKey());
   var btn = $("#dailyDoneBtn");
   btn.disabled = doneToday;
-  btn.textContent = doneToday ? "Выполнено ✓" : "Выполнено";
+  btn.textContent = doneToday ? "Выполнено ✓" : "Выполнено 📸 — нужно фото";
   btn.classList.toggle("done", doneToday);
   var line = "🔥 Серия: " + st.streak + " " + pluralRu(st.streak, ["день", "дня", "дней"]) + (doneToday ? " — так держать!" : " — отметь задание, чтобы серия росла");
   $("#streakLine").textContent = line;
@@ -2052,28 +2066,38 @@ function renderTasks(){
   }).join("");
   $$("#questSteps [data-quest-step]").forEach(function(b){
     b.addEventListener("click", function(){
-      var cur = lsGet("tirada_quest", { week: weekIndex(), done: 0 });
-      if (cur.week !== weekIndex()) cur = { week: weekIndex(), done: 0 };
-      cur.done = Math.min(weekQuest().steps.length, cur.done + 1);
-      lsSet("tirada_quest", cur);
-      if (cur.done >= weekQuest().steps.length){
-        lsSet("tirada_quest_badges", lsGet("tirada_quest_badges", 0) + 1);
-        renderStats();
-        toast("Квест недели пройден! Бейдж в профиле 🏅");
-      } else toast("Шаг квеста засчитан 🗺️");
-      renderTasks();
+      /* Quest steps count ONLY with a photo proof (camera flow, no place —
+         the photo confirms the step and is never published). */
+      startPhotoFlow(null, function(){
+        var cur = lsGet("tirada_quest", { week: weekIndex(), done: 0 });
+        if (cur.week !== weekIndex()) cur = { week: weekIndex(), done: 0 };
+        cur.done = Math.min(weekQuest().steps.length, cur.done + 1);
+        lsSet("tirada_quest", cur);
+        if (cur.done >= weekQuest().steps.length){
+          lsSet("tirada_quest_badges", lsGet("tirada_quest_badges", 0) + 1);
+          renderStats();
+          toast("Квест недели пройден! Бейдж в профиле 🏅");
+        } else toast("Шаг квеста засчитан 🗺️");
+        renderTasks();
+      });
     });
   });
 }
 $("#dailyDoneBtn").addEventListener("click", function(){
   var st = lsGet("tirada_streak", { last: "", streak: 0 });
   if (st.last === todayKey()) return;
-  var y = new Date(Date.now() - 86400000).toDateString();
-  st.streak = (st.last === y) ? st.streak + 1 : 1;
-  st.last = todayKey();
-  lsSet("tirada_streak", st);
-  renderTasks();
-  toast("Задание дня выполнено 🔥 Серия: " + st.streak);
+  /* The daily task counts ONLY with a photo proof (camera flow, no place —
+     the photo confirms the task and is never published). */
+  startPhotoFlow(null, function(){
+    var st2 = lsGet("tirada_streak", { last: "", streak: 0 });
+    if (st2.last === todayKey()) return;
+    var y = new Date(Date.now() - 86400000).toDateString();
+    st2.streak = (st2.last === y) ? st2.streak + 1 : 1;
+    st2.last = todayKey();
+    lsSet("tirada_streak", st2);
+    renderTasks();
+    toast("Задание дня выполнено 🔥 Серия: " + st2.streak);
+  });
 });
 
 /* ================= Supabase cloud: auth, profile sync, presence, votes =================
@@ -2088,7 +2112,8 @@ var cloudUser = null, cloudSession = null, cloudSyncTimer = null,
 
 function cloudStatsPayload(){
   return { nights: state.stats.nights, places: state.stats.places,
-           routes: state.stats.routes, lastDealDay: state.stats.lastDealDay || "" };
+           routes: state.stats.routes, lastDealDay: state.stats.lastDealDay || "",
+           photos: state.stats.photos || 0 };
 }
 function cloudSyncNow(){
   if (!db || !cloudUser) return Promise.resolve();
@@ -2112,10 +2137,10 @@ function scheduleCloudSync(){
   cloudSyncTimer = setTimeout(cloudSyncNow, 700);
 }
 function normalizeStats(s){
-  var d = { nights: 0, places: [], routes: 0, lastDealDay: "" };
+  var d = { nights: 0, places: [], routes: 0, lastDealDay: "", photos: 0 };
   if (!s) return d;
   return { nights: +s.nights || 0, places: Array.isArray(s.places) ? s.places : [],
-           routes: +s.routes || 0, lastDealDay: s.lastDealDay || "" };
+           routes: +s.routes || 0, lastDealDay: s.lastDealDay || "", photos: +s.photos || 0 };
 }
 function applyCitySilent(id){
   state.city = cityById(id);
@@ -2227,6 +2252,322 @@ function cloudUploadAvatar(blob){
       toast("Фото-аватарка в облаке ☁️ Теперь она на всех устройствах");
     }, function(){ toast("Фото не уехало в облако — останется на устройстве"); });
 }
+
+/* ================= Place photos: camera proof, check-ins, galleries =================
+   Photos are born in exactly three flows: the daily task, a weekly-quest
+   step and the «Я здесь» check-in in a place sheet. The daily task and
+   quest steps count ONLY with a photo; that photo is a proof and is never
+   uploaded or published (those tasks have no place). A check-in photo may
+   be published to the place gallery — only after the consent sheet:
+   «Всем» (public), «Только друзьям» (friends) or «Не показывать» (nothing
+   is uploaded). Photos are camera-only (capture="environment") and are
+   re-encoded through canvas before upload (max 1280 px, JPEG 0.85), which
+   also strips EXIF/geotags. Gallery signature is the author's ghost
+   (avatar + «Призрак #N»), never the nick. */
+var photoFlow = null;      /* { place, onDone } while the camera is open */
+var consentFlow = null;    /* { place, onDone, blob, _url } in the consent sheet */
+var galleryState = {};     /* placeId -> { photos, profiles, fires, mine } */
+var viewerCtx = null;      /* { placeId, photo } */
+var photoReported = lsGet("tirada_reported_photos", []);
+
+function startPhotoFlow(place, onDone){
+  if (!db || !cloudUser){
+    toast("Войди, чтобы выполнять задания с фото и делать чек-ины 📸");
+    return;
+  }
+  var inp = $("#photoCamInput");
+  if (!inp){ toast("Камера недоступна на этом устройстве"); return; }
+  photoFlow = { place: place || null, onDone: onDone || function(){} };
+  inp.value = "";
+  inp.click();
+}
+function reencodePhoto(file){
+  return new Promise(function(resolve, reject){
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function(){
+      try {
+        var max = 1280, w = img.naturalWidth || 1, h = img.naturalHeight || 1;
+        var sc = Math.min(1, max / Math.max(w, h));
+        var c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(w * sc));
+        c.height = Math.max(1, Math.round(h * sc));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        if (c.toBlob) c.toBlob(function(b){ b ? resolve(b) : reject(new Error("encode")); }, "image/jpeg", 0.85);
+        else reject(new Error("toBlob"));
+      } catch(e){ URL.revokeObjectURL(url); reject(e); }
+    };
+    img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error("load")); };
+    img.src = url;
+  });
+}
+var photoCamInp = $("#photoCamInput");
+if (photoCamInp) photoCamInp.addEventListener("change", function(){
+  var f = photoCamInp.files && photoCamInp.files[0];
+  var flow = photoFlow; photoFlow = null;
+  if (!flow) return;
+  if (!f) return; /* camera cancelled — nothing counts, nothing breaks */
+  reencodePhoto(f).then(function(blob){
+    if (flow.place){
+      flow.blob = blob;
+      openPhotoConsent(flow);
+    } else {
+      flow.onDone(); /* proof-only photo: confirms, never uploaded */
+    }
+  }, function(){ toast("Не получилось прочитать фото — попробуй ещё раз 📸"); });
+});
+
+/* ---- Consent sheet ---- */
+function openPhotoConsent(flow){
+  consentFlow = flow;
+  if (flow._url) URL.revokeObjectURL(flow._url);
+  flow._url = URL.createObjectURL(flow.blob);
+  $("#photoConsentImg").src = flow._url;
+  $("#photoConsentText").textContent = "Фото у места «" + flow.place.name + "». Показать его на странице места? Подпись — только твой призрак и его номер, без ника.";
+  $("#photoConsent").hidden = false;
+}
+function finishConsent(vis){
+  var flow = consentFlow; consentFlow = null;
+  $("#photoConsent").hidden = true;
+  if (flow && flow._url){ URL.revokeObjectURL(flow._url); flow._url = null; }
+  if (!flow) return;
+  if (vis === "none"){ flow.onDone(); return; }
+  publishPhoto(flow.blob, flow.place, vis).then(function(ok){
+    if (ok){
+      state.stats.photos = (state.stats.photos || 0) + 1;
+      saveStats(); renderStats(); loadMyPhotos();
+      toast("Фото уже на странице места 📸");
+      if (currentSheetPlaceId === flow.place.id) loadPlaceGallery(flow.place.id);
+    }
+    flow.onDone();
+  });
+}
+var pcClose = $("#photoConsentClose"), pcAll = $("#photoPubAll"),
+    pcFriends = $("#photoPubFriends"), pcNone = $("#photoPubNone"),
+    pcSheet = $("#photoConsent");
+if (pcClose) pcClose.addEventListener("click", function(){ finishConsent("none"); });
+if (pcAll) pcAll.addEventListener("click", function(){ finishConsent("public"); });
+if (pcFriends) pcFriends.addEventListener("click", function(){ finishConsent("friends"); });
+if (pcNone) pcNone.addEventListener("click", function(){ finishConsent("none"); });
+if (pcSheet) pcSheet.addEventListener("click", function(e){ if (e.target === this) finishConsent("none"); });
+
+function publishPhoto(blob, place, vis){
+  if (!db || !cloudUser || !blob || !place) return Promise.resolve(false);
+  var path = cloudUser.id + "/" + Date.now() + ".jpg";
+  return db.storage.from("place-photos").upload(path, blob, { contentType: "image/jpeg" })
+    .then(function(res){
+      if (res.error){
+        console.warn("TiradA photo upload:", res.error.message);
+        toast("Фото не загрузилось в облако — чек-ин всё равно засчитан");
+        return false;
+      }
+      var url = db.storage.from("place-photos").getPublicUrl(path).data.publicUrl;
+      return db.from("place_photos").insert(
+        { place_id: place.id, user_id: cloudUser.id, url: url, visibility: vis }
+      ).then(function(r2){
+        if (r2.error){
+          console.warn("TiradA photo insert:", r2.error.message);
+          toast("Фото не опубликовалось — чек-ин всё равно засчитан");
+          return false;
+        }
+        return true;
+      }, function(){ return false; });
+    }, function(){ toast("Фото не загрузилось в облако — чек-ин всё равно засчитан"); return false; });
+}
+
+/* ---- Place gallery ---- */
+function acceptedFriendIds(){
+  var out = {};
+  if (!cloudUser) return out;
+  friendsRows.forEach(function(r){
+    if (r.status === "accepted")
+      out[(r.requester === cloudUser.id) ? r.addressee : r.requester] = 1;
+  });
+  return out;
+}
+function loadPlaceGallery(placeId){
+  var grid = $("#psPhotosGrid");
+  if (!grid || !db) return;
+  var myFriends = acceptedFriendIds();
+  /* A photo with reports >= 3 is treated as hidden by the app itself:
+     the backend RLS lets any signed-in user increment reports, but the
+     resulting row may not flip hidden=true — so the gallery filters on
+     both flags and such a photo is shown nowhere. */
+  db.from("place_photos").select("id,place_id,user_id,url,visibility,reports,created_at")
+    .eq("place_id", placeId).eq("hidden", false).lt("reports", 3)
+    .order("created_at", { ascending: false }).limit(60)
+    .then(function(res){
+      if (placeId !== currentSheetPlaceId) return;
+      var g2 = $("#psPhotosGrid"); if (!g2) return;
+      if (res.error){ g2.innerHTML = '<div class="friend-empty">Фото пока недоступны</div>'; return; }
+      var rows = (res.data || []).filter(function(ph){
+        if ((ph.reports || 0) >= 3 || ph.hidden) return false;
+        if (ph.visibility === "public") return true;
+        if (!cloudUser) return false;
+        return ph.user_id === cloudUser.id || !!myFriends[ph.user_id];
+      });
+      if (!rows.length){
+        g2.innerHTML = '<div class="friend-empty"><div class="empty-art">📸</div><div class="empty-title">Здесь пока тихо</div><div class="empty-text">Стань первым призраком: жми «Я здесь» — и покажи это место своим фото.</div></div>';
+        return;
+      }
+      var st = { photos: rows, profiles: {}, fires: {}, mine: {} };
+      galleryState[placeId] = st;
+      g2.innerHTML = rows.map(function(ph){
+        return '<button class="ps-photo-thumb" data-photo="' + ph.id + '"><img src="' + escHtml(ph.url) + '" alt="Фото призрака с места" loading="lazy"></button>';
+      }).join("");
+      g2.querySelectorAll("[data-photo]").forEach(function(b){
+        b.addEventListener("click", function(){ openPhotoViewer(placeId, b.getAttribute("data-photo")); });
+      });
+      var ids = rows.map(function(ph){ return ph.id; });
+      db.from("photo_reactions").select("photo_id,user_id").in("photo_id", ids)
+        .then(function(rr){
+          if (!rr.error && rr.data) rr.data.forEach(function(r){
+            st.fires[r.photo_id] = (st.fires[r.photo_id] || 0) + 1;
+            if (cloudUser && r.user_id === cloudUser.id) st.mine[r.photo_id] = 1;
+          });
+        }, function(){});
+      if (cloudUser){
+        var aids = {};
+        rows.forEach(function(ph){ aids[ph.user_id] = 1; });
+        db.from("profiles").select("id,avatar,avatar_url").in("id", Object.keys(aids))
+          .then(function(pr){
+            if (!pr.error && pr.data) pr.data.forEach(function(p){ st.profiles[p.id] = p; });
+          }, function(){});
+      }
+    }, function(){
+      if (placeId !== currentSheetPlaceId) return;
+      var g3 = $("#psPhotosGrid");
+      if (g3) g3.innerHTML = '<div class="friend-empty">Фото пока недоступны</div>';
+    });
+}
+
+/* ---- Full-screen viewer: ghost signature, 🔥 reactions, reports ---- */
+function fmtAgo(iso){
+  var t = new Date(iso).getTime();
+  if (!t) return "";
+  var m = Math.max(1, Math.round((Date.now() - t) / 60000));
+  if (m < 60) return m + " " + pluralRu(m, ["минуту", "минуты", "минут"]) + " назад";
+  var h = Math.round(m / 60);
+  if (h < 24) return h + " " + pluralRu(h, ["час", "часа", "часов"]) + " назад";
+  var d = Math.round(h / 24);
+  return d + " " + pluralRu(d, ["день", "дня", "дней"]) + " назад";
+}
+function openPhotoViewer(placeId, photoId){
+  var st = galleryState[placeId]; if (!st) return;
+  var ph = null;
+  st.photos.forEach(function(x){ if (x.id === photoId) ph = x; });
+  if (!ph) return;
+  viewerCtx = { placeId: placeId, photo: ph };
+  $("#photoViewerImg").src = ph.url;
+  var prof = st.profiles[ph.user_id];
+  $("#photoViewerAuthor").innerHTML =
+    '<span class="friend-ava pv-ava">' + (prof ? friendAvatarHtml(prof) : avatarFace(0)) + "</span>" +
+    "<span>Призрак #" + ghostNumberFor(ph.user_id) + "</span>";
+  $("#photoViewerTime").textContent = fmtAgo(ph.created_at);
+  paintFireBtn();
+  $("#photoViewer").hidden = false;
+}
+function closePhotoViewer(){ $("#photoViewer").hidden = true; viewerCtx = null; }
+function paintFireBtn(){
+  if (!viewerCtx) return;
+  var st = galleryState[viewerCtx.placeId] || { fires: {}, mine: {} };
+  $("#photoFireCount").textContent = st.fires[viewerCtx.photo.id] || 0;
+  $("#photoFireBtn").classList.toggle("active", !!st.mine[viewerCtx.photo.id]);
+}
+var pvClose = $("#photoViewerClose"), pvFire = $("#photoFireBtn"),
+    pvReport = $("#photoReportBtn"), pvBox = $("#photoViewer");
+if (pvClose) pvClose.addEventListener("click", closePhotoViewer);
+if (pvBox) pvBox.addEventListener("click", function(e){ if (e.target === this) closePhotoViewer(); });
+if (pvFire) pvFire.addEventListener("click", function(){
+  if (!viewerCtx) return;
+  if (!db || !cloudUser){ toast("Войди, чтобы ставить 🔥"); return; }
+  var st = galleryState[viewerCtx.placeId]; if (!st) return;
+  var ph = viewerCtx.photo, has = !!st.mine[ph.id];
+  var done = function(ok){
+    if (!ok){ toast("Не получилось — попробуй ещё раз"); return; }
+    if (has){ st.mine[ph.id] = 0; st.fires[ph.id] = Math.max(0, (st.fires[ph.id] || 1) - 1); }
+    else { st.mine[ph.id] = 1; st.fires[ph.id] = (st.fires[ph.id] || 0) + 1; }
+    paintFireBtn();
+  };
+  if (has)
+    db.from("photo_reactions").delete().eq("photo_id", ph.id).eq("user_id", cloudUser.id)
+      .then(function(r){ done(!r.error); }, function(){ done(false); });
+  else
+    db.from("photo_reactions").insert({ photo_id: ph.id, user_id: cloudUser.id })
+      .then(function(r){ done(!r.error); }, function(){ done(false); });
+});
+if (pvReport) pvReport.addEventListener("click", function(){
+  if (!viewerCtx) return;
+  if (!db || !cloudUser){ toast("Войди, чтобы отправить жалобу"); return; }
+  var ph = viewerCtx.photo;
+  if (photoReported.indexOf(ph.id) >= 0){ toast("Ты уже жаловался на это фото 🚩"); return; }
+  db.from("place_photos").select("reports").eq("id", ph.id).maybeSingle()
+    .then(function(res){
+      var nv = ((res.data && res.data.reports) || ph.reports || 0) + 1;
+      db.from("place_photos").update({ reports: nv }).eq("id", ph.id).then(function(r2){
+        if (r2.error){ toast("Не получилось отправить жалобу"); return; }
+        photoReported.push(ph.id);
+        lsSet("tirada_reported_photos", photoReported);
+        if (nv >= 3){
+          /* Best effort: flip the hidden flag too. Current RLS may reject
+             it (the new row would violate the update policy) — that is
+             fine, the app already treats reports >= 3 as hidden. */
+          db.from("place_photos").update({ hidden: true }).eq("id", ph.id)
+            .then(function(){}, function(){});
+          toast("Фото скрыто после жалоб 🚩");
+          closePhotoViewer();
+          loadPlaceGallery(ph.place_id);
+        } else toast("Жалоба отправлена 🚩");
+      }, function(){ toast("Не получилось отправить жалобу"); });
+    }, function(){ toast("Не получилось отправить жалобу"); });
+});
+
+/* ---- My photos (profile) ---- */
+function loadMyPhotos(){
+  var g = $("#myPhotosGuest"), u = $("#myPhotosUser"), list = $("#myPhotosList");
+  if (!g || !u || !list) return;
+  if (!db || !cloudUser){ g.hidden = false; u.hidden = true; return; }
+  g.hidden = true; u.hidden = false;
+  db.from("place_photos").select("id,place_id,url,visibility,created_at,reports,hidden")
+    .eq("user_id", cloudUser.id)
+    .order("created_at", { ascending: false }).limit(60)
+    .then(function(res){
+      if (res.error){ list.innerHTML = '<div class="friend-empty">Фото пока недоступны</div>'; return; }
+      var rows = res.data || [];
+      if (!rows.length){
+        list.innerHTML = '<div class="friend-empty"><div class="empty-art">📸</div><div class="empty-title">У тебя пока нет фото</div><div class="empty-text">Открой место и жми «Я здесь» — твоё фото появится на его странице и здесь.</div></div>';
+        return;
+      }
+      list.innerHTML = rows.map(function(ph){
+        var fp = findPlace(ph.place_id);
+        return '<div class="my-photo-row">' +
+          '<img class="my-photo-thumb" src="' + escHtml(ph.url) + '" alt="Моё фото с места">' +
+          '<span class="my-photo-info"><span class="my-photo-place">' + escHtml(fp ? fp.place.name : "Место") + '</span>' +
+          '<span class="my-photo-meta">' + (ph.visibility === "friends" ? "👻 только друзьям" : "🌍 видят все") + " · " + fmtAgo(ph.created_at) + ((ph.hidden || (ph.reports || 0) >= 3) ? " · 🚩 скрыто после жалоб" : "") + '</span></span>' +
+          '<button class="friend-btn danger" data-mydel="' + ph.id + '" data-url="' + escHtml(ph.url) + '">Удалить</button></div>';
+      }).join("");
+      list.querySelectorAll("[data-mydel]").forEach(function(b){
+        b.addEventListener("click", function(){ deleteMyPhoto(b.getAttribute("data-mydel"), b.getAttribute("data-url")); });
+      });
+    }, function(){ list.innerHTML = '<div class="friend-empty">Фото пока недоступны</div>'; });
+}
+function deleteMyPhoto(id, url){
+  if (!db || !cloudUser) return;
+  db.from("place_photos").delete().eq("id", id).eq("user_id", cloudUser.id)
+    .then(function(res){
+      if (res.error){ toast("Не получилось удалить фото"); return; }
+      var marker = "/place-photos/", i = (url || "").indexOf(marker);
+      if (i >= 0){
+        var path = decodeURIComponent(url.slice(i + marker.length).split("?")[0]);
+        db.storage.from("place-photos").remove([path]).then(function(){}, function(){});
+      }
+      toast("Фото удалено");
+      loadMyPhotos();
+    }, function(){ toast("Не получилось удалить фото"); });
+}
+var myPhotosLoginBtn = $("#myPhotosLoginBtn");
+if (myPhotosLoginBtn) myPhotosLoginBtn.addEventListener("click", function(){ $("#loginModal").hidden = false; });
 
 /* ---- Voting: shared counts from the votes table ---- */
 function gatheringKey(){
@@ -2660,6 +3001,7 @@ function renderAccount(){
     btn.textContent = "Войти";
   }
   renderFriends();
+  loadMyPhotos();
 }
 function cloudOnSignedIn(user){
   if (!user || cloudBootedFor === user.id) { renderAccount(); return; }
