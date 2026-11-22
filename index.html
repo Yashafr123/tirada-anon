@@ -48,7 +48,11 @@
         <span><i class="lg lg-mid"></i>место — средне</span>
         <span><i class="lg lg-low"></i>место — пусто</span>
         <span><i class="lg lg-ghost"></i>кружок с аватаркой — это ты</span>
+        <span><i class="lg lg-friend"></i>кружок с красной обводкой — твой друг</span>
       </div>
+
+      <!-- One-time hint: edge zoom exists (shown once, first map visit) -->
+      <div class="zoom-hint" id="zoomHint" hidden>↕️ Тяни пальцем по краю экрана — это зум карты</div>
 
       <!-- Edge zoom: fully invisible touch strips on BOTH edges — drag up = zoom in, down = zoom out -->
       <div class="edge-zoom" id="edgeZoom" aria-hidden="true"></div>
@@ -69,7 +73,7 @@
     <section class="screen" id="screen-places">
       <div class="screen-inner">
         <div class="screen-head">
-          <h2>Места сейчас</h2>
+          <h2>Места <span class="grad-text">сейчас</span></h2>
           <span class="block-note" id="placesCount"></span>
         </div>
         <div class="places-tools">
@@ -89,7 +93,7 @@
     <section class="screen" id="screen-route">
       <div class="screen-inner">
         <div class="screen-head">
-          <h2>🌙 Маршрут на вечер</h2>
+          <h2>🌙 Маршрут на <span class="grad-text">вечер</span></h2>
         </div>
         <p class="route-sub">Три точки, три задания — ночь собрана по городу <b id="routeCity">Кармиэль</b>. Не нравится расклад — пересобери.</p>
         <div class="transport-switch" id="transportSwitch" role="group" aria-label="Транспорт">
@@ -121,7 +125,7 @@
     <section class="screen" id="screen-profile">
       <div class="screen-inner">
         <div class="screen-head">
-          <h2>Мой призрак</h2>
+          <h2>Мой <span class="grad-text">призрак</span></h2>
         </div>
 
         <div class="ghost-card">
@@ -132,9 +136,9 @@
           <label class="nick-label" for="nickInput">Ник призрака</label>
           <input class="nick-input" id="nickInput" type="text" maxlength="24" placeholder="Как тебя звать на радаре?" autocomplete="off">
           <div class="ghost-stats">
-            <div class="gstat"><b id="statNights">0</b><span>ночей в деле</span></div>
-            <div class="gstat"><b id="statPlaces">0</b><span>мест открыто</span></div>
-            <div class="gstat"><b id="statRoutes">0</b><span>маршрутов построено</span></div>
+            <div class="gstat"><b id="statNights">0</b><span id="statNightsLabel">ночей в деле</span></div>
+            <div class="gstat"><b id="statPlaces">0</b><span id="statPlacesLabel">мест открыто</span></div>
+            <div class="gstat"><b id="statRoutes">0</b><span id="statRoutesLabel">маршрутов построено</span></div>
           </div>
           <div class="achievements" id="achievements"></div>
           <div class="streak-line profile-streak" id="profileStreak"></div>
@@ -159,9 +163,9 @@
         <!-- Friends (Supabase friendships) -->
         <div class="friends-box" id="friendsBox">
           <div class="mode-label">Друзья</div>
-          <div id="friendsGuest">
-            <p class="account-text">Друзья — это облако: заявки, свой список призраков и кто из них сейчас в деле. Войди — и собирай своих.</p>
-            <button class="btn-yes" id="friendsLoginBtn">Войти / Зарегистрироваться</button>
+          <div id="friendsGuest" class="friends-guest-line">
+            <span class="friends-guest-emoji">👻</span>
+            <span>Друзья живут в облаке: заявки, список своих и кто сейчас в деле. <button type="button" class="link-btn" id="friendsLoginBtn">Войди</button> — и собирай своих.</span>
           </div>
           <div id="friendsUser" hidden>
             <div class="friend-search-row">
@@ -186,32 +190,6 @@
           <p class="mode-status" id="modeStatusProfile">Тебя видят друзья на карте — с аватаркой, без имени.</p>
         </div>
 
-        <!-- Creators -->
-        <div class="creators" id="creatorsBlock">
-          <h3 class="creators-title">Создатели</h3>
-          <div class="creator creator-main">
-            <div class="creator-avatar">👑</div>
-            <div class="creator-info">
-              <div class="creator-name">Яша <span class="creator-badge">главный создатель</span></div>
-              <a class="creator-link" href="https://t.me/black_prince_18" target="_blank" rel="noopener">@black_prince_18</a>
-            </div>
-          </div>
-          <div class="creator">
-            <div class="creator-avatar">🛠️</div>
-            <div class="creator-info">
-              <div class="creator-name">Вард</div>
-              <a class="creator-link" href="https://t.me/WardDeveloper" target="_blank" rel="noopener">@WardDeveloper</a>
-            </div>
-          </div>
-          <div class="creator">
-            <div class="creator-avatar">🎨</div>
-            <div class="creator-info">
-              <div class="creator-name">Сева</div>
-              <a class="creator-link" href="https://t.me/Severarin" target="_blank" rel="noopener">@Severarin</a>
-            </div>
-          </div>
-        </div>
-
         <footer class="site-footer">
           <img class="footer-logo-img" src="tirada-logo.jpg" alt="TIRADA">
           <p class="footer-slogan">Живой радар движа твоего города. Анонимно, честно, прямо сейчас.</p>
@@ -227,6 +205,13 @@
             <a class="social-btn tt" href="https://www.tiktok.com/@black_prince_1.8" target="_blank" rel="noopener" aria-label="TikTok">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.6 3c.4 2 1.7 3.6 3.9 3.9v3c-1.5 0-2.9-.5-3.9-1.3v6.6a5.9 5.9 0 1 1-5.9-5.9c.3 0 .7 0 1 .1v3.1a2.9 2.9 0 1 0 1.9 2.7V3h3z"/></svg>
             </a>
+          </div>
+
+          <div class="footer-credits" id="footerCredits">
+            <div class="footer-credits-title">Сделали призраки</div>
+            <div class="credit credit-main"><span class="credit-ava">👑</span><span class="credit-name">Яша</span><span class="creator-badge">главный создатель</span><a class="creator-link" href="https://t.me/black_prince_18" target="_blank" rel="noopener">@black_prince_18</a></div>
+            <div class="credit"><span class="credit-ava">🛠️</span><span class="credit-name">Вард</span><a class="creator-link" href="https://t.me/WardDeveloper" target="_blank" rel="noopener">@WardDeveloper</a></div>
+            <div class="credit"><span class="credit-ava">🎨</span><span class="credit-name">Сева</span><a class="creator-link" href="https://t.me/Severarin" target="_blank" rel="noopener">@Severarin</a></div>
           </div>
 
           <div class="footer-links">
@@ -277,7 +262,7 @@
     <button class="deal-close" id="dealClose" aria-label="Закрыть">✕</button>
     <div class="deal-head">
       <div class="deal-flame">🔥</div>
-      <h3>Я в деле</h3>
+      <h3>Я в <span class="grad-text">деле</span></h3>
       <p>Один тап — и город сам собирает твою ночь.</p>
     </div>
     <div id="dealBody"></div>
@@ -310,7 +295,7 @@
     <button class="modal-close" id="infoClose" aria-label="Закрыть">✕</button>
     <div class="modal-ghost" id="infoEmoji">📱</div>
     <h3 id="infoTitle">О приложении</h3>
-    <p id="infoBody"></p>
+    <div class="info-body" id="infoBody"></div>
     <button class="btn-modal" id="infoOk">Понятно</button>
   </div>
 </div>
@@ -325,9 +310,11 @@
 <!-- ===== Welcome sheet (first visit) ===== -->
 <div class="sheet-backdrop" id="welcomeSheet" hidden>
   <div class="sheet welcome-sheet">
-    <div class="sheet-head">
-      <h3>👻 Ты где тусишь?</h3>
-      <button class="sheet-close" id="welcomeClose" aria-label="Закрыть">✕</button>
+    <button class="sheet-close welcome-close" id="welcomeClose" aria-label="Закрыть">✕</button>
+    <div class="welcome-hero">
+      <div class="welcome-ghost">👻</div>
+      <h3 class="welcome-title">Ты где <span class="grad-text">тусишь?</span></h3>
+      <p class="welcome-sub">Живой радар движа твоего города — прямо сейчас и анонимно</p>
     </div>
     <p class="welcome-text">TiradA anon показывает, где твой город тусит прямо сейчас. Выбери город — или определим сами по геолокации.</p>
     <button class="btn-yes welcome-geo" id="welcomeGeo">📍 Определить по геолокации</button>

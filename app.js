@@ -25,19 +25,24 @@ function emojiImg(e, cls){
 }
 /* Warm the CDN cache for all ghost faces at startup, so the avatar
    picker and the map marker show pictures instantly — not empty
-   circles while the CDN wakes up. */
+   circles while the CDN wakes up. Place-type art gets the same warm-up:
+   cards, sheets and route steps reuse the same dozen glyphs. */
 AVATARS.forEach(function(av){ var im = new Image(); im.src = emojiUrl(av.e); });
 function avatarFace(idx){
   var av = AVATARS[idx % AVATARS.length];
   return '<span class="avface" style="background:' + av.bg + '">' + emojiImg(av.e, "avimg") + '</span>';
 }
-/* CDN fallback: if an emoji image fails, swap it for the font glyph */
+/* CDN fallback: if an emoji image fails, swap it for the font glyph —
+   sized from the box the image was supposed to fill, so the glyph sits
+   centered at the right scale instead of shrinking into a corner. */
 document.addEventListener("error", function(ev){
   var t = ev.target;
   if (t && t.tagName === "IMG" && t.getAttribute("data-emoji")){
+    var w = t.offsetWidth || t.getBoundingClientRect().width || 24;
     var s = document.createElement("span");
     s.className = t.className + " avfont";
     s.textContent = t.getAttribute("data-emoji");
+    s.style.fontSize = Math.max(11, Math.round(w * 0.84)) + "px";
     t.replaceWith(s);
   }
 }, true);
@@ -89,6 +94,7 @@ var TYPES = {
             songs:["Volare — Gipsy Kings","Despacito — Luis Fonsi","Hava Nagila — DJ Remix"],
             tasks:["Найдите самый странный товар на рынке и сфотографируйте его, не покупая.","Торгуйтесь до последнего: скиньте цену на фрукт хотя бы на шекель."] }
 };
+Object.keys(TYPES).forEach(function(k){ var im = new Image(); im.src = emojiUrl(TYPES[k].art); });
 
 /* ================= Cities ================= */
 var CITIES = [
@@ -609,6 +615,23 @@ function pluralRu(n, forms){
 function hotWord(n){ return pluralRu(n, ["место жаркое", "места жарких", "мест жарких"]); }
 function placeWord(n){ return pluralRu(n, ["место", "места", "мест"]); }
 
+/* ================= Your ghost's own number =================
+   Every ghost gets a STABLE personal number: for a signed-in user it is
+   hashed from the cloud profile id (same number on every device), for a
+   guest — from a local seed generated once and kept in localStorage. */
+function ghostSeed(){
+  var s = lsGet("tirada_ghost_seed", null);
+  if (!s){
+    s = "guest-" + Date.now().toString(36) + "-" + Math.floor(Math.random() * 1e9).toString(36);
+    lsSet("tirada_ghost_seed", s);
+  }
+  return s;
+}
+function ghostNumber(){
+  var src = (typeof cloudUser !== "undefined" && cloudUser && cloudUser.id) ? cloudUser.id : ghostSeed();
+  return 100 + (hashStr("ghost#" + src) % 9900); /* 100..9999 */
+}
+
 /* Honest distance label: straight-line, and says from whom */
 function distFromText(p){
   return (state.geo ? "от тебя" : "от центра города") + " · по прямой: " + fmtDist(distKm(mePos(), p));
@@ -668,11 +691,15 @@ function renderStats(){
   nEl.textContent = state.stats.nights;
   pEl.textContent = np;
   rEl.textContent = state.stats.routes;
+  var nl = $("#statNightsLabel"), pl = $("#statPlacesLabel"), rl = $("#statRoutesLabel");
+  if (nl) nl.textContent = pluralRu(state.stats.nights, ["ночь в деле", "ночи в деле", "ночей в деле"]);
+  if (pl) pl.textContent = pluralRu(np, ["место открыто", "места открыто", "мест открыто"]);
+  if (rl) rl.textContent = pluralRu(state.stats.routes, ["маршрут построен", "маршрута построено", "маршрутов построено"]);
   if (!box) return;
   var ach = [
     { icon:"🏆", name:"Первый движ", have: np >= 1, need: "открой первое место" },
     { icon:"🗺️", name:"Исследователь", have: np >= 5, need: "ещё " + (5 - np) + " " + placeWord(Math.max(0, 5 - np)) },
-    { icon:"🔥", name:"7 ночей в деле", have: state.stats.nights >= 7, need: "ещё " + (7 - state.stats.nights) + " ночей" },
+    { icon:"🔥", name:"7 ночей в деле", have: state.stats.nights >= 7, need: "ещё " + Math.max(0, 7 - state.stats.nights) + " " + pluralRu(Math.max(0, 7 - state.stats.nights), ["ночь", "ночи", "ночей"]) },
     { icon:"🏅", name:"Квест недели", have: lsGet("tirada_quest_badges", 0) >= 1, need: "пройди квест недели на экране «Маршрут»" }
   ];
   box.innerHTML = ach.map(function(a){
@@ -827,18 +854,20 @@ function updateMeMarker(){
   if (meMarker) meMarker.getElement().innerHTML = ghostHtml();
 }
 function myPopupHtml(){
-  return '<div class="pop-name">Это ты — призрак</div>' +
+  return '<div class="pop-card">' +
+    '<div class="pop-head me"><div class="pop-name">Это ты — призрак #' + ghostNumber() + '</div><span class="pop-tag">ты</span></div>' +
     '<div class="pop-status">' + MODES[state.mode].mapStatus + '</div>' +
-    '<div class="pop-note">Сменить вид и режим — на экране «Профиль».</div>';
+    '<div class="pop-note">Сменить вид и режим — на экране «Профиль».</div></div>';
 }
 function popupHtml(p){
-  var h = heatOf(p);
-  return '<div class="pop-name">' + p.name + '</div>' +
-    '<div><span class="pop-heat">' + heatLabel(h) + '</span> · движ ' + h + '%</div>' +
-    '<div>★ ' + fmtRating(p.rating) + ' · ' + distFromText(p) + '</div>' +
+  var h = heatOf(p), hc = heatClass(h);
+  return '<div class="pop-card">' +
+    '<div class="pop-head ' + hc + '"><div class="pop-name">' + p.name + '</div>' +
+    '<span class="pop-heat-badge ' + hc + '">' + heatLabel(h) + ' · ' + h + '%</span></div>' +
+    '<div class="pop-meta">★ ' + fmtRating(p.rating) + ' · ' + distFromText(p) + '</div>' +
     '<div class="pop-song">♪ ' + p.song + '</div>' +
     '<button class="pop-btn route-btn" data-route-place="' + p.id + '">🚗 Маршрут сюда</button>' +
-    '<button class="pop-btn" data-place-open="' + p.id + '">Смотреть место →</button>';
+    '<button class="pop-btn" data-place-open="' + p.id + '">Смотреть место →</button></div>';
 }
 function findPlace(id){
   for (var cid in PLACES_BY_CITY){
@@ -963,8 +992,11 @@ function initMapLayers(){
     if (!f) return;
     var pr = f.properties;
     if (dotPopup) dotPopup.remove();
-    dotPopup = makePopup('<div class="pop-name">' + pr.name + '</div><div>' + pr.city + ' · движ ' + pr.heat + '%</div>' +
-      '<button class="pop-btn" data-place-open="' + pr.id + '">Смотреть место →</button>', 12);
+    dotPopup = makePopup('<div class="pop-card">' +
+      '<div class="pop-head ' + pr.band + '"><div class="pop-name">' + pr.name + '</div>' +
+      '<span class="pop-heat-badge ' + pr.band + '">движ ' + pr.heat + '%</span></div>' +
+      '<div class="pop-meta">' + pr.city + '</div>' +
+      '<button class="pop-btn" data-place-open="' + pr.id + '">Смотреть место →</button></div>', 12);
     dotPopup.setLngLat(f.geometry.coordinates).addTo(map);
   });
   map.on("mouseenter", "places-dots", function(){ map.getCanvas().style.cursor = "pointer"; });
@@ -981,6 +1013,23 @@ function initMapLayers(){
     layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#ffffff", "line-width": 2.5, "line-opacity": 0.95, "line-dasharray": [0, 4, 3] } });
   refreshMapMode();
+}
+/* Edge zoom is invisible by design — teach it exactly once, on the
+   first map visit, with a small floating hint that fades away. */
+function showZoomHintOnce(){
+  if (lsGet("tirada_zoom_hint", false)) return;
+  var h = $("#zoomHint");
+  if (!h) return;
+  /* the welcome sheet covers the map on a first visit — wait until it
+     is gone, otherwise the hint burns unseen behind the sheet */
+  var ws = $("#welcomeSheet");
+  if (ws && !ws.hidden){ setTimeout(showZoomHintOnce, 900); return; }
+  h.hidden = false;
+  setTimeout(function(){
+    h.classList.add("bye");
+    setTimeout(function(){ h.hidden = true; }, 450);
+    lsSet("tirada_zoom_hint", true);
+  }, 4600);
 }
 function initMap(){
   if (typeof maplibregl === "undefined" || !window.TIRADA_MAP_STYLE){
@@ -1004,6 +1053,7 @@ function initMap(){
   map.getContainer().addEventListener("focusout", function(){ map.scrollZoom.disable(); });
   map.on("load", initMapLayers);
   setTimeout(function(){ if (!mapReady && map.isStyleLoaded()) initMapLayers(); }, 3000);
+  setTimeout(showZoomHintOnce, 1600);
   var me = mePos();
   meMarker = new maplibregl.Marker({ element: ghostEl() })
     .setLngLat([me.lng, me.lat])
@@ -1280,8 +1330,17 @@ function renderPlaces(){
   $("#placesCount").textContent = "Показано " + list.length + " из " + all.length + " · " + state.city.name;
   if (!list.length){
     $("#placesList").innerHTML = '<div class="places-empty">' +
-      (state.filter === "fav" ? "Избранное пока пусто 👻<br>Тапни 🤍 на карточке места — и оно будет жить здесь."
-        : "В этой подборке в городе " + state.city.name + ' пока тихо 👻<br>Загляни в «Все» — движ точно где-то есть.') + "</div>";
+      (state.filter === "fav"
+        ? '<div class="empty-art">🤍</div><div class="empty-title">Избранное пока пусто</div>' +
+          '<div class="empty-text">Тапни 🤍 на карточке места — и оно будет жить здесь, под рукой.</div>' +
+          '<button class="btn-yes empty-btn" data-empty-all>Смотреть все места</button>'
+        : '<div class="empty-art">👻</div><div class="empty-title">Тут пока тихо</div>' +
+          '<div class="empty-text">В этой подборке в городе ' + state.city.name + ' пусто. Но движ точно где-то есть.</div>' +
+          '<button class="btn-yes empty-btn" data-empty-all>Заглянуть в «Все»</button>') + "</div>";
+    var eb = $("#placesList [data-empty-all]");
+    if (eb) eb.addEventListener("click", function(){
+      state.filter = "all"; renderFilter(); renderPlaces();
+    });
     return;
   }
   $("#placesList").innerHTML = list.map(placeCard).join("");
@@ -1400,6 +1459,8 @@ function renderMyAvatar(){
   $("#ghostBig").innerHTML = currentAvatarHtml();
   var nickEl = $("#ghostNick");
   if (nickEl) nickEl.textContent = state.nick || "Призрак";
+  var numEl = $("#ghostNum");
+  if (numEl) numEl.textContent = ghostNumber();
   updateMeMarker();
 }
 function renderAvatarGrid(){
@@ -2116,7 +2177,7 @@ function refreshOnlineLine(){
     .then(function(res){
       var el2 = $("#dealOnline"); if (!el2) return;
       if (res.error || typeof res.count !== "number"){ el2.textContent = "Сейчас в сети: не удалось посчитать"; return; }
-      el2.innerHTML = "🟢 Сейчас в сети: <b>" + res.count + "</b>";
+      el2.innerHTML = '<span class="online-dot"></span>Сейчас в сети: <b>' + res.count + "</b>";
     }, function(){ var el3 = $("#dealOnline"); if (el3) el3.textContent = "Сейчас в сети: нет связи"; });
 }
 
@@ -2278,7 +2339,11 @@ function renderFriends(){
   g.hidden = true; u.hidden = false;
   var box = $("#friendSections");
   if (!box) return;
-  if (!friendsLoaded){ box.innerHTML = '<div class="friend-empty">Загружаю друзей…</div>'; return; }
+  if (!friendsLoaded){
+    box.innerHTML = '<div class="skel-row"><span class="skel skel-ava"></span><span class="skel-lines"><span class="skel skel-line w60"></span><span class="skel skel-line w40"></span></span></div>' +
+      '<div class="skel-row"><span class="skel skel-ava"></span><span class="skel-lines"><span class="skel skel-line w50"></span><span class="skel skel-line w35"></span></span></div>';
+    return;
+  }
   var inc = [], out = [], mine = [];
   friendsRows.forEach(function(r){
     var otherId = (r.requester === cloudUser.id) ? r.addressee : r.requester;
@@ -2298,7 +2363,7 @@ function renderFriends(){
   html += '<div class="friend-sec-title">Мои друзья · ' + mine.length + "</div>";
   html += mine.length ? mine.map(function(x){
     return friendRowHtml(x.p, '<button class="friend-btn danger" data-fremove="' + x.row.id + '">Удалить</button>');
-  }).join("") : '<div class="friend-empty">Пока пусто. Найди призрака по нику выше — и зови в друзья 👻</div>';
+  }).join("") : '<div class="friend-empty"><div class="empty-art">👻</div><div class="empty-title">Пока ни одного друга</div><div class="empty-text">Найди призрака по нику выше — и зови в друзья. Вместе движ виден лучше.</div></div>';
   if (out.length){
     html += '<div class="friend-sec-title">Ты позвал · ' + out.length + "</div>" + out.map(function(x){
       return friendRowHtml(x.p,
@@ -2338,7 +2403,7 @@ function friendsSearch(){
       friendSearchResults = (res.data || []).filter(function(p){ return p.id !== cloudUser.id; });
       friendSearchResults.forEach(function(p){ friendsProfiles[p.id] = p; });
       if (!friendSearchResults.length){
-        $("#friendResults").innerHTML = '<div class="friend-empty">Никого с таким ником не нашлось 👻</div>';
+        $("#friendResults").innerHTML = '<div class="friend-empty"><div class="empty-art">🔍</div><div class="empty-title">Такого призрака нет</div><div class="empty-text">Проверь ник буква в букву — или друг ещё не зарегистрировался.</div></div>';
         return;
       }
       renderFriendResults();
@@ -2448,15 +2513,16 @@ function friendLastSeenText(p){
   if (isNaN(t)) return "⚪ не в сети";
   var mins = Math.max(0, Math.round((Date.now() - t) / 60000));
   if (mins < 2) return "был(а) только что";
-  if (mins < 60) return "был(а) " + mins + " мин назад";
+  if (mins < 60) return "был(а) " + mins + " " + pluralRu(mins, ["минуту", "минуты", "минут"]) + " назад";
   var hrs = Math.round(mins / 60);
-  if (hrs < 24) return "был(а) " + hrs + " ч назад";
+  if (hrs < 24) return "был(а) " + hrs + " " + pluralRu(hrs, ["час", "часа", "часов"]) + " назад";
   return "был(а) давно";
 }
 function friendPopupHtml(p){
-  return '<div class="pop-name">' + escHtml(p.name || "Призрак") + "</div>" +
+  return '<div class="pop-card">' +
+    '<div class="pop-head friend"><div class="pop-name">' + escHtml(p.name || "Призрак") + '</div><span class="pop-tag">друг 👻</span></div>' +
     '<div class="pop-status">' + friendLastSeenText(p) + "</div>" +
-    '<div class="pop-note">Твой друг-призрак 👻</div>';
+    '<div class="pop-note">Твой друг-призрак — вы видите друг друга на карте.</div></div>';
 }
 function friendGhostHtml(p){
   return '<div class="ghost-round friend' + (p.online ? "" : " off") + '">' + friendAvatarHtml(p) + "</div>";
@@ -2697,7 +2763,14 @@ var INFO = {
   about: { emoji:"📱", title:"О приложении",
     body:"TiradA anon — живой радар движа по городам Израиля. Показывает, где город тусит прямо сейчас, собирает маршрут на вечер и зовёт друзей одной ссылкой. Ты на карте — призрак: без имени и фото, открываешься только своим." },
   privacy: { emoji:"🔒", title:"Политика конфиденциальности",
-    body:"Места в приложении — демонстрационные данные. На карте, кроме тебя, видны только твои принятые друзья — и только если они сами не скрылись. Геолокация, если ты её разрешил и вошёл в аккаунт, сохраняется в твоём профиле, чтобы друзья видели твоего призрака на карте; режимы «Невидимка» и «Оффлайн» прячут тебя с карты полностью." }
+    sections:[
+      { h:"Что мы храним", t:"Ник, аватарку, статистику и голоса — в облаке, чтобы твой призрак жил на всех устройствах. Без входа всё хранится только на этом телефоне." },
+      { h:"Геолокация", t:"Только если ты сам её разрешил. Координаты пишутся в твой профиль, чтобы друзья видели твоего призрака на карте." },
+      { h:"Кто тебя видит", t:"На карте — только принятые друзья. «Невидимка» и «Оффлайн» прячут тебя полностью, «Не беспокоить» — ты на карте, но звать тебя нельзя." },
+      { h:"Места и движ", t:"Места и проценты движа в превью — демонстрационные данные. Это не слежка за реальными людьми." },
+      { h:"Фото", t:"Загруженная аватарка хранится в облаке и видна тем, кто видит твоего призрака." },
+      { h:"Выход", t:"Выйти из аккаунта можно в профиле. Гостевой призрак живёт только на этом устройстве." }
+    ] }
 };
 var infoModal = $("#infoModal");
 $$("[data-info]").forEach(function(btn){
@@ -2706,7 +2779,14 @@ $$("[data-info]").forEach(function(btn){
     if (!d) return;
     $("#infoEmoji").textContent = d.emoji;
     $("#infoTitle").textContent = d.title;
-    $("#infoBody").textContent = d.body;
+    var bodyEl = $("#infoBody");
+    if (d.sections){
+      bodyEl.innerHTML = d.sections.map(function(s){
+        return '<div class="info-sec"><h4>' + s.h + "</h4><p>" + s.t + "</p></div>";
+      }).join("");
+    } else {
+      bodyEl.textContent = d.body || "";
+    }
     infoModal.hidden = false;
   });
 });
@@ -2716,7 +2796,7 @@ infoModal.addEventListener("click", function(e){ if (e.target === infoModal) inf
 $("#linkCreators").addEventListener("click", function(){
   showScreen("profile");
   setTimeout(function(){
-    var el = $("#creatorsBlock");
+    var el = $("#footerCredits");
     if (el) el.scrollIntoView({ behavior:"smooth", block:"center" });
   }, 120);
 });
