@@ -4,7 +4,7 @@
    on tap. Navigations are network-first (fresh HTML wins), static
    assets are stale-while-revalidate. Cross-origin traffic (Supabase,
    map tiles, emoji CDN) is never touched. */
-var CACHE = "tirada-shell-v16";
+var CACHE = "tirada-shell-v17";
 
 self.addEventListener("install", function (e) {
   self.skipWaiting();

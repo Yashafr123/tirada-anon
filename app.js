@@ -1200,14 +1200,21 @@ function closeAllPopups(){
 function renderBadges(city){
   if (!map) return;
   clearBadges();
-  PLACES_BY_CITY[city.id].forEach(function(p){
-    p._band = heatClass(heatOf(p)); /* badge restyles only when the band flips */
-    var m = new maplibregl.Marker({ element: badgeEl(p) })
-      .setLngLat([p.lng, p.lat])
-      .setPopup(makePopup(popupHtml(p), 20))
-      .addTo(map);
-    badgeMarkers.push(m);
-    if (city.id === state.city.id) placeMarkers[p.id] = m;
+  (PLACES_BY_CITY[city.id] || []).forEach(function(p){
+    /* Per-marker isolation: one bad place (broken popup data, bad coords)
+       is skipped — the rest of the city's badges still render. */
+    try {
+      p._band = heatClass(heatOf(p)); /* badge restyles only when the band flips */
+      var html;
+      try { html = popupHtml(p); }
+      catch(e2){ html = '<div class="pop-card"><div class="pop-name">' + escHtml(p.name || "") + '</div></div>'; }
+      var m = new maplibregl.Marker({ element: badgeEl(p) })
+        .setLngLat([p.lng, p.lat])
+        .setPopup(makePopup(html, 20))
+        .addTo(map);
+      badgeMarkers.push(m);
+      if (city.id === state.city.id) placeMarkers[p.id] = m;
+    } catch(e){ /* skip this place only */ }
   });
   mapBadgesCityId = city.id;
 }
@@ -1251,29 +1258,37 @@ var EMPTY_FC = { type: "FeatureCollection", features: [] };
 function initMapLayers(){
   if (mapReady || !map) return;
   mapReady = true;
-  /* Country dots: every place of every city as one GeoJSON circle layer */
+  /* Country dots: every place of every city as one GeoJSON circle layer.
+     Per-place isolation: one malformed place (a missing field in the
+     catalogue data) must not kill the whole layer — or the whole map. */
   var feats = [];
   CITIES.forEach(function(c){
-    PLACES_BY_CITY[c.id].forEach(function(p){
-      feats.push({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [p.lng, p.lat] },
-        properties: { id: p.id, name: p.name, city: c.name, heat: heatOf(p), band: heatClass(heatOf(p)), closed: openStatus(p).open ? 0 : 1 }
-      });
+    (PLACES_BY_CITY[c.id] || []).forEach(function(p){
+      try {
+        feats.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+          properties: { id: p.id, name: p.name, city: c.name, heat: heatOf(p), band: heatClass(heatOf(p)), closed: openStatus(p).open ? 0 : 1 }
+        });
+      } catch(e){ /* skip the bad place, keep the other ~1400 */ }
     });
   });
-  map.addSource("places-all", { type: "geojson", data: { type: "FeatureCollection", features: feats } });
-  map.addLayer({
-    id: "places-dots", type: "circle", source: "places-all",
-    paint: {
-      "circle-color": ["match", ["get", "band"], "hot", "#ff2213", "mid", "#ff9a3c", "#8a8f98"],
-      "circle-radius": ["match", ["get", "band"], "hot", 5, "mid", 4, 3],
-      "circle-stroke-color": "rgba(255,255,255,0.8)",
-      "circle-stroke-width": 1,
-      "circle-opacity": 0.95
-    }
-  });
-  map.on("click", "places-dots", function(e){
+  var dotsOk = false;
+  try {
+    map.addSource("places-all", { type: "geojson", data: { type: "FeatureCollection", features: feats } });
+    map.addLayer({
+      id: "places-dots", type: "circle", source: "places-all",
+      paint: {
+        "circle-color": ["match", ["get", "band"], "hot", "#ff2213", "mid", "#ff9a3c", "#8a8f98"],
+        "circle-radius": ["match", ["get", "band"], "hot", 5, "mid", 4, 3],
+        "circle-stroke-color": "rgba(255,255,255,0.8)",
+        "circle-stroke-width": 1,
+        "circle-opacity": 0.95
+      }
+    });
+    dotsOk = true;
+  } catch(e){ /* no country dots — DOM badges near cities still work */ }
+  if (dotsOk) map.on("click", "places-dots", function(e){
     /* Marker priority: a tap that lands on ANY DOM marker (your ghost, a
        friend, a place badge) belongs to that marker — its own popup is
        already toggling — so a place dot underneath must not hijack it. */
@@ -1301,20 +1316,23 @@ function initMapLayers(){
       '<button class="pop-btn" data-place-open="' + pr.id + '">' + t("Смотреть место →") + '</button></div>', 12);
     dotPopup.setLngLat(f.geometry.coordinates).addTo(map);
   });
-  map.on("mouseenter", "places-dots", function(){ map.getCanvas().style.cursor = "pointer"; });
-  map.on("mouseleave", "places-dots", function(){ map.getCanvas().style.cursor = ""; });
-  /* Route layers (OSRM): white casing, neon red line, flowing dot pulse */
-  map.addSource("route", { type: "geojson", data: EMPTY_FC });
-  map.addLayer({ id: "route-casing", type: "line", source: "route",
-    layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": "#ffffff", "line-width": 9, "line-opacity": 0.85 } });
-  map.addLayer({ id: "route-line", type: "line", source: "route",
-    layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": "#ff2a1e", "line-width": 5, "line-opacity": 1 } });
-  map.addLayer({ id: "route-flow", type: "line", source: "route",
-    layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": "#ffffff", "line-width": 2.5, "line-opacity": 0.95, "line-dasharray": [0, 4, 3] } });
-  refreshMapMode();
+  if (dotsOk) map.on("mouseenter", "places-dots", function(){ map.getCanvas().style.cursor = "pointer"; });
+  if (dotsOk) map.on("mouseleave", "places-dots", function(){ map.getCanvas().style.cursor = ""; });
+  /* Route layers (OSRM): white casing, neon red line, flowing dot pulse.
+     Isolated: a route-layer failure must not take the dots/badges down. */
+  try {
+    map.addSource("route", { type: "geojson", data: EMPTY_FC });
+    map.addLayer({ id: "route-casing", type: "line", source: "route",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#ffffff", "line-width": 9, "line-opacity": 0.85 } });
+    map.addLayer({ id: "route-line", type: "line", source: "route",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#ff2a1e", "line-width": 5, "line-opacity": 1 } });
+    map.addLayer({ id: "route-flow", type: "line", source: "route",
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#ffffff", "line-width": 2.5, "line-opacity": 0.95, "line-dasharray": [0, 4, 3] } });
+  } catch(e){ /* routes just won't draw on the map */ }
+  try { refreshMapMode(); } catch(e){}
 }
 /* Edge zoom is invisible by design — teach it exactly once, on the
    first map visit, with a small floating hint that fades away. */
@@ -1333,11 +1351,31 @@ function showZoomHintOnce(){
     lsSet("tirada_zoom_hint", true);
   }, 4600);
 }
+function mapFallback(){
+  var el = $("#map");
+  if (el) el.innerHTML = '<div style="padding:24px;color:#a3a3ad;font-size:14px">' + t("Карта не загрузилась (нет сети или недоступен WebGL) — но места на экране «Места» на месте.") + '</div>';
+}
+/* MapLibre's Map constructor THROWS synchronously ("Failed to initialize
+   WebGL") whenever the browser/WebView cannot create a WebGL context —
+   headless browsers, in-app WebViews, GPU blocklists. Unguarded, that
+   throw aborted the whole boot sequence: the LIVE counter stayed on its
+   static "…" placeholder, the ticker never built, the places list never
+   rendered — and #map stayed an empty dark div. So: probe WebGL first,
+   guard the constructor always. The map is an enhancement; the rest of
+   the app (map === null is a fully supported state) must boot regardless. */
+function webglAvailable(){
+  try {
+    if (!window.WebGLRenderingContext) return false;
+    var cv = document.createElement("canvas");
+    return !!(cv.getContext("webgl2") || cv.getContext("webgl") || cv.getContext("experimental-webgl"));
+  } catch(e){ return false; }
+}
 function initMap(){
-  if (typeof maplibregl === "undefined" || !window.TIRADA_MAP_STYLE){
-    $("#map").innerHTML = '<div style="padding:24px;color:#a3a3ad;font-size:14px">' + t("Карта не загрузилась (нет сети) — но места на экране «Места» на месте.") + '</div>';
+  if (typeof maplibregl === "undefined" || !window.TIRADA_MAP_STYLE || !webglAvailable()){
+    mapFallback();
     return;
   }
+  try {
   map = new maplibregl.Map({
     container: "map",
     style: window.TIRADA_MAP_STYLE,
@@ -1408,6 +1446,12 @@ function initMap(){
     if (!btn) return;
     openPlaceSheetById(btn.getAttribute("data-place-open"));
   });
+  } catch(e){
+    /* A half-wired map is worse than none: drop to the supported
+       map === null state and let the app run without it. */
+    map = null;
+    mapFallback();
+  }
 }
 
 /* ================= Legend: small round "i" button, tip on tap ================= */
@@ -2752,12 +2796,24 @@ function applyRemoteProfile(row){
   }
   cloudProfileData = row.data || {};
   if (window.__pendingLangSave){ window.__pendingLangSave = false; cloudSaveLang(); }
-  else if (row.data && row.data.lang && !LANG_CHOICE){
-    var rl = row.data.lang;
-    LANG_CHOICE = (rl === "ru" || rl === "he" || rl === "en") ? rl : null;
-    lsSet("tirada_lang_choice", LANG_CHOICE || "");
-    LANG = resolveLang(LANG_CHOICE);
-    applyLang();
+  else if (row.data && row.data.lang){
+    /* Cloud language applies only when THIS device has no explicit
+       choice of its own (raw key absent — langChoiceGet() defaults to
+       "auto", so the old "!LANG_CHOICE" test could never fire; and the
+       old code called an undefined resolveLang() and repainted nothing,
+       which would have left a mixed-language UI). Apply atomically:
+       resolve, persist RAW (langChoiceGet reads the raw value, not
+       lsSet's JSON), then repaint every surface via refreshI18n(). */
+    var hasLocalChoice = false;
+    try { hasLocalChoice = localStorage.getItem("tirada_lang_choice") !== null; } catch(e){}
+    if (!hasLocalChoice){
+      var rl = row.data.lang;
+      LANG_CHOICE = (rl === "ru" || rl === "he" || rl === "en" || rl === "auto") ? rl : "auto";
+      try { localStorage.setItem("tirada_lang_choice", LANG_CHOICE); } catch(e){}
+      LANG = (LANG_CHOICE === "auto") ? navLang() : LANG_CHOICE;
+      applyLang();
+      if (typeof refreshI18n === "function") refreshI18n();
+    }
   }
   if (row.city && row.city !== state.city.id && PLACES_BY_CITY[row.city]) applyCitySilent(row.city);
   if (row.mode && MODES[row.mode] && row.mode !== state.mode) setMode(row.mode);
@@ -4233,6 +4289,19 @@ function applyStaticI18n(){
   $$("[data-i18n-aria]").forEach(function(el){ el.setAttribute("aria-label", t(el.getAttribute("data-i18n-aria"))); });
   $$("[data-i18n-alt]").forEach(function(el){ el.setAttribute("alt", t(el.getAttribute("data-i18n-alt"))); });
   document.title = t("TiradA anon — куда тусить в городе. Прямо сейчас. Анонимно.");
+  /* The city name in the header chip and the route header is dynamic
+     (no data-i18n key) and was only repainted on city change / manual
+     language switch — after a plain reload it stayed in Russian while
+     the rest of the UI was already in the saved language. Localize it
+     here too, so a boot applies ONE language to everything at once. */
+  if (typeof state !== "undefined" && state && state.city){
+    var cn3 = $("#cityName"); if (cn3) cn3.textContent = cityName(state.city);
+    var rc3 = $("#routeCity"); if (rc3) rc3.textContent = cityName(state.city);
+  }
+  /* The info sheet's title lives in INFO_I18N (not I18N_UI): localize its
+     placeholder too, so nothing on screen keeps the previous language. */
+  var it3 = $("#infoTitle");
+  if (it3) it3.textContent = (LANG !== "ru" && typeof INFO_I18N !== "undefined" && INFO_I18N[LANG] && INFO_I18N[LANG].about && INFO_I18N[LANG].about.title) || "О приложении";
 }
 function refreshI18n(){
   document.documentElement.lang = LANG;
@@ -4247,6 +4316,10 @@ function refreshI18n(){
   renderFilter(); renderPlaces(); updateCounter(); buildTicker();
   state.routeSteps = null; buildRoute();
   renderFriends(); renderFriendsPlacesBar(); renderAccount(); refreshPushUI();
+  /* The auth modal's submit/note are only (re)written by setAuthMode on
+     open/tab-switch — repaint them too, so no surface keeps the previous
+     language after a switch or a cloud-language apply. */
+  if (typeof setAuthMode === "function" && $("#authSubmit")) setAuthMode(authMode || "in");
   setMode(state.mode);
   if (meMarker){
     updateMeMarker();
@@ -4366,6 +4439,7 @@ $("#geoBtn").addEventListener("click", function(){ requestGeo(true); });
 
 /* ================= Go ================= */
 applyStaticI18n();
+if (typeof setAuthMode === "function") setAuthMode("in"); /* auth modal strings in the boot language too — atomic from the first paint */
 seedStatsWave3();
 renderCityList();
 renderMyAvatar();
@@ -4373,14 +4447,18 @@ renderAvatarGrid();
 renderStats();
 renderTasks();
 var nickInit = $("#nickInput"); if (nickInit) nickInit.value = state.nick || "";
-initMap();
-requestGeo(false);
+/* Core UI first, map LAST: the counter, ticker, places list and route
+   must be alive even if map initialisation fails outright (it is fully
+   guarded now, but boot order is the second line of defence — a dead
+   map must never again take the header and the list down with it). */
 renderFilter();
 renderPlaces();
 updateCounter();
 buildTicker();
 refreshCityPhotoCount();
 buildRoute();
+initMap();
+requestGeo(false);
 if (!lsGet("tirada_welcomed", false) && !location.hash){
   renderWelcomeCities();
   setTimeout(function(){ $("#welcomeSheet").hidden = false; }, 500);
