@@ -277,7 +277,7 @@ var RAW = {
   ],
   holon: [
     ["Парк «Переса»","park",50,32.0050,34.7750],["Смотровая «Музей дизайна»","view",44,32.0120,34.7780],
-    ["Парк «Ямит»","park",42],["Кафе «Соколь»","cafe",44],["Бар «Холон Найт»","bar",57]
+    ["Парк «Ямит»","park",42],["Кафе «Савьон»","cafe",44],["Паб «Дублин»","bar",57]
   ],
   ramatgan: [
     ["Парк «Сафари»","park",58,32.0450,34.8220],["Парк «Леуми»","park",48],
@@ -293,11 +293,11 @@ var RAW = {
     ["Руфтоп «Питуах Скай»","roof",70],["Кафе «Марина Вью»","cafe",52]
   ],
   kfarsaba: [
-    ["Парк «Кфар-Саба»","park",41],["Кафе «Вайцман»","cafe",46],["Бар «Саба Найт»","bar",55]
+    ["Парк «Кфар-Саба»","park",41],["Кафе «Вайцман»","cafe",46],["Бар «У Ави»","bar",55]
   ],
   hadera: [
     ["Пляж «Гиват Ольга»","beach",67,32.4430,34.8850],["Парк «Нахаль Хадера»","park",42,32.4230,34.9330],
-    ["Кафе «Герберт Самуэль»","cafe",44],["Бар «Хадера Найт»","bar",54]
+    ["Кафе «Герберт Самуэль»","cafe",44],["Паб «Факел»","bar",54]
   ],
   nazareth: [
     ["Рынок Нацерета","market",58,32.7030,35.3000],["Смотровая «Старый город»","view",52,32.7040,35.2980],
@@ -317,11 +317,11 @@ var RAW = {
   ],
   afula: [
     ["Рынок Афулы","market",47,32.6080,35.2900],["Кафе «Афула Центр»","cafe",42],
-    ["Парк «Ган а-Эмек»","park",36],["Бар «Эмек Найт»","bar",52]
+    ["Парк «Ган а-Эмек»","park",36],["Бар «Долина»","bar",52]
   ],
   kiryatshmona: [
     ["Парк «Ган а-Захав»","park",44,33.2050,35.5680],["Смотровая «Манара»","view",40,33.1960,35.5450],
-    ["Кафе «Шмона»","cafe",41],["Бар «Шмона Найт»","bar",50]
+    ["Кафе «Шмона»","cafe",41],["Паб «Северный»","bar",50]
   ],
   modiin: [
     ["Парк «Анава»","park",47,31.8980,35.0060],["Кафе «Модиин Центр»","cafe",48],
@@ -336,7 +336,7 @@ var RAW = {
   ],
   rehovot: [
     ["Рынок Реховота","market",55,31.8930,34.8110],["Кафе «Герцль»","cafe",52,31.8940,34.8180],
-    ["Смотровая «Институт Вейцмана»","view",45,31.9070,34.8090],["Парк «Ган а-Мошава»","park",38],["Бар «Реховот Найт»","bar",58]
+    ["Смотровая «Институт Вейцмана»","view",45,31.9070,34.8090],["Парк «А-Ораним»","park",38],["Бар «Градус»","bar",58]
   ],
   beitshemesh: [
     ["Маркет «Биг»","market",52,31.7470,34.9860],["Кафе «Роладин»","cafe",45],
@@ -356,7 +356,7 @@ var RAW = {
   ],
   roshhaayin: [
     ["Парк «Мигдаль Цедек»","park",46,32.1010,34.9530],["Парк «Яркон»","park",44,32.1060,34.9210],
-    ["Кафе «Рош»","cafe",43],["Бар «Рош Найт»","bar",52]
+    ["Кафе «Рош»","cafe",43],["Паб «Якорь»","bar",52]
   ],
   givatayim: [
     ["Кафе «Вайцман»","cafe",49],["Смотровая «Планетарий»","view",43,32.0700,34.8050],
@@ -366,55 +366,55 @@ var RAW = {
     ["Парк «Ход-ха-Шарон»","park",47,32.1550,34.8850],["Кафе «Матаим»","cafe",45],["Бар «Ход Найт»","bar",53]
   ],
   kiryatata: [
-    ["Маркет «Шаарей а-Кирья»","market",46],["Кафе «Ата»","cafe",42],["Парк «Ган а-Ир»","park",36],["Бар «Ата Найт»","bar",51]
+    ["Маркет «Шаарей а-Кирья»","market",46],["Кафе «Ата»","cafe",42],["Парк «Ган а-Ир»","park",36],["Бар «Свои»","bar",51]
   ],
   nahariya: [
     ["Пляж «Галей Галиль»","beach",70,33.0090,35.0910],["Променад «Гаатон»","prom",62,33.0080,35.0980],
-    ["Кафе «Соколь»","cafe",47],["Бар «Нагария Найт»","bar",56]
+    ["Кафе «Соколь»","cafe",47],["Паб «Галей»","bar",56]
   ],
   kiryatgat: [
     ["Маркет «Биг Гат»","market",48],["Кафе «Гат»","cafe",44],["Парк «Ган а-Шалом»","park",37],["Бар «Гат Найт»","bar",54]
   ],
   kiryatmotzkin: [
-    ["Парк «Хай-Парк»","park",52,32.8440,35.0860],["Кафе «Моцкин»","cafe",44],["Бар «Моцкин Найт»","bar",53]
+    ["Парк «Хай-Парк»","park",52,32.8440,35.0860],["Кафе «Моцкин»","cafe",44],["Паб «Бочка»","bar",53]
   ],
   kiryatbialik: [
-    ["Парк «Эйн Афек»","park",45,32.8460,35.1120],["Кафе «Бялик»","cafe",43],["Бар «Бялик Найт»","bar",50]
+    ["Парк «Эйн Афек»","park",45,32.8460,35.1120],["Кафе «Бялик»","cafe",43],["Бар «Стихи»","bar",50]
   ],
   kiryatyam: [
     ["Пляж «Звулун»","beach",68,32.8510,35.0590],["Променад Кирьят-Ям","prom",55],["Кафе «Ям»","cafe",42]
   ],
   maaleadumim: [
     ["Кафе «Адумим»","cafe",44],["Смотровая «Музей Кастеля»","view",40,31.7720,35.2940],
-    ["Парк «Ган а-Цви»","park",35],["Бар «Адумим Найт»","bar",51]
+    ["Парк «Ган а-Цви»","park",35],["Паб «Красные холмы»","bar",51]
   ],
   netivot: [
-    ["Маркет «Биг Нетивот»","market",47],["Кафе «Нетивот»","cafe",43],["Парк «Ган а-Шалом»","park",34],["Бар «Нетивот Найт»","bar",52]
+    ["Маркет «Биг Нетивот»","market",47],["Кафе «Нетивот»","cafe",43],["Парк «Южный»","park",34],["Пиццерия «Нетивот»","cafe",52]
   ],
   arad: [
     ["Кафе «Муза»","cafe",52,31.2610,35.2130],["Смотровая «Мицпе Моав»","view",44,31.2550,35.2350],
-    ["Парк «Ган а-Шалом»","park",33],["Бар «Арад Найт»","bar",49]
+    ["Парк «Пустынный»","park",33],["Бар «Мираж»","bar",49]
   ],
   ofakim: [
-    ["Парк Офаким","park",38,31.3140,34.6220],["Кафе «Офаким»","cafe",41],["Бар «Офаким Найт»","bar",50]
+    ["Парк Офаким","park",38,31.3140,34.6220],["Кафе «Офаким»","cafe",41],["Паб «Горизонт»","bar",50]
   ],
   yehud: [
-    ["Кафе «Йехуд»","cafe",44],["Парк «Ган а-Ир»","park",35],["Бар «Йехуд Найт»","bar",51]
+    ["Кафе «Йехуд»","cafe",44],["Парк «А-Тиква»","park",35],["Бар «Центр»","bar",51]
   ],
   oryehuda: [
-    ["Кафе «Ор»","cafe",43],["Парк «Ган а-Тайасим»","park",36],["Бар «Ор Найт»","bar",50]
+    ["Кафе «Ор»","cafe",43],["Парк «Ган а-Тайасим»","park",36],["Паб «Светлячок»","bar",50]
   ],
   nesciona: [
     ["Маркет «Биг Нес-Циона»","market",49],["Кафе «Нес»","cafe",47],["Парк «Ган а-Мошава»","park",38],["Бар «Нес Найт»","bar",55]
   ],
   elad: [
-    ["Кафе «Эльад»","cafe",40],["Парк Эльада","park",36],["Бар «Эльад Найт»","bar",47]
+    ["Кафе «Эльад»","cafe",40],["Парк Эльада","park",36],["Пиццерия «Эльад»","cafe",47]
   ],
   ramathasharon: [
     ["Кафе «Соколь»","cafe",51,32.1460,34.8410],["Парк «Ган а-Неве»","park",39],["Бар «Шарон Найт»","bar",56]
   ],
   tira: [
-    ["Кафе «Тира»","cafe",46],["Кальянная «Тира»","hookah",50],["Парк «Ган а-Ир»","park",35]
+    ["Кафе «Тира»","cafe",46],["Кальянная «Тира»","hookah",50],["Парк «Оливковый»","park",35]
   ],
   arraba: [
     ["Кафе «Аррабе»","cafe",43],["Кальянная «Аррабе»","hookah",48],["Парк «Оливковая роща»","park",34]
@@ -423,7 +423,7 @@ var RAW = {
     ["Кафе «Сдерот»","cafe",44],["Парк «Ган а-Музика»","park",36],["Бар «Сдерот Найт»","bar",51]
   ],
   tayibe: [
-    ["Кафе «Тайбе»","cafe",45],["Кальянная «Тайбе»","hookah",49],["Парк «Ган а-Ир»","park",34]
+    ["Кафе «Тайбе»","cafe",45],["Кальянная «Тайбе»","hookah",49],["Парк «Акация»","park",34]
   ],
   shfaram: [
     ["Променад «Старый город»","prom",45],["Смотровая «Крепость Шфарам»","view",42,32.8060,35.1700],["Кафе «Шфарам»","cafe",44]
@@ -439,28 +439,28 @@ var RAW = {
     ["Парк «Ган а-Савьоним»","park",36],["Бар «Явне Найт»","bar",53]
   ],
   ummelfahm: [
-    ["Кафе «Умм»","cafe",45],["Смотровая «Джебель Искандар»","view",43,32.5230,35.1560],["Парк «Ган а-Ир»","park",33]
+    ["Кафе «Умм»","cafe",45],["Смотровая «Джебель Искандар»","view",43,32.5230,35.1560],["Парк «У холма»","park",33]
   ],
   tamra: [
-    ["Кафе «Тамра»","cafe",43],["Кальянная «Тамра»","hookah",47],["Парк «Ган а-Ир»","park",33]
+    ["Кафе «Тамра»","cafe",43],["Кальянная «Тамра»","hookah",47],["Парк «Гранатовый»","park",33]
   ],
   beeryaakov: [
-    ["Кафе «Беэр»","cafe",42],["Парк «Ган а-Мошава»","park",35],["Бар «Беэр Найт»","bar",49]
+    ["Кафе «Беэр»","cafe",42],["Парк «Старый колодец»","park",35],["Бар «У колодца»","bar",49]
   ],
   kiryatmalakhi: [
-    ["Кафе «Малахи»","cafe",42],["Парк «Ган а-Ир»","park",34],["Бар «Малахи Найт»","bar",50]
+    ["Кафе «Малахи»","cafe",42],["Парк «Солнечный»","park",34],["Паб «Ангел»","bar",50]
   ],
   yokneam: [
-    ["Кафе «Йокнеам»","cafe",44],["Смотровая «Тель Йокнеам»","view",39,32.6650,35.1080],["Парк «Ган а-Ир»","park",35]
+    ["Кафе «Йокнеам»","cafe",44],["Смотровая «Тель Йокнеам»","view",39,32.6650,35.1080],["Парк «У ручья»","park",35]
   ],
   kafrqasim: [
-    ["Кафе «Касем»","cafe",43],["Кальянная «Касем»","hookah",47],["Парк «Ган а-Шалом»","park",33]
+    ["Кафе «Касем»","cafe",43],["Кальянная «Касем»","hookah",47],["Парк «А-Шаар»","park",33]
   ],
   qalansawa: [
-    ["Кафе «Калансуа»","cafe",42],["Кальянная «Калансуа»","hookah",46],["Парк «Ган а-Ир»","park",32]
+    ["Кафе «Калансуа»","cafe",42],["Кальянная «Калансуа»","hookah",46],["Парк «Тихий»","park",32]
   ],
   ariel: [
-    ["Кафе «Ариэль»","cafe",43],["Смотровая «Ариэль»","view",40,32.1060,35.1840],["Парк «Ган а-Ир»","park",34]
+    ["Кафе «Ариэль»","cafe",43],["Смотровая «Ариэль»","view",40,32.1060,35.1840],["Парк «Верхний»","park",34]
   ],
   maalot: [
     ["Парк «Озеро Монфорт»","park",46,33.0070,35.2860],["Кафе «Маалот»","cafe",42],["Смотровая «Монфорт»","view",41,33.0430,35.2250]
@@ -469,7 +469,7 @@ var RAW = {
     ["Смотровая «Махтеш Рамон»","view",58,30.6110,34.8020],["Променад «Альберт»","prom",50,30.6100,34.8000],["Кафе «Ха-Махтеш»","cafe",45]
   ],
   migdalhaemek: [
-    ["Кафе «Мигдаль»","cafe",41],["Парк «Ган а-Ир»","park",34],["Бар «Мигдаль Найт»","bar",49]
+    ["Кафе «Мигдаль»","cafe",41],["Парк «Кедровый»","park",34],["Бар «Башня»","bar",49]
   ],
   nofhagalil: [
     ["Кафе «Ноф»","cafe",43],["Смотровая «Гора Двора»","view",40,32.7000,35.3550],["Парк «Ган а-Цви»","park",34]
@@ -478,7 +478,7 @@ var RAW = {
     ["Рынок Рахата","market",48,31.3930,34.7550],["Кафе «Рахат»","cafe",42],["Парк «Ган а-Шалом»","park",32]
   ],
   baqa: [
-    ["Кафе «Бака»","cafe",43],["Кальянная «Бака»","hookah",46],["Парк «Ган а-Ир»","park",33]
+    ["Кафе «Бака»","cafe",43],["Кальянная «Бака»","hookah",46],["Парк «Абрикосовый»","park",33]
   ],
   daliyat: [
     ["Променад «Главная улица»","prom",55,32.6930,35.0460],["Кафе «Далия»","cafe",47],["Смотровая «Мухрака»","view",46,32.6730,35.0880]
@@ -502,25 +502,25 @@ var RAW = {
     ["Пляж «Акведукт»","beach",63,32.5150,34.8980],["Кафе «Ор»","cafe",42],["Парк «Ган а-Ям»","park",35]
   ],
   nesher: [
-    ["Парк «Висячие мосты»","park",47,32.7630,35.0500],["Кафе «Нешер»","cafe",42],["Бар «Нешер Найт»","bar",50]
+    ["Парк «Висячие мосты»","park",47,32.7630,35.0500],["Кафе «Нешер»","cafe",42],["Бар «Орёл»","bar",50]
   ],
   kfaryona: [
-    ["Кафе «Йона»","cafe",42],["Парк «Ган а-Йона»","park",35],["Бар «Йона Найт»","bar",49]
+    ["Кафе «Йона»","cafe",42],["Парк «Ган а-Йона»","park",35],["Паб «Голубь»","bar",49]
   ],
   harish: [
-    ["Кафе «Хариш»","cafe",41],["Парк «Ган а-Ир»","park",34],["Бар «Хариш Найт»","bar",48]
+    ["Кафе «Хариш»","cafe",41],["Парк «Новый»","park",34],["Паб «Борозда»","bar",48]
   ],
   modiinillit: [
-    ["Кафе «Модиин-Илит»","cafe",37],["Парк «Ган а-Ир»","park",31]
+    ["Кафе «Модиин-Илит»","cafe",37],["Парк «Семейный»","park",31]
   ],
   beitarillit: [
-    ["Кафе «Бейтар»","cafe",38],["Парк «Ган а-Ир»","park",32],["Смотровая «Гиват а-Бейтар»","view",30]
+    ["Кафе «Бейтар»","cafe",38],["Парк «А-Неве»","park",32],["Смотровая «Гиват а-Бейтар»","view",30]
   ],
   givatshmuel: [
-    ["Кафе «Гиват»","cafe",46],["Парк «Ган а-Шмуэль»","park",37],["Бар «Шмуэль Найт»","bar",52]
+    ["Кафе «Гиват»","cafe",46],["Парк «Ган а-Шмуэль»","park",37],["Бар «У Шмуэля»","bar",52]
   ],
   ganeitikva: [
-    ["Кафе «Ганей»","cafe",44],["Парк «Ган а-Ир»","park",36],["Бар «Ганей Найт»","bar",50]
+    ["Кафе «Ганей»","cafe",44],["Парк «Зелёный»","park",36],["Паб «Надежда»","bar",50]
   ],
   tiratcarmel: [
     ["Пляж «Тират-Кармель»","beach",64,32.7570,34.9550],["Кафе «Тират»","cafe",42],["Парк «Ган а-Ир»","park",34]
@@ -540,9 +540,17 @@ function buildPlaces(city){
   return raw.map(function(r,i){
     var t = TYPES[r[1]];
     var rand = rng(hashStr(city.id + "|" + r[0]));
-    var lat = (typeof r[3] === "number") ? r[3] : city.lat + (rand() - 0.5) * 0.042;
-    var lng = (typeof r[4] === "number") ? r[4] : city.lng + (rand() - 0.5) * 0.052;
-    var rating = Math.round((4.2 + rand() * 0.7) * 10) / 10;
+    var lat, lng;
+    if (typeof r[3] === "number"){ lat = r[3]; lng = r[4]; }
+    else {
+      /* No real coords: deterministic polar placement (seeded by the place
+         id, stable across reloads) within ~600 m of the city centre —
+         not a ±2 km random scatter. */
+      var ang = rand() * Math.PI * 2, radM = Math.sqrt(rand()) * 600;
+      lat = city.lat + (radM * Math.cos(ang)) / 111320;
+      lng = city.lng + (radM * Math.sin(ang)) / (111320 * Math.cos(city.lat * Math.PI / 180));
+    }
+    var rating = Math.round((3.8 + rand() * 1.2) * 10) / 10;
     var song = t.songs[Math.floor(rand() * t.songs.length)];
     var task = t.tasks[Math.floor(rand() * t.tasks.length)];
     return { id:city.id + "-" + i, name:r[0], type:r[1], typeLabel:t.label,
@@ -571,7 +579,7 @@ var state = {
   search: "",
   sort: "heat",
   favs: lsGet("tirada_favs", {}),
-  stats: lsGet("tirada_stats", { nights: 0, places: [], routes: 0, lastDealDay: "", photos: 0 }),
+  stats: lsGet("tirada_stats", { nights: 0, places: [], routes: 0, lastDealDay: "", photos: 0, tasks: 0, questSteps: 0, quests: 0, votes: 0, streak: 0, bestStreak: 0 }),
   vote: lsGet("tirada_vote", null),
   voteLink: null,
   routeDone: lsGet("tirada_route_done", {}),
@@ -595,14 +603,38 @@ function mePos(){
 }
 
 /* ================= Stable heat =================
-   Heat is a deterministic function of the place id and the current
-   15-minute window: it does NOT jump on re-renders or reloads inside the
-   window, the fake-live drift is the same ±2 everywhere, and every
-   counter/card/popup reads the number from this one source. */
+   Heat is a deterministic function of the place id, the current
+   15-minute window and the local time of day: it does NOT jump on
+   re-renders or reloads inside the window, and every counter, card
+   and popup reads the number from this one source. */
 function heatWindow(){ return Math.floor(Date.now() / 900000); }
+/* Honest daily curve (wave 2): the city sleeps at night and peaks in the
+   evening. Anchors are [hour, factor]; between them we interpolate, so
+   02–06 is nearly empty, mornings rise, evenings peak at 20–24. The
+   per-place hash stays as a small ±2 variation inside the curve. */
+var DAY_CURVE = [[0,0.45],[2,0.12],[5,0.08],[7,0.30],[10,0.35],[11,0.50],[16,0.65],[17,0.80],[19,0.85],[20,1.00],[24,1.00]];
+function dayCurveFactor(d){
+  var h = d.getHours() + d.getMinutes() / 60;
+  for (var i = 1; i < DAY_CURVE.length; i++){
+    if (h <= DAY_CURVE[i][0]){
+      var a = DAY_CURVE[i - 1], b = DAY_CURVE[i];
+      return a[1] + (b[1] - a[1]) * ((h - a[0]) / (b[0] - a[0]));
+    }
+  }
+  return 1;
+}
 function heatOf(p){
+  if (!openStatus(p).open) return 0; /* closed by its own hours — no fake buzz */
   var drift = (hashStr(p.id + "@" + heatWindow()) % 5) - 2;
-  return Math.max(6, Math.min(97, p.heat + drift));
+  var v = Math.round(p.heat * dayCurveFactor(new Date())) + drift;
+  return Math.max(0, Math.min(97, v));
+}
+/* The one honest heat label used by cards, sheets and popups: a closed
+   place says «закрыто» instead of a percentage. */
+function heatBadge(p){
+  if (!openStatus(p).open) return "закрыто";
+  var h = heatOf(p);
+  return heatLabel(h) + " · " + h + "%";
 }
 
 /* ================= Russian plurals ================= */
@@ -685,6 +717,82 @@ function countDealNight(){
     state.stats.lastDealDay = today; state.stats.nights++; saveStats(); renderStats();
   }
 }
+
+/* ================= Ghost XP & levels (wave 3) =================
+   XP is DERIVED from the lifetime counters in stats (the same object that
+   syncs to profiles.stats), so it is identical on every device and can be
+   computed for friends from their cloud stats for the leaderboard:
+     задание дня +20 · шаг квеста +15 · квест целиком +100 · маршрут +40 ·
+     ночь в деле +30 · фото места +25 · голос +5 · серия: бонус ниже.
+   Streak bonus is additive and quadratic — min(bestStreak,30)^2 * 2 —
+   because a per-task multiplier cannot be applied retroactively to
+   counters; the best streak is used so XP (and levels) never drop when
+   a streak breaks. */
+var LEVELS = [
+  { xp: 0,    name: "Новичок" },
+  { xp: 100,  name: "Бродяга" },
+  { xp: 250,  name: "Тусовщик" },
+  { xp: 500,  name: "Призрак района" },
+  { xp: 900,  name: "Призрак города" },
+  { xp: 1500, name: "Легенда ночей" },
+  { xp: 2500, name: "Хранитель движа" },
+  { xp: 4000, name: "Миф" }
+];
+function streakBonusXp(best){
+  var s = Math.min(Math.max(0, Math.floor(+best || 0)), 30);
+  return s * s * 2;
+}
+function xpOfStats(raw){
+  var s = normalizeStats(raw);
+  return s.tasks * 20 + s.questSteps * 15 + s.quests * 100 + s.routes * 40 +
+         s.nights * 30 + s.photos * 25 + s.votes * 5 +
+         streakBonusXp(Math.max(s.bestStreak, s.streak));
+}
+function levelOf(xp){
+  var i = 0;
+  while (i + 1 < LEVELS.length && xp >= LEVELS[i + 1].xp) i++;
+  var cur = LEVELS[i], next = LEVELS[i + 1] || null;
+  return { num: i + 1, name: cur.name, xp: xp, next: next,
+           left: next ? next.xp - xp : 0,
+           pct: next ? Math.min(100, Math.round((xp - cur.xp) / (next.xp - cur.xp) * 100)) : 100 };
+}
+function myXp(){ return xpOfStats(state.stats); }
+function renderLevel(){
+  var card = $("#levelCard"); if (!card) return;
+  var xp = myXp(), lv = levelOf(xp), s = state.stats;
+  var bEl = $("#levelBadge"); if (bEl) bEl.textContent = lv.num;
+  var nEl2 = $("#levelName"); if (nEl2) nEl2.textContent = lv.name;
+  var xEl = $("#levelXpText"); if (xEl) xEl.textContent = xp + " XP";
+  var fEl = $("#levelFill"); if (fEl) fEl.style.width = lv.pct + "%";
+  var nxEl = $("#levelNext");
+  if (nxEl) nxEl.textContent = lv.next
+    ? "До уровня " + (lv.num + 1) + " «" + lv.next.name + "» осталось " + lv.left + " XP"
+    : "Максимальный уровень — ты и есть движ 👑";
+  var bd = $("#levelBreakdown");
+  if (bd) bd.textContent = "задания " + (s.tasks * 20) + " · квест " + (s.questSteps * 15 + s.quests * 100) +
+    " · маршруты " + (s.routes * 40) + " · ночи " + (s.nights * 30) + " · фото " + (s.photos * 25) +
+    " · голоса " + (s.votes * 5) + " · серия " + streakBonusXp(Math.max(s.bestStreak, s.streak));
+}
+/* One-time seed for the wave-3 counters: older builds never counted total
+   tasks / quest steps / votes, so derive what is honestly derivable from
+   the local records that DO exist — completed quests from the badge count,
+   quest steps as 5 per finished quest plus this week's progress, tasks at
+   least the current streak, streak mirrored from tirada_streak. From now
+   on every counter is incremented at the real action. */
+function seedStatsWave3(){
+  if (lsGet("tirada_stats_w3", 0)) return;
+  var st = lsGet("tirada_streak", { last: "", streak: 0 });
+  var qb = lsGet("tirada_quest_badges", 0);
+  var q = lsGet("tirada_quest", { week: -1, done: 0 });
+  var s = state.stats;
+  s.quests = Math.max(s.quests || 0, qb);
+  s.questSteps = Math.max(s.questSteps || 0, s.quests * 5 + (q.week === weekIndex() ? (q.done || 0) : 0));
+  s.tasks = Math.max(s.tasks || 0, st.streak || 0);
+  s.streak = Math.max(s.streak || 0, st.streak || 0);
+  s.bestStreak = Math.max(s.bestStreak || 0, st.streak || 0);
+  lsSet("tirada_stats", s);
+  lsSet("tirada_stats_w3", 1);
+}
 function renderStats(){
   var nEl = $("#statNights"), pEl = $("#statPlaces"), rEl = $("#statRoutes"), box = $("#achievements");
   if (!nEl) return;
@@ -697,13 +805,29 @@ function renderStats(){
   if (nl) nl.textContent = pluralRu(state.stats.nights, ["ночь в деле", "ночи в деле", "ночей в деле"]);
   if (pl) pl.textContent = pluralRu(np, ["место открыто", "места открыто", "мест открыто"]);
   if (rl) rl.textContent = pluralRu(state.stats.routes, ["маршрут построен", "маршрута построено", "маршрутов построено"]);
+  renderLevel();
+  if (typeof renderLeaderboard === "function") renderLeaderboard();
   if (!box) return;
+  var s = state.stats;
+  var friendCount = 0;
+  if (typeof friendsRows !== "undefined" && typeof cloudUser !== "undefined" && cloudUser){
+    friendsRows.forEach(function(r){ if (r.status === "accepted") friendCount++; });
+  }
+  var lvNow = levelOf(myXp());
   var ach = [
     { icon:"🏆", name:"Первый движ", have: np >= 1, need: "открой первое место" },
-    { icon:"🗺️", name:"Исследователь", have: np >= 5, need: "ещё " + (5 - np) + " " + placeWord(Math.max(0, 5 - np)) },
-    { icon:"🔥", name:"7 ночей в деле", have: state.stats.nights >= 7, need: "ещё " + Math.max(0, 7 - state.stats.nights) + " " + pluralRu(Math.max(0, 7 - state.stats.nights), ["ночь", "ночи", "ночей"]) },
-    { icon:"🏅", name:"Квест недели", have: lsGet("tirada_quest_badges", 0) >= 1, need: "пройди квест недели на экране «Маршрут»" },
-    { icon:"📸", name:"Глаз города", have: (state.stats.photos || 0) >= 5, need: "ещё " + Math.max(0, 5 - (state.stats.photos || 0)) + " фото на страницах мест" }
+    { icon:"🗺️", name:"Исследователь", have: np >= 5, need: "ещё " + Math.max(0, 5 - np) + " " + placeWord(Math.max(0, 5 - np)) },
+    { icon:"🎯", name:"Задачник", have: s.tasks >= 25, need: "ещё " + Math.max(0, 25 - s.tasks) + " " + pluralRu(Math.max(0, 25 - s.tasks), ["задание дня", "задания дня", "заданий дня"]) },
+    { icon:"🏅", name:"Квест недели", have: s.quests >= 1, need: "пройди квест недели на экране «Маршрут»" },
+    { icon:"🔥", name:"7 ночей в деле", have: s.nights >= 7, need: "ещё " + Math.max(0, 7 - s.nights) + " " + pluralRu(Math.max(0, 7 - s.nights), ["ночь", "ночи", "ночей"]) },
+    { icon:"🧭", name:"Маршрутник", have: s.routes >= 10, need: "ещё " + Math.max(0, 10 - s.routes) + " " + pluralRu(Math.max(0, 10 - s.routes), ["маршрут", "маршрута", "маршрутов"]) },
+    { icon:"📸", name:"Глаз города", have: s.photos >= 5, need: "ещё " + Math.max(0, 5 - s.photos) + " фото на страницах мест" },
+    { icon:"📷", name:"Фотограф города", have: s.photos >= 50, need: "ещё " + Math.max(0, 50 - s.photos) + " фото на страницах мест" },
+    { icon:"🌟", name:"Неделя серии", have: s.bestStreak >= 7, need: "серия заданий 7 дней подряд, сейчас лучшая — " + s.bestStreak },
+    { icon:"🌙", name:"Месяц серии", have: s.bestStreak >= 30, need: "серия заданий 30 дней подряд, сейчас лучшая — " + s.bestStreak },
+    { icon:"⭐", name:"Призрак города", have: lvNow.num >= 5, need: "нужен уровень 5, сейчас " + lvNow.num },
+    { icon:"👻", name:"Первый друг", have: friendCount >= 1, need: "добавь первого друга в блоке «Друзья»" },
+    { icon:"🥂", name:"Своя компания", have: friendCount >= 5, need: "ещё " + Math.max(0, 5 - friendCount) + " " + pluralRu(Math.max(0, 5 - friendCount), ["друг", "друга", "друзей"]) + " в друзья" }
   ];
   box.innerHTML = ach.map(function(a){
     return '<span class="achip' + (a.have ? "" : " locked") + '">' + a.icon + " " + a.name +
@@ -721,7 +845,7 @@ function openPlaceSheet(p){
   $("#placeSheetBody").innerHTML =
     '<div class="ps-art" style="background:' + p.grad + '">' + emojiImg(p.art, "ps-art-img") +
       '<button class="sheet-close ps-close" id="psClose" aria-label="Закрыть">✕</button>' +
-      '<span class="art-heat ' + heatClass(h) + '">' + heatLabel(h) + " · " + h + "%</span></div>" +
+      '<span class="art-heat ' + heatClass(h) + '">' + heatBadge(p) + "</span></div>" +
     '<div class="ps-body">' +
       '<div class="ps-name">' + p.name + "</div>" +
       '<div class="ps-sub">' + p.typeLabel + " · ★ " + fmtRating(p.rating) + "</div>" +
@@ -732,7 +856,7 @@ function openPlaceSheet(p){
         '<div class="ps-row"><span>💸 Цены</span><b>' + priceOf(p) + "</b></div>" +
         '<div class="ps-row"><span>🔞 Возраст</span><b>' + ageOf(p) + "</b></div>" +
         '<div class="ps-row"><span>📏 Расстояние</span><b>' + distFromText(p) + "</b></div>" +
-        '<div class="ps-row"><span>♪ Звучит</span><b>' + p.song + "</b></div>" +
+        '<div class="ps-row"><span>🎵 Вайб места</span><b>' + p.song + "</b></div>" +
       "</div>" +
       '<div class="ps-task">🎯 ' + p.task + "</div>" +
       '<div class="ps-actions">' +
@@ -868,18 +992,20 @@ function updateMeMarker(){
   if (meMarker) meMarker.getElement().innerHTML = ghostHtml();
 }
 function myPopupHtml(){
+  var xp = myXp(), lv = levelOf(xp);
   return '<div class="pop-card">' +
     '<div class="pop-head me"><div class="pop-name">Это ты — призрак #' + ghostNumber() + '</div><span class="pop-tag">ты</span></div>' +
     '<div class="pop-status">' + MODES[state.mode].mapStatus + '</div>' +
+    '<div class="pop-level">⭐ Уровень ' + lv.num + ' · ' + lv.name + ' · ' + xp + ' XP</div>' +
     '<div class="pop-note">Сменить вид и режим — на экране «Профиль».</div></div>';
 }
 function popupHtml(p){
   var h = heatOf(p), hc = heatClass(h);
   return '<div class="pop-card">' +
     '<div class="pop-head ' + hc + '"><div class="pop-name">' + p.name + '</div>' +
-    '<span class="pop-heat-badge ' + hc + '">' + heatLabel(h) + ' · ' + h + '%</span></div>' +
+    '<span class="pop-heat-badge ' + hc + '">' + heatBadge(p) + '</span></div>' +
     '<div class="pop-meta">★ ' + fmtRating(p.rating) + ' · ' + distFromText(p) + '</div>' +
-    '<div class="pop-song">♪ ' + p.song + '</div>' +
+    '<div class="pop-song">🎵 Вайб места: ' + p.song + '</div>' +
     '<button class="pop-btn route-btn" data-route-place="' + p.id + '">🚗 Маршрут сюда</button>' +
     '<button class="pop-btn" data-place-open="' + p.id + '">Смотреть место →</button></div>';
 }
@@ -986,7 +1112,7 @@ function initMapLayers(){
       feats.push({
         type: "Feature",
         geometry: { type: "Point", coordinates: [p.lng, p.lat] },
-        properties: { id: p.id, name: p.name, city: c.name, heat: heatOf(p), band: heatClass(heatOf(p)) }
+        properties: { id: p.id, name: p.name, city: c.name, heat: heatOf(p), band: heatClass(heatOf(p)), closed: openStatus(p).open ? 0 : 1 }
       });
     });
   });
@@ -1008,7 +1134,7 @@ function initMapLayers(){
     if (dotPopup) dotPopup.remove();
     dotPopup = makePopup('<div class="pop-card">' +
       '<div class="pop-head ' + pr.band + '"><div class="pop-name">' + pr.name + '</div>' +
-      '<span class="pop-heat-badge ' + pr.band + '">движ ' + pr.heat + '%</span></div>' +
+      '<span class="pop-heat-badge ' + pr.band + '">' + (pr.closed ? "закрыто" : "движ " + pr.heat + "%") + '</span></div>' +
       '<div class="pop-meta">' + pr.city + '</div>' +
       '<button class="pop-btn" data-place-open="' + pr.id + '">Смотреть место →</button></div>', 12);
     dotPopup.setLngLat(f.geometry.coordinates).addTo(map);
@@ -1318,15 +1444,15 @@ function placeCard(p, i){
   return '<article class="place-card' + (p.id === TOP_ID ? ' top-card' : '') + '" data-id="' + p.id + '" style="animation-delay:' + (Math.min(i, 10) * 0.06).toFixed(2) + 's">' +
     '<div class="place-art" style="background:' + p.grad + '">' + emojiImg(p.art, "art-img") + badge +
     '<button class="fav-btn' + (fav ? " active" : "") + '" data-fav="' + p.id + '" aria-label="В избранное">' + (fav ? "❤️" : "🤍") + '</button>' +
-    '<span class="art-heat ' + hc + '">' + heatLabel(h) + ' · ' + h + '%</span></div>' +
+    '<span class="art-heat ' + hc + '">' + heatBadge(p) + '</span></div>' +
     '<div class="place-body">' +
       '<div class="place-top"><div><div class="place-name">' + p.name + '</div>' +
       '<div class="place-type">' + p.typeLabel + ' · ' + distFromText(p) + '</div></div>' +
       '<div class="place-rating">★ ' + fmtRating(p.rating) + '</div></div>' +
       '<div class="heat-row"><div class="heat-bar"><div class="heat-fill ' + hc + '" style="width:' + h + '%"></div></div>' +
-      '<div class="heat-label ' + hc + '">' + heatLabel(h) + ' · ' + h + '%</div></div>' +
+      '<div class="heat-label ' + hc + '">' + heatBadge(p) + '</div></div>' +
       '<div class="tags">' + p.tags.map(function(t){ return '<span class="tag">' + t + '</span>'; }).join("") + '</div>' +
-      '<div class="song">♪ <b>' + p.song + '</b> — звучит в этом месте</div>' +
+      '<div class="song">🎵 <b>' + p.song + '</b> — трек под настроение места</div>' +
       '<button class="btn-route-to" data-route-card="' + p.id + '">🚗 Маршрут</button>' +
     '</div></article>';
 }
@@ -1383,24 +1509,44 @@ function updatePlaceCard(p){
   var h = heatOf(p), hc = heatClass(h);
   var fill = card.querySelector(".heat-fill"), lbl = card.querySelector(".heat-label"), art = card.querySelector(".art-heat");
   if (fill){ fill.style.width = h + "%"; fill.className = "heat-fill " + hc; }
-  if (lbl){ lbl.textContent = heatLabel(h) + " · " + h + "%"; lbl.className = "heat-label " + hc; }
-  if (art){ art.textContent = heatLabel(h) + " · " + h + "%"; art.className = "art-heat " + hc; }
+  if (lbl){ lbl.textContent = heatBadge(p); lbl.className = "heat-label " + hc; }
+  if (art){ art.textContent = heatBadge(p); art.className = "art-heat " + hc; }
 }
 
 /* ================= Counter & ticker ================= */
 function hotCount(){ return places().filter(function(p){ return heatOf(p) >= 70; }).length; }
+/* Real published-photo count for the current city, read from the
+   place_photos table (wave 2 honesty: the counter and the ticker only
+   ever show numbers the app actually has — no invented crowds). */
+var cityPhotoCount = null; /* null = not loaded / unavailable */
+function refreshCityPhotoCount(){
+  cityPhotoCount = null;
+  if (typeof db === "undefined" || !db) return;
+  var cityId = state.city.id;
+  var ids = places().map(function(p){ return p.id; });
+  db.from("place_photos").select("id", { count: "exact", head: true })
+    .in("place_id", ids).eq("hidden", false).lt("reports", 3)
+    .then(function(res){
+      if (res.error || state.city.id !== cityId) return;
+      cityPhotoCount = res.count || 0;
+      updateCounter();
+      buildTicker();
+    }, function(){});
+}
 function updateCounter(){
   var hot = hotCount(), total = places().length;
-  $("#counterText").innerHTML = "в городе: <b>" + hot + " " + hotWord(hot) + "</b> сейчас • всего " + total + " " + placeWord(total) + " на радаре";
+  var txt = "в городе: <b>" + hot + " " + hotWord(hot) + "</b> сейчас • всего " + total + " " + placeWord(total) + " на радаре";
+  if (cityPhotoCount) txt += " • 📸 фото призраков: <b>" + cityPhotoCount + "</b>";
+  $("#counterText").innerHTML = txt;
 }
 function buildTicker(){
-  var top = hottest();
+  var open = hottest().filter(function(p){ return openStatus(p).open; });
   var items = [];
-  if (top[0]) items.push("🔥 <i>" + top[0].name + "</i> сейчас на пике — движ " + heatOf(top[0]) + "%");
-  items.push("📍 <i>" + state.city.name + "</i>: " + hotCount() + " " + hotWord(hotCount()) + " прямо сейчас");
-  if (top[1]) items.push("⚡ <i>" + top[1].name + "</i> — движ " + heatOf(top[1]) + "%, почти пик");
-  if (top[2]) items.push("♪ В <i>" + top[2].name + "</i> звучит " + top[2].song);
-  if (top[0]) items.push("🌙 Маршрут на вечер по городу <i>" + state.city.name + "</i> уже собран");
+  if (open[0]) items.push("🔥 <i>" + open[0].name + "</i> — самый живой движ по радару сейчас: " + heatOf(open[0]) + "%");
+  items.push("📍 <i>" + state.city.name + "</i>: " + places().length + " " + placeWord(places().length) + " на радаре, " + hotCount() + " " + hotWord(hotCount()) + " прямо сейчас");
+  if (cityPhotoCount) items.push("📸 Призраки опубликовали в городе уже " + cityPhotoCount + " фото — загляни в карточки мест");
+  if (open[1]) items.push("🎵 Вайб места <i>" + open[1].name + "</i>: " + open[1].song + " — трек под настроение");
+  items.push("🗺️ Маршрутов ты построил: " + state.stats.routes + " — вечер собирается на экране «Маршрут»");
   var html = items.map(function(t){ return '<span class="tick-item">' + t + '</span>'; }).join("");
   $("#tickerTrack").innerHTML = html + html;
 }
@@ -1674,6 +1820,7 @@ function setCity(id){
   $("#citySheet").hidden = true;
   var cs = $("#citySearch"); if (cs) cs.value = "";
   renderFilter(); renderPlaces(); updateCounter(); buildTicker(); buildRoute();
+  refreshCityPhotoCount();
   if (map){
     clearRoute();
     renderMapMarkers();
@@ -1691,8 +1838,9 @@ $("#citySheet").addEventListener("click", function(e){ if (e.target === this) th
 /* ================= Deal overlay ================= */
 function hottest(){ return places().slice().sort(function(a,b){ return heatOf(b) - heatOf(a); }); }
 /* Voting for the meetup place: the 3 hottest places of the city (or the 3
-   from a shared #vote= link). Only YOUR honest local vote is stored and
-   shown — no invented percentages, no fake friends' votes. */
+   from a shared #vote= link). Votes live in the votes table and count for
+   signed-in ghosts only; a guest is offered sign-in and nothing is
+   recorded — no invented percentages, no fake friends' votes. */
 function dealCandidates(){
   if (state.voteLink && state.voteLink.length){
     var out = [];
@@ -1706,7 +1854,9 @@ function dealCandidates(){
 }
 function voteHtml(){
   var cands = dealCandidates();
-  var mine = (state.vote && state.vote.cityId === state.city.id) ? state.vote.placeId : null;
+  /* A guest has no vote: only a signed-in ghost's vote exists (wave 2 —
+     no more local fake votes that never reach the votes table). */
+  var mine = (cloudUser && state.vote && state.vote.cityId === state.city.id) ? state.vote.placeId : null;
   var mineName = null;
   cands.forEach(function(p){ if (p.id === mine) mineName = p.name; });
   return '<div class="vote-box"><h4>🗳️ Куда идём?</h4>' +
@@ -1715,11 +1865,11 @@ function voteHtml(){
         ? '<span class="vote-count" data-vcount="' + p.id + '">' + ((typeof cloudVoteCounts !== "undefined" && cloudVoteCounts && cloudVoteCounts[p.id]) || 0) + "</span>"
         : "";
       return '<button class="vote-btn' + (p.id === mine ? " chosen" : "") + '" data-vote="' + p.id + '">' +
-        '<span>' + p.name + '</span>' + cnt + '<span class="vote-heat">' + heatOf(p) + "%</span></button>";
+        '<span>' + p.name + '</span>' + cnt + '<span class="vote-heat">' + (openStatus(p).open ? heatOf(p) + "%" : "закрыто") + "</span></button>";
     }).join("") + "</div>" +
     (mineName
       ? '<div class="vote-mine">Твой голос: <b>' + mineName + "</b></div>"
-      : '<div class="vote-mine dim">Тапни место — это будет твой голос</div>') +
+      : '<div class="vote-mine dim">' + (cloudUser ? "Тапни место — это будет твой голос" : "Войди, чтобы твой голос засчитался") + "</div>") +
     '<button class="btn-alt vote-share" id="voteShare">Позвать голосовать 👻</button></div>';
 }
 function renderDeal(place){
@@ -1735,26 +1885,15 @@ function renderDeal(place){
     '</div>' +
     '<div class="deal-meet"><div style="text-align:center"><span class="deal-top-badge">🏆 Топ выбор радара</span></div>' +
     '<div class="meet-place">📍 А движ уже есть: ' + place.name + '</div>' +
-    '<div class="meet-meta">Город ' + state.city.name + ' · сейчас там ' + heatLabel(heatOf(place)).replace("🔥 ","") + ' (движ ' + heatOf(place) + '%), ' +
+    '<div class="meet-meta">Город ' + state.city.name + ' · ' + (openStatus(place).open
+      ? 'сейчас там ' + heatLabel(heatOf(place)).replace("🔥 ","") + ' (движ ' + heatOf(place) + '%)'
+      : 'сейчас это место закрыто — движ по радару нулевой') + ', ' +
       distFromText(place) + '. Можно стартовать отсюда — друзья подтянутся по ссылке.</div>' +
     '<div class="indeal-actions">' +
     '<button class="btn-route-deal" id="dealRoute">🚗 Маршрут</button>' +
     '<button class="btn-alt" id="dealAlt">Другое место</button></div></div>' +
     voteHtml() + '</div>';
-  $("#dealInvite").addEventListener("click", function(){
-    var shareData = {
-      title: "TiradA anon",
-      text: "Я в деле 👻 Собираемся: " + state.city.name + ", " + place.name + ". Залетай!",
-      url: location.href
-    };
-    if (navigator.share){
-      navigator.share(shareData).catch(function(err){
-        if (!err || err.name !== "AbortError") toast("Ссылка-приглашение скоро появится 👻");
-      });
-    } else {
-      toast("Ссылка-приглашение скоро появится 👻");
-    }
-  });
+  $("#dealInvite").addEventListener("click", shareFriendInvite);
   $("#dealRoute").addEventListener("click", function(){ routeTo(place); });
   $("#dealAlt").addEventListener("click", function(){
     state.dealAlt++;
@@ -1762,9 +1901,18 @@ function renderDeal(place){
   });
   $$("#dealBody [data-vote]").forEach(function(btn){
     btn.addEventListener("click", function(){
-      state.vote = { cityId: state.city.id, placeId: btn.getAttribute("data-vote") };
+      if (!cloudUser){
+        /* Guest: no vote is recorded anywhere — offer sign-in instead. */
+        toast("Войди, чтобы твой голос засчитался 🗳️");
+        $("#loginModal").hidden = false;
+        return;
+      }
+      var newVoteId = btn.getAttribute("data-vote");
+      var voteChanged = !state.vote || state.vote.cityId !== state.city.id || state.vote.placeId !== newVoteId;
+      state.vote = { cityId: state.city.id, placeId: newVoteId };
       lsSet("tirada_vote", state.vote);
       cloudCastVote(state.vote.placeId);
+      if (voteChanged){ state.stats.votes++; saveStats(); renderStats(); }
       renderDeal(place);
       toast("Голос принят 🗳️");
     });
@@ -2004,7 +2152,70 @@ var DAILY_TASKS = [
   "Устрой мини-пикник: любой перекус на скамейке с лучшим видом",
   "Сфоткай первый попавшийся красный предмет — он твой талисман на вечер",
   "Найди улицу, названную в честь кого-то, и узнай, кто это был",
-  "Сделай последнее фото вечера: вся компания и одна фраза, как прошла ночь"
+  "Сделай последнее фото вечера: вся компания и одна фраза, как прошла ночь",
+  "Найди самую старую скамейку в парке и сфотографируй её табличку или следы времени",
+  "Сфотографируй очередь: в пекарню, к банкомату, куда угодно — город в ожидании",
+  "Пройди один квартал, считая все балконы с цветами, и сфоткай лучший",
+  "Найди место, где город пахнет морем, хлебом или дождём, и постой там минуту",
+  "Сделай фото вывески, где буква сломалась или погасла, — найди в этом новый смысл",
+  "Покажи другу двор, в котором он точно никогда не был",
+  "Сфотографируй три двери разных цветов за одну прогулку",
+  "Найди уличный фонарь, который уже горит днём, и сфоткай его — город тоже устаёт",
+  "Сделай селфи с отражением заката в окне машины",
+  "Найди дерево, обнявшее забор, скамейку или знак, и сфотографируй их союз",
+  "Прогуляйся до ближайшей воды и сфоткай, как город отражается в ней",
+  "Найди граффити, где есть глаза, и сделай фото «город смотрит на тебя»",
+  "Устрой гонку теней: чья тень длиннее на закате — зафиксируй фото",
+  "Сфотографируй самый маленький домик или пристройку, что найдёшь",
+  "Найди место, где слышно сразу три звука города, и запиши их на видео",
+  "Покажи новому другу место, где ты впервые поцеловался или влюбился — без подробностей, просто место",
+  "Сфоткай кота на крыше, балконе или подоконнике — высотного кота",
+  "Пройди 300 шагов строго на север и сфотографируй, куда пришёл",
+  "Найди лавку, где сидят старожилы, и поздоровайся с ними",
+  "Сделай фото своей компании через витрину кафе — как кадр из фильма",
+  "Сфотографируй небо через крону дерева — природную рамку",
+  "Найди дом, где на балконе сушится что-то яркое, и сфоткай этот флаг вечера",
+  "Купи самое дешёвое мороженое рядом и съешь его на лучшей скамейке",
+  "Сфотографируй часы — уличные, на здании или на руке прохожего (с разрешения)",
+  "Найди лестницу, уходящую в небо на фоне заката, и сфоткай силуэт",
+  "Сделай фото, где все в компании показывают на одну точку вдали",
+  "Прогуляйся по улице, где ты был сто раз, и найди деталь, которой раньше не замечал, — фото в студию",
+  "Сфотографируй первый огонь, который зажёгся в окнах с наступлением темноты",
+  "Найди место, где две улицы спорят: сфотографируй перекрёсток сверху или с угла",
+  "Научи компанию одному жесту или слову из другого языка прямо на улице",
+  "Сфоткай самую уютную подворотню или арку с тёплым светом",
+  "Найди и сфотографируй велосипедную дорожку, уходящую вдаль",
+  "Сделай групповое фото, где все стоят как супергерои на постере",
+  "Найди старую афишу или объявление на столбе и сфотографируй — городская археология",
+  "Сфотографируй свои и друга шаги: четыре ботинка в ряд на красивом асфальте",
+  "Пройди вдоль забора или стены ровно 2 минуты и сфоткай, что за углом",
+  "Найди место с эхом и проверь его хлопком — запиши на видео",
+  "Сфоткай самую красивую цифру номера дома, что встретишь за вечер",
+  "Покажи другу место, где город заканчивается и начинается природа",
+  "Сделай фото полной луны сквозь ветки или между домами",
+  "Найди уличную библиотеку, будку обмена книгами или полку — сфотографируй",
+  "Сфотографируй компанию в лифте, на эскалаторе или в автобусе — движ в движении",
+  "Найди цветок, пробившийся сквозь асфальт, и сфотографируй героя",
+  "Устрой фотоохоту: первый, кто найдёт предмет на букву «К», выигрывает — фото-доказательство обязательно",
+  "Сфоткай закат так, чтобы в кадре был силуэт друга в прыжке",
+  "Найди место, где можно услышать тишину в центре города, и посиди там 3 минуты",
+  "Сделай фото ночного неба и найди хотя бы одно созвездие",
+  "Сфотографируй отражение неоновой вывески в мокром асфальте или луже",
+  "Пройди целый мост пешком и сфотографируй оба берега",
+  "Найди и сфотографируй самый необычный почтовый ящик или дверь подъезда",
+  "Покажи другу закат с точки, где его ещё никто из компании не встречал",
+  "Сфоткай три пары: парочки на скамейках — город влюблён (издалека, без лиц крупным планом)",
+  "Найди место, где пахнет скошенной травой, и полежи на ней 5 минут",
+  "Сделай фото своей тени на стене дома — уличный автопортрет",
+  "Сфотографируй очередь огней: улицу фонарей, уходящую в перспективу",
+  "Найди мемориальную табличку и узнай, кому она посвящена, — фото и один факт другу",
+  "Угости незнакомца на лавочке конфетой или жвачкой — просто так",
+  "Сфоткай компанию со спины на фоне города — постер вашего вечера",
+  "Найди самую высокую пальму или дерево рядом и сфотографируй снизу вверх",
+  "Пройди 10 минут, сворачивая только направо, и сфотографируй финальную точку",
+  "Сделай первое фото ночи: ровно в момент, когда включаются уличные фонари",
+  "Найди скамейку, с которой видно сразу два района города, и сфотографируй панораму",
+  "Сфотографируй, как город готовится спать: закрывающиеся ставни, последние огни кафе"
 ];
 var WEEK_QUESTS = [
   { theme:"Город в кадре", steps:[
@@ -2054,7 +2265,31 @@ var WEEK_QUESTS = [
     "Найди улицу, которая ночью красивее, чем днём",
     "Сфотографируй луну или ночное небо над городом",
     "Найди ночное кафе или место, открытое после 23:00",
-    "Сделай финальное ночное фото компании в огнях города" ] }
+    "Сделай финальное ночное фото компании в огнях города" ] },
+  { theme:"Закаты недели", steps:[
+    "Встреть первый закат недели на открытой точке",
+    "Сфотографируй закат через ветки, перила или решётку",
+    "Найди закат, отражающийся в окнах дома",
+    "Встреть закат у воды или на высоте — что ближе",
+    "Собери компанию на финальный закат недели и сделайте общее фото" ] },
+  { theme:"Скрытые дворы", steps:[
+    "Найди двор, в который никогда не заходил, и загляни",
+    "Сфотографируй самый уютный двор: скамейки, цветы, коты",
+    "Найди арку или проход, сокращающий путь, — проверь сам",
+    "Найди во дворе что-то из прошлого века и сфотографируй",
+    "Покажи другу лучший найденный двор недели" ] },
+  { theme:"Люди города", steps:[
+    "Пожелай хорошего вечера трём незнакомцам",
+    "Спроси у прохожего его любимое место в городе (и сходи туда)",
+    "Сфотографируй уличного артиста, музыканта или художника (с разрешения)",
+    "Помоги туристу или новому жителю сориентироваться",
+    "Собери компанию из старых и новых знакомых на одной точке" ] },
+  { theme:"Город на вкус и запах", steps:[
+    "Найди пекарню по запаху с улицы и зайди",
+    "Попробуй уличную еду, которую ещё не пробовал",
+    "Найди место, где пахнет кофе на всю улицу, и выпей там кофе",
+    "Купи сезонный фрукт на рынке и съешь его на скамейке",
+    "Устрой дегустацию: три места — три маленьких вкуса за один вечер" ] }
 ];
 function dayIndex(){ return Math.floor(Date.now() / 86400000); }
 function todayKey(){ return new Date().toDateString(); }
@@ -2070,7 +2305,16 @@ function renderTasks(){
   btn.disabled = doneToday;
   btn.textContent = doneToday ? "Выполнено ✓" : "Выполнено 📸 — нужно фото";
   btn.classList.toggle("done", doneToday);
-  var line = "🔥 Серия: " + st.streak + " " + pluralRu(st.streak, ["день", "дня", "дней"]) + (doneToday ? " — так держать!" : " — отметь задание, чтобы серия росла");
+  /* Mirror the streak into the synced stats: XP and the series badges are
+     computed from stats, including for the friends leaderboard. */
+  if (state.stats.streak !== st.streak || st.streak > (state.stats.bestStreak || 0)){
+    state.stats.streak = st.streak;
+    state.stats.bestStreak = Math.max(state.stats.bestStreak || 0, st.streak);
+    saveStats();
+  }
+  var line = "🔥 Серия: " + st.streak + " " + pluralRu(st.streak, ["день", "дня", "дней"]) +
+    " · бонус серии к XP: +" + streakBonusXp(st.streak) +
+    (doneToday ? " — так держать!" : " — отметь задание, чтобы серия росла");
   $("#streakLine").textContent = line;
   var ps = $("#profileStreak"); if (ps) ps.textContent = line;
   var q = weekQuest();
@@ -2094,11 +2338,13 @@ function renderTasks(){
         if (cur.week !== weekIndex()) cur = { week: weekIndex(), done: 0 };
         cur.done = Math.min(weekQuest().steps.length, cur.done + 1);
         lsSet("tirada_quest", cur);
+        state.stats.questSteps++;
         if (cur.done >= weekQuest().steps.length){
           lsSet("tirada_quest_badges", lsGet("tirada_quest_badges", 0) + 1);
-          renderStats();
+          state.stats.quests++;
+          saveStats(); renderStats();
           toast("Квест недели пройден! Бейдж в профиле 🏅");
-        } else toast("Шаг квеста засчитан 🗺️");
+        } else { saveStats(); renderStats(); toast("Шаг квеста засчитан 🗺️"); }
         renderTasks();
       });
     });
@@ -2116,6 +2362,10 @@ $("#dailyDoneBtn").addEventListener("click", function(){
     st2.streak = (st2.last === y) ? st2.streak + 1 : 1;
     st2.last = todayKey();
     lsSet("tirada_streak", st2);
+    state.stats.tasks++;
+    state.stats.streak = st2.streak;
+    state.stats.bestStreak = Math.max(state.stats.bestStreak || 0, st2.streak);
+    saveStats(); renderStats();
     renderTasks();
     toast("Задание дня выполнено 🔥 Серия: " + st2.streak);
   });
@@ -2134,7 +2384,10 @@ var cloudUser = null, cloudSession = null, cloudSyncTimer = null,
 function cloudStatsPayload(){
   return { nights: state.stats.nights, places: state.stats.places,
            routes: state.stats.routes, lastDealDay: state.stats.lastDealDay || "",
-           photos: state.stats.photos || 0 };
+           photos: state.stats.photos || 0, tasks: state.stats.tasks || 0,
+           questSteps: state.stats.questSteps || 0, quests: state.stats.quests || 0,
+           votes: state.stats.votes || 0, streak: state.stats.streak || 0,
+           bestStreak: state.stats.bestStreak || 0 };
 }
 /* Nicknames are unique case-insensitively in the DB (unique index on
    lower(name)). A clash surfaces as Postgres 23505 on the profile upsert —
@@ -2173,10 +2426,13 @@ function scheduleCloudSync(){
   cloudSyncTimer = setTimeout(cloudSyncNow, 700);
 }
 function normalizeStats(s){
-  var d = { nights: 0, places: [], routes: 0, lastDealDay: "", photos: 0 };
+  var d = { nights: 0, places: [], routes: 0, lastDealDay: "", photos: 0,
+            tasks: 0, questSteps: 0, quests: 0, votes: 0, streak: 0, bestStreak: 0 };
   if (!s) return d;
   return { nights: +s.nights || 0, places: Array.isArray(s.places) ? s.places : [],
-           routes: +s.routes || 0, lastDealDay: s.lastDealDay || "", photos: +s.photos || 0 };
+           routes: +s.routes || 0, lastDealDay: s.lastDealDay || "", photos: +s.photos || 0,
+           tasks: +s.tasks || 0, questSteps: +s.questSteps || 0, quests: +s.quests || 0,
+           votes: +s.votes || 0, streak: +s.streak || 0, bestStreak: +s.bestStreak || 0 };
 }
 function applyCitySilent(id){
   state.city = cityById(id);
@@ -2200,7 +2456,19 @@ function applyRemoteProfile(row){
   }
   state.avatarUrl = row.avatar_url || null;
   lsSet("tirada_avatar_url", state.avatarUrl);
-  if (row.stats){ state.stats = normalizeStats(row.stats); saveStats(); }
+  if (row.stats){
+    /* Monotonic merge: lifetime counters only ever grow, so take the max of
+       cloud and local per counter (an older build's cloud stats must not
+       wipe counters it never wrote) and union the opened-places list. */
+    var rs = normalizeStats(row.stats), ls = state.stats;
+    ["nights", "routes", "photos", "tasks", "questSteps", "quests", "votes", "streak", "bestStreak"].forEach(function(k){
+      rs[k] = Math.max(rs[k] || 0, ls[k] || 0);
+    });
+    var seenP = {};
+    rs.places.concat(ls.places || []).forEach(function(id){ seenP[id] = 1; });
+    rs.places = Object.keys(seenP);
+    state.stats = rs; saveStats();
+  }
   if (Array.isArray(row.favorites)){
     state.favs = {};
     row.favorites.forEach(function(id){ state.favs[id] = 1; });
@@ -2426,6 +2694,7 @@ function publishPhoto(blob, place, vis){
           toast("Фото не опубликовалось — чек-ин всё равно засчитан");
           return false;
         }
+        refreshCityPhotoCount();
         return true;
       }, function(){ return false; });
     }, function(){ toast("Фото не загрузилось в облако — чек-ин всё равно засчитан"); return false; });
@@ -2739,7 +3008,7 @@ function friendsLoad(){
           friendsLoaded = true; renderFriends(); renderFriendResults(); renderDealFriends();
         });
       };
-      return db.from("profiles").select("id,name,avatar,avatar_url,city,online,last_seen,mode").in("id", list)
+      return db.from("profiles").select("id,name,avatar,avatar_url,city,online,last_seen,mode,stats").in("id", list)
         .then(doneLoad, doneLoad);
     }, function(){ friendsLoading = false; renderFriends(); });
 }
@@ -2758,9 +3027,55 @@ function bindFriendButtons(root){
     b.addEventListener("click", function(){ friendsDelete(b.getAttribute("data-fremove"), "Друг удалён"); });
   });
 }
+/* ---- Friends leaderboard (wave 3): you + accepted friends by XP ----
+   Friend XP is computed from their cloud profiles.stats with the same
+   xpOfStats() formula — nobody is invented, a friend without stats is 0. */
+function renderLeaderboard(){
+  var box = $("#leaderboardBox"), list = $("#leaderboardList");
+  if (!box || !list) return;
+  if (!cloudUser){ box.hidden = true; return; }
+  var rows = [{ id: cloudUser.id, name: state.nick || "Призрак", me: true,
+                avatarHtml: currentAvatarHtml(), stats: state.stats }];
+  if (friendsLoaded){
+    friendsRows.forEach(function(r){
+      if (r.status !== "accepted") return;
+      var oid = (r.requester === cloudUser.id) ? r.addressee : r.requester;
+      var p = friendsProfiles[oid];
+      if (p) rows.push({ id: oid, name: p.name || "Призрак", me: false,
+                         avatarHtml: friendAvatarHtml(p), stats: p.stats });
+    });
+  }
+  rows.forEach(function(r){ r.xp = xpOfStats(r.stats); r.lv = levelOf(r.xp); });
+  rows.sort(function(a, b){ return b.xp - a.xp; });
+  box.hidden = false;
+  list.innerHTML = rows.map(function(r, i){
+    return '<div class="lb-row' + (r.me ? " me" : "") + '">' +
+      '<span class="lb-rank">' + (i + 1) + "</span>" +
+      '<span class="friend-ava">' + r.avatarHtml + "</span>" +
+      '<span class="friend-info"><span class="friend-name">' + escHtml(r.name) + (r.me ? " (ты)" : "") + "</span>" +
+      '<span class="friend-meta">Уровень ' + r.lv.num + " · " + r.lv.name + "</span></span>" +
+      '<span class="lb-xp">' + r.xp + " XP</span></div>";
+  }).join("") + (rows.length < 2
+    ? '<div class="friend-empty">Добавь друзей — и соревнуйтесь, кто больше в движе 🏆</div>' : "");
+}
+/* ---- Incoming-request badge: profile tab + friends header ---- */
+function pendingRequestsCount(){
+  if (!cloudUser || !friendsLoaded) return 0;
+  var n = 0;
+  friendsRows.forEach(function(r){
+    if (r.status === "pending" && r.addressee === cloudUser.id) n++;
+  });
+  return n;
+}
+function updateReqBadges(){
+  var n = pendingRequestsCount();
+  var t = $("#tabReqBadge"); if (t){ t.hidden = n === 0; t.textContent = n; }
+  var f = $("#friendsReqBadge"); if (f){ f.hidden = n === 0; f.textContent = n; }
+}
 function renderFriends(){
   var g = $("#friendsGuest"), u = $("#friendsUser");
   if (!g || !u) return;
+  updateReqBadges(); renderLeaderboard();
   if (!db || !cloudUser){ g.hidden = false; u.hidden = true; return; }
   g.hidden = true; u.hidden = false;
   var box = $("#friendSections");
@@ -2891,7 +3206,7 @@ function friendsReset(){
   friendsRows = []; friendsProfiles = {}; friendSearchResults = [];
   friendsLoaded = false;
   var r = $("#friendResults"); if (r) r.innerHTML = "";
-  renderFriends();
+  renderFriends(); updateReqBadges();
 }
 /* Accepted friends who are "in deal" right now (profiles.online) for the
    «Я в деле» overlay. Empty list → the overlay keeps its old empty text. */
@@ -3011,7 +3326,7 @@ function refreshFriendMarkers(){
       var list = Object.keys(ids);
       if (!list.length){ syncFriendMarkers({}); finish(); return; }
       return db.from("profiles")
-        .select("id,name,avatar,avatar_url,online,last_seen,mode")
+        .select("id,name,avatar,avatar_url,online,last_seen,mode,stats")
         .in("id", list)
         .then(function(pr){
           if (pr.error || !pr.data){ finish(); return; }
@@ -3087,16 +3402,19 @@ function maybeShowAddFriend(){
   var sh = $("#addFriendSheet");
   if (sh) sh.hidden = false;
 }
-var friendInviteBtn = $("#friendInviteBtn");
-if (friendInviteBtn) friendInviteBtn.addEventListener("click", function(){
-  if (!cloudUser){ toast("Войди — и ссылка-приглашение станет твоей 👻"); return; }
+/* The one working invite: <origin>/?add=<my profile id> (wave 1). Every
+   «Позвать друзей» surface uses this — no dead-end placeholders. */
+function shareFriendInvite(){
+  if (!cloudUser){ toast("Войди — и ссылка-приглашение станет твоей 👻"); $("#loginModal").hidden = false; return; }
   var link = location.origin + location.pathname + "?add=" + cloudUser.id;
   if (navigator.share){
     navigator.share({ title: "TiradA anon 👻", text: "Добавляйся в друзья в TiradA anon — будем видеть друг друга на карте движа", url: link }).catch(function(){});
   } else if (navigator.clipboard) {
     navigator.clipboard.writeText(link).then(function(){ toast("Ссылка-приглашение скопирована 🔗 Отправь её другу"); }, function(){ toast(link); });
   } else toast(link);
-});
+}
+var friendInviteBtn = $("#friendInviteBtn");
+if (friendInviteBtn) friendInviteBtn.addEventListener("click", shareFriendInvite);
 var addFriendSheetEl = $("#addFriendSheet");
 function closeAddFriendSheet(){ if (addFriendSheetEl) addFriendSheetEl.hidden = true; addFriendTarget = null; }
 var addFriendCloseBtn = $("#addFriendClose");
@@ -3353,6 +3671,7 @@ $("#welcomeGeo").addEventListener("click", function(){
 $("#geoBtn").addEventListener("click", function(){ requestGeo(true); });
 
 /* ================= Go ================= */
+seedStatsWave3();
 renderCityList();
 renderMyAvatar();
 renderAvatarGrid();
@@ -3365,6 +3684,7 @@ renderFilter();
 renderPlaces();
 updateCounter();
 buildTicker();
+refreshCityPhotoCount();
 buildRoute();
 if (!lsGet("tirada_welcomed", false) && !location.hash){
   renderWelcomeCities();

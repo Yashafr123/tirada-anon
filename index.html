@@ -10,7 +10,7 @@
      query so phones never run a stale cached build. INCREMENT N on EVERY
      release that changes app.js or style.css (keep both in sync). -->
 <link rel="stylesheet" href="maplibre-gl.css">
-<link rel="stylesheet" href="style.css?v=8">
+<link rel="stylesheet" href="style.css?v=10">
 <link rel="icon" type="image/jpeg" href="tirada-logo.jpg">
 </head>
 <body>
@@ -145,6 +145,18 @@
             <div class="gstat"><b id="statRoutes">0</b><span id="statRoutesLabel">маршрутов построено</span></div>
             <div class="gstat"><b id="statPhotos">0</b><span id="statPhotosLabel">фото в городе</span></div>
           </div>
+          <div class="level-card" id="levelCard">
+            <div class="level-head">
+              <span class="level-badge" id="levelBadge">1</span>
+              <div class="level-titles">
+                <div class="level-name" id="levelName">Новичок</div>
+                <div class="level-xp" id="levelXpText">0 XP</div>
+              </div>
+            </div>
+            <div class="level-bar"><div class="level-fill" id="levelFill"></div></div>
+            <div class="level-next" id="levelNext"></div>
+            <div class="level-breakdown" id="levelBreakdown"></div>
+          </div>
           <div class="achievements" id="achievements"></div>
           <div class="streak-line profile-streak" id="profileStreak"></div>
           <button class="btn-share-geo" id="shareGeoBtn">📍 Отправить мою геопозицию</button>
@@ -167,7 +179,7 @@
 
         <!-- Friends (Supabase friendships) -->
         <div class="friends-box" id="friendsBox">
-          <div class="mode-label">Друзья</div>
+          <div class="mode-label">Друзья <span class="req-badge" id="friendsReqBadge" hidden></span></div>
           <div id="friendsGuest" class="friends-guest-line">
             <span class="friends-guest-emoji">👻</span>
             <span>Друзья живут в облаке: заявки, список своих и кто сейчас в деле. <button type="button" class="link-btn" id="friendsLoginBtn">Войди</button> — и собирай своих.</span>
@@ -181,6 +193,10 @@
             <div id="friendResults"></div>
             <div id="friendSections">
               <div class="friend-empty">Загружаю друзей…</div>
+            </div>
+            <div id="leaderboardBox" hidden>
+              <div class="friend-sec-title">🏆 Ты и друзья · по XP</div>
+              <div id="leaderboardList"></div>
             </div>
           </div>
         </div>
@@ -257,7 +273,7 @@
       <span class="fab-label">Я в деле</span>
     </button>
     <button class="tab" data-screen="route"><span class="tab-pill"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="19" r="2.6"/><circle cx="18" cy="5" r="2.6"/><path d="M8.6 19H15a3.5 3.5 0 0 0 0-7h-6a3.5 3.5 0 0 1 0-7h.4"/></svg></span><span class="tab-label">Маршрут</span></span></button>
-    <button class="tab" data-screen="profile"><span class="tab-pill"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8a7.8 7.8 0 0 0-7.8 7.8v10.1l2.9-2.7 2.45 2.45L12 18.1l2.45 2.45 2.45-2.45 2.9 2.7V10.6A7.8 7.8 0 0 0 12 2.8z"/><path d="M9.2 10.2h.01M14.8 10.2h.01" stroke-width="2.4"/></svg></span><span class="tab-label">Профиль</span></span></button>
+    <button class="tab" data-screen="profile"><span class="tab-pill"><span class="tab-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8a7.8 7.8 0 0 0-7.8 7.8v10.1l2.9-2.7 2.45 2.45L12 18.1l2.45 2.45 2.45-2.45 2.9 2.7V10.6A7.8 7.8 0 0 0 12 2.8z"/><path d="M9.2 10.2h.01M14.8 10.2h.01" stroke-width="2.4"/></svg></span><span class="tab-label">Профиль</span><span class="tab-badge" id="tabReqBadge" hidden></span></span></button>
   </nav>
 
 </div>
@@ -411,6 +427,6 @@
 <script src="map-style.js"></script>
 <script src="vendor-supabase.js"></script>
 <script src="supabase.js"></script>
-<script src="app.js?v=8"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
