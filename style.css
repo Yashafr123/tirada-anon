@@ -115,7 +115,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
 /* ===== Map screen ===== */
 .map{flex:1 1 auto;min-height:0;width:100%;background:#0b100c;z-index:1}
 /* Vector map (MapLibre GL): the GPU renders the CARTO dark-matter style,
-   recolored to Yasha's palette in map-style.js — dark-green land,
+   recolored to Yasha's palette in js/map-style.js — dark-green land,
    dark-turquoise water. No raster tiles, no CSS filter anywhere: pan and
    pinch are continuous GL camera moves. */
 .maplibregl-map{font-family:inherit;background:#0b100c}
@@ -975,6 +975,14 @@ body::before{
 .ghost-round.me.mode-ghost{opacity:.55;border-style:dashed}
 .ghost-round.me.mode-dnd{border-color:var(--warm);box-shadow:0 0 16px rgba(255,176,58,.6),0 6px 16px rgba(0,0,0,.55)}
 .ghost-round.me.mode-offline{filter:grayscale(1);opacity:.45;box-shadow:0 4px 10px rgba(0,0,0,.4)}
+/* friend ghost on the map: photo or ghost face on a dark disc, red rim */
+.ghost-round.friend{
+  width:46px;height:46px;background:#17171b;
+  border:2.5px solid #ff2a1e;
+  box-shadow:0 0 14px rgba(255,30,30,.55), 0 5px 14px rgba(0,0,0,.5);
+}
+.ghost-round.friend.off{opacity:.55;filter:grayscale(.6)}
+.ghost-round.friend .avface{width:100%;height:100%}
 
 /* ghost popup: status lines */
 .pop-status{font-weight:700}

@@ -739,6 +739,7 @@ function startGeoWatch(){
   geoWatchId = navigator.geolocation.watchPosition(function(pos){
     state.geo = { lat: pos.coords.latitude, lng: pos.coords.longitude };
     if (meMarker) meMarker.setLngLat([state.geo.lng, state.geo.lat]);
+    cloudGeoSync();
   }, function(){}, { enableHighAccuracy: false, maximumAge: 60000, timeout: 20000 });
 }
 function applyGeo(lat, lng){
@@ -748,6 +749,7 @@ function applyGeo(lat, lng){
   if (near && near.id !== state.city.id && distKm(state.geo, near) <= 30) setCity(near.id);
   if (meMarker) meMarker.setLngLat([lng, lat]);
   if (map) map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15), duration: 800 });
+  cloudGeoSync();
   startGeoWatch();
 }
 function requestGeo(manual){
@@ -783,11 +785,12 @@ function pumpToasts(){
    zooms are real rendered frames, not rescaled raster tiles), and pan/zoom
    never repaints a filtered layer. Style: CARTO dark-matter GL, recolored
    to Yasha's palette (dark-green land, dark-turquoise water) — map-style.js. */
-var map = null, mapReady = false, meMarker = null, placeMarkers = {}, badgeMarkers = [];
+var map = null, mapReady = false, meMarker = null, placeMarkers = {}, badgeMarkers = [], friendMarkers = {};
 
 /* Map markers v3.6 (Snap Map style): places = small round badges by heat with a white
-   SVG icon of the place type; the ONLY ghost on the map is you — a round avatar
-   (Emoji CDN face on a gradient). No demo people. */
+   SVG icon of the place type; ghosts on the map are you — a round avatar
+   (Emoji CDN face on a gradient) — plus your accepted friends (see the
+   friends-on-map module below). No demo people. */
 var TYPE_ICONS = {
   bar:   '<path d="M3 4h18l-8.2 8.6V19h3.2v2H8v-2h3v-6.4L3 4z"/>',
   club:  '<path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>',
@@ -869,6 +872,7 @@ function allPopups(){
   var list = [];
   badgeMarkers.forEach(function(m){ var p = m.getPopup(); if (p) list.push(p); });
   if (meMarker){ var mp = meMarker.getPopup(); if (mp) list.push(mp); }
+  Object.keys(friendMarkers).forEach(function(id){ var fp = friendMarkers[id].getPopup(); if (fp) list.push(fp); });
   if (dotPopup) list.push(dotPopup);
   return list;
 }
@@ -1011,6 +1015,7 @@ function initMap(){
     map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 15), duration: 700 });
     requestGeo(true);
   });
+  refreshFriendMarkers();
   map.on("click", function(e){
     var t = $("#legendTip"); if (t) t.hidden = true;
     /* a tap on empty map closes popups; taps on markers/popups/dots are not "empty" */
@@ -1509,6 +1514,7 @@ function showScreen(name){
   $$(".tab").forEach(function(t){ t.classList.toggle("active", t.getAttribute("data-screen") === name); });
   $$(".screen").forEach(function(s){ s.classList.toggle("active", s.id === "screen-" + name); });
   if (name === "map" && map) setTimeout(function(){ map.resize(); }, 60);
+  if (name === "map") refreshFriendMarkers();
   if (name === "profile" && typeof cloudUser !== "undefined" && cloudUser) friendsLoad();
 }
 $$(".tab").forEach(function(t){
@@ -2058,6 +2064,26 @@ function cloudPresence(on){
   return db.from("profiles").update({ online: on, last_seen: new Date().toISOString() })
     .eq("id", cloudUser.id).then(function(){}, function(){});
 }
+/* ---- My coordinates → profiles.lat/lng, so accepted friends can see my
+   ghost on their maps. Deliberately a separate lightweight update: the main
+   profile upsert never carries lat/lng, so a missing column can never break
+   profile sync. Throttle: pushed on the presence heartbeat, on sign-in and
+   whenever the watch reports a move over ~50 m — and never more often than
+   once per 30 s. Only REAL geolocation is shared (state.geo), never the
+   demo fallback position. ---- */
+var geoPushed = null, geoPushAt = 0, geoPushBusy = false;
+function cloudGeoSync(){
+  if (!db || !cloudUser || !state.geo || geoPushBusy) return;
+  var now = Date.now();
+  if (geoPushed && now - geoPushAt < 30000 && distKm(geoPushed, state.geo) < 0.05) return;
+  geoPushBusy = true;
+  var pt = { lat: state.geo.lat, lng: state.geo.lng };
+  db.from("profiles").update({ lat: pt.lat, lng: pt.lng }).eq("id", cloudUser.id)
+    .then(function(res){
+      geoPushBusy = false;
+      if (!res.error){ geoPushed = pt; geoPushAt = Date.now(); }
+    }, function(){ geoPushBusy = false; });
+}
 function cloudPresenceBeaconOff(){
   if (!cloudUser || !cloudSession) return;
   try {
@@ -2071,7 +2097,7 @@ function cloudPresenceBeaconOff(){
 }
 function startHeartbeat(){
   stopHeartbeat();
-  cloudHeartbeat = setInterval(function(){ cloudPresence(true); }, 30000);
+  cloudHeartbeat = setInterval(function(){ cloudPresence(true); cloudGeoSync(); }, 30000);
 }
 function stopHeartbeat(){
   if (cloudHeartbeat){ clearInterval(cloudHeartbeat); cloudHeartbeat = null; }
@@ -2215,11 +2241,19 @@ function friendsLoad(){
         renderFriends(); renderFriendResults(); renderDealFriends();
         return;
       }
-      return db.from("profiles").select("id,name,avatar,avatar_url,city,online").in("id", list)
+      var doneLoad = function(pr){
+        if (pr && !pr.error && pr.data) pr.data.forEach(function(p){ friendsProfiles[p.id] = p; });
+        friendsLoaded = true; renderFriends(); renderFriendResults(); renderDealFriends();
+      };
+      return db.from("profiles").select("id,name,avatar,avatar_url,city,online,lat,lng,last_seen,mode").in("id", list)
         .then(function(pr){
-          if (!pr.error && pr.data) pr.data.forEach(function(p){ friendsProfiles[p.id] = p; });
-          friendsLoaded = true; renderFriends(); renderFriendResults(); renderDealFriends();
-        }, function(){ friendsLoaded = true; renderFriends(); renderFriendResults(); renderDealFriends(); });
+          /* lat/lng columns may not exist yet — retry with the base fields
+             so the friends list itself never breaks */
+          if (pr.error) return db.from("profiles").select("id,name,avatar,avatar_url,city,online").in("id", list).then(doneLoad, doneLoad);
+          doneLoad(pr);
+        }, function(){
+          return db.from("profiles").select("id,name,avatar,avatar_url,city,online").in("id", list).then(doneLoad, doneLoad);
+        });
     }, function(){ friendsLoading = false; renderFriends(); });
 }
 function bindFriendButtons(root){
@@ -2396,6 +2430,117 @@ function renderDealFriends(){
         '<span class="friend-indeal">🔥 в деле</span></div>';
     }).join("") + "</div>";
 }
+/* ---- Friends on the map: accepted friends as round ghosts ----
+   Each friend's app writes its own REAL geolocation into profiles.lat/lng
+   (see cloudGeoSync). Here we read accepted friends + their profiles and
+   reconcile maplibre markers: created once, moved in place, removed when
+   someone unfriends, hides (mode ghost/offline) or has no coordinates.
+   Refreshed on sign-in, when the map screen opens and every 30 s. */
+var friendMapTimer = null, friendMapLoading = false;
+function friendVisibleOnMap(p){
+  return !!p && typeof p.lat === "number" && typeof p.lng === "number" &&
+    p.mode !== "ghost" && p.mode !== "offline";
+}
+function friendLastSeenText(p){
+  if (p.online) return "🟢 в сети";
+  if (!p.last_seen) return "⚪ не в сети";
+  var t = new Date(p.last_seen).getTime();
+  if (isNaN(t)) return "⚪ не в сети";
+  var mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (mins < 2) return "был(а) только что";
+  if (mins < 60) return "был(а) " + mins + " мин назад";
+  var hrs = Math.round(mins / 60);
+  if (hrs < 24) return "был(а) " + hrs + " ч назад";
+  return "был(а) давно";
+}
+function friendPopupHtml(p){
+  return '<div class="pop-name">' + escHtml(p.name || "Призрак") + "</div>" +
+    '<div class="pop-status">' + friendLastSeenText(p) + "</div>" +
+    '<div class="pop-note">Твой друг-призрак 👻</div>';
+}
+function friendGhostHtml(p){
+  return '<div class="ghost-round friend' + (p.online ? "" : " off") + '">' + friendAvatarHtml(p) + "</div>";
+}
+function friendGhostEl(p){
+  var el = document.createElement("div");
+  el.className = "ghost-marker";
+  el.innerHTML = friendGhostHtml(p);
+  return el;
+}
+function syncFriendMarkers(byId){
+  if (!map) return;
+  var keep = {};
+  Object.keys(byId).forEach(function(id){
+    var p = byId[id];
+    if (!friendVisibleOnMap(p)) return;
+    keep[id] = 1;
+    var m = friendMarkers[id];
+    if (!m){
+      m = new maplibregl.Marker({ element: friendGhostEl(p) })
+        .setLngLat([p.lng, p.lat])
+        .setPopup(makePopup(friendPopupHtml(p), 26))
+        .addTo(map);
+      friendMarkers[id] = m;
+      m._avaKey = (p.avatar_url || p.avatar || "");
+      m._wasOnline = !!p.online;
+      return;
+    }
+    var cur = m.getLngLat();
+    if (Math.abs(cur.lng - p.lng) > 1e-7 || Math.abs(cur.lat - p.lat) > 1e-7)
+      m.setLngLat([p.lng, p.lat]);
+    var avaKey = (p.avatar_url || p.avatar || "");
+    if (m._avaKey !== avaKey){
+      m.getElement().innerHTML = friendGhostHtml(p);
+      m._avaKey = avaKey;
+    } else if (!!p.online !== !!m._wasOnline){
+      m.getElement().innerHTML = friendGhostHtml(p);
+    }
+    m._wasOnline = !!p.online;
+    var pop = m.getPopup();
+    if (pop) pop.setHTML(friendPopupHtml(p));
+  });
+  Object.keys(friendMarkers).forEach(function(id){
+    if (!keep[id]){ friendMarkers[id].remove(); delete friendMarkers[id]; }
+  });
+}
+function refreshFriendMarkers(){
+  if (!db || !cloudUser || !map || friendMapLoading) return Promise.resolve();
+  friendMapLoading = true;
+  var finish = function(){ friendMapLoading = false; };
+  return db.from("friendships").select("requester,addressee,status")
+    .eq("status", "accepted")
+    .or("requester.eq." + cloudUser.id + ",addressee.eq." + cloudUser.id)
+    .then(function(res){
+      if (res.error || !res.data){ finish(); return; }
+      var ids = {};
+      res.data.forEach(function(r){ ids[(r.requester === cloudUser.id) ? r.addressee : r.requester] = 1; });
+      var list = Object.keys(ids);
+      if (!list.length){ syncFriendMarkers({}); finish(); return; }
+      return db.from("profiles")
+        .select("id,name,avatar,avatar_url,lat,lng,online,last_seen,mode")
+        .in("id", list)
+        .then(function(pr){
+          finish();
+          if (pr.error || !pr.data) return; /* columns may not exist yet — keep old markers */
+          var byId = {};
+          pr.data.forEach(function(p){ byId[p.id] = p; friendsProfiles[p.id] = p; });
+          syncFriendMarkers(byId);
+        }, finish);
+    }, finish);
+}
+function startFriendMapTimer(){
+  stopFriendMapTimer();
+  friendMapTimer = setInterval(function(){
+    if (document.visibilityState === "visible") refreshFriendMarkers();
+  }, 30000);
+}
+function stopFriendMapTimer(){
+  if (friendMapTimer){ clearInterval(friendMapTimer); friendMapTimer = null; }
+}
+function clearFriendMarkers(){
+  Object.keys(friendMarkers).forEach(function(id){ friendMarkers[id].remove(); });
+  friendMarkers = {};
+}
 var friendsLoginBtn = $("#friendsLoginBtn");
 if (friendsLoginBtn) friendsLoginBtn.addEventListener("click", function(){ $("#loginModal").hidden = false; });
 var friendSearchBtn = $("#friendSearchBtn");
@@ -2431,8 +2576,9 @@ function cloudOnSignedIn(user){
       return cloudSyncNow();
     }, function(){ return cloudSyncNow(); })
     .then(function(){ return cloudPresence(true); })
-    .then(function(){ startHeartbeat(); return cloudLoadMyVote(); })
-    .then(function(){ friendsLoad(); }, function(){ friendsLoad(); });
+    .then(function(){ cloudGeoSync(); startHeartbeat(); return cloudLoadMyVote(); })
+    .then(function(){ friendsLoad(); refreshFriendMarkers(); startFriendMapTimer(); },
+          function(){ friendsLoad(); refreshFriendMarkers(); startFriendMapTimer(); });
 }
 if (db){
   db.auth.getSession().then(function(r){
@@ -2445,7 +2591,9 @@ if (db){
     if (ev === "SIGNED_IN" && session && session.user) cloudOnSignedIn(session.user);
     if (ev === "SIGNED_OUT"){
       cloudUser = null; cloudBootedFor = null; cloudVoteCounts = null;
-      stopHeartbeat(); friendsReset(); renderAccount();
+      stopHeartbeat(); stopFriendMapTimer(); clearFriendMarkers();
+      geoPushed = null; geoPushAt = 0;
+      friendsReset(); renderAccount();
     }
   });
 } else {
@@ -2549,7 +2697,7 @@ var INFO = {
   about: { emoji:"📱", title:"О приложении",
     body:"TiradA anon — живой радар движа по городам Израиля. Показывает, где город тусит прямо сейчас, собирает маршрут на вечер и зовёт друзей одной ссылкой. Ты на карте — призрак: без имени и фото, открываешься только своим." },
   privacy: { emoji:"🔒", title:"Политика конфиденциальности",
-    body:"В демо-превью места — демонстрационные данные, а других людей на карте нет: только ты. Геолокация, если ты её разрешил, остаётся на твоём устройстве и никуда не отправляется. В полной версии здесь будет честный текст о том, какие данные нужны радару и как их удалить в один тап." }
+    body:"Места в приложении — демонстрационные данные. На карте, кроме тебя, видны только твои принятые друзья — и только если они сами не скрылись. Геолокация, если ты её разрешил и вошёл в аккаунт, сохраняется в твоём профиле, чтобы друзья видели твоего призрака на карте; режимы «Невидимка» и «Оффлайн» прячут тебя с карты полностью." }
 };
 var infoModal = $("#infoModal");
 $$("[data-info]").forEach(function(btn){
