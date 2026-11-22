@@ -1585,14 +1585,35 @@ function applyNick(){
     inp.value = state.nick || "";
     return;
   }
-  state.nick = chk.value;
-  inp.value = state.nick;
-  lsSet("tirada_nick", state.nick);
-  renderMyAvatar();
-  scheduleCloudSync();
-  renderAccount();
-  clearNickError();
-  toast("Ник сохранён: " + state.nick);
+  var commitNick = function(){
+    state.nick = chk.value;
+    inp.value = state.nick;
+    lsSet("tirada_nick", state.nick);
+    renderMyAvatar();
+    scheduleCloudSync();
+    renderAccount();
+    clearNickError();
+    toast("Ник сохранён: " + state.nick);
+  };
+  /* Signed in: nicks are unique in the cloud — check before promising
+     "saved" (the upsert would bounce off the unique index anyway, and
+     cloudSyncNow turns that 23505 into the same visible error). */
+  if (db && cloudUser){
+    var pat = chk.value.replace(/[%_\\]/g, "\\$&");
+    db.from("profiles").select("id").ilike("name", pat).limit(5)
+      .then(function(res){
+        var taken = !res.error && res.data && res.data.some(function(r){ return r.id !== cloudUser.id; });
+        if (taken){
+          toast(NICK_TAKEN_MSG);
+          showNickError(NICK_TAKEN_MSG);
+          inp.value = state.nick || "";
+          return;
+        }
+        commitNick();
+      }, function(){ commitNick(); });
+    return;
+  }
+  commitNick();
 }
 $("#nickInput").addEventListener("change", applyNick);
 $("#nickInput").addEventListener("keydown", function(e){
@@ -2115,6 +2136,15 @@ function cloudStatsPayload(){
            routes: state.stats.routes, lastDealDay: state.stats.lastDealDay || "",
            photos: state.stats.photos || 0 };
 }
+/* Nicknames are unique case-insensitively in the DB (unique index on
+   lower(name)). A clash surfaces as Postgres 23505 on the profile upsert —
+   turn it into a plain, visible "nick is taken" message instead of a
+   silent sync failure. */
+function isNickTakenError(err){
+  return !!err && (err.code === "23505" ||
+    /duplicate key|unique constraint/i.test(err.message || ""));
+}
+var NICK_TAKEN_MSG = "Такой ник уже занят, придумай другой";
 function cloudSyncNow(){
   if (!db || !cloudUser) return Promise.resolve();
   var payload = {
@@ -2128,7 +2158,13 @@ function cloudSyncNow(){
     favorites: Object.keys(state.favs)
   };
   return db.from("profiles").upsert(payload).then(function(res){
-    if (res.error) console.warn("TiradA sync:", res.error.message);
+    if (res.error){
+      console.warn("TiradA sync:", res.error.message);
+      if (isNickTakenError(res.error)){
+        showNickError(NICK_TAKEN_MSG);
+        toast(NICK_TAKEN_MSG + " 👻");
+      }
+    }
   }, function(){});
 }
 function scheduleCloudSync(){
@@ -2181,13 +2217,14 @@ function cloudPresence(on){
   return db.from("profiles").update({ online: on, last_seen: new Date().toISOString() })
     .eq("id", cloudUser.id).then(function(){}, function(){});
 }
-/* ---- My coordinates → profiles.lat/lng, so accepted friends can see my
-   ghost on their maps. Deliberately a separate lightweight update: the main
-   profile upsert never carries lat/lng, so a missing column can never break
-   profile sync. Throttle: pushed on the presence heartbeat, on sign-in and
-   whenever the watch reports a move over ~50 m — and never more often than
-   once per 30 s. Only REAL geolocation is shared (state.geo), never the
-   demo fallback position. ---- */
+/* ---- My coordinates → profile_locations (its own locked-down table):
+   RLS there lets only me and my ACCEPTED friends read my row, so nobody
+   else can harvest coordinates. The profiles table no longer carries
+   lat/lng at all — neither the main profile upsert nor any read touches
+   them. Throttle: pushed on the presence heartbeat, on sign-in and
+   whenever the watch reports a move over ~50 m — and never more often
+   than once per 30 s. Only REAL geolocation is shared (state.geo), never
+   the demo fallback position. ---- */
 var geoPushed = null, geoPushAt = 0, geoPushBusy = false;
 function cloudGeoSync(){
   if (!db || !cloudUser || !state.geo || geoPushBusy) return;
@@ -2195,11 +2232,29 @@ function cloudGeoSync(){
   if (geoPushed && now - geoPushAt < 30000 && distKm(geoPushed, state.geo) < 0.05) return;
   geoPushBusy = true;
   var pt = { lat: state.geo.lat, lng: state.geo.lng };
-  db.from("profiles").update({ lat: pt.lat, lng: pt.lng }).eq("id", cloudUser.id)
+  db.from("profile_locations").upsert({
+      user_id: cloudUser.id, lat: pt.lat, lng: pt.lng,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "user_id" })
     .then(function(res){
       geoPushBusy = false;
       if (!res.error){ geoPushed = pt; geoPushAt = Date.now(); }
     }, function(){ geoPushBusy = false; });
+}
+/* Coordinates of other ghosts, read from profile_locations. RLS returns
+   rows only for accepted friends (and my own), so a plain id filter is
+   enough — strangers' rows simply never come back. Returns {id:{lat,lng}}. */
+function fetchFriendLocations(ids){
+  if (!db || !ids || !ids.length) return Promise.resolve({});
+  return db.from("profile_locations").select("user_id,lat,lng").in("user_id", ids)
+    .then(function(res){
+      var out = {};
+      if (!res.error && res.data) res.data.forEach(function(r){
+        if (typeof r.lat === "number" && typeof r.lng === "number")
+          out[r.user_id] = { lat: r.lat, lng: r.lng };
+      });
+      return out;
+    }, function(){ return {}; });
 }
 function cloudPresenceBeaconOff(){
   if (!cloudUser || !cloudSession) return;
@@ -2676,17 +2731,16 @@ function friendsLoad(){
       }
       var doneLoad = function(pr){
         if (pr && !pr.error && pr.data) pr.data.forEach(function(p){ friendsProfiles[p.id] = p; });
-        friendsLoaded = true; renderFriends(); renderFriendResults(); renderDealFriends();
-      };
-      return db.from("profiles").select("id,name,avatar,avatar_url,city,online,lat,lng,last_seen,mode").in("id", list)
-        .then(function(pr){
-          /* lat/lng columns may not exist yet — retry with the base fields
-             so the friends list itself never breaks */
-          if (pr.error) return db.from("profiles").select("id,name,avatar,avatar_url,city,online").in("id", list).then(doneLoad, doneLoad);
-          doneLoad(pr);
-        }, function(){
-          return db.from("profiles").select("id,name,avatar,avatar_url,city,online").in("id", list).then(doneLoad, doneLoad);
+        /* coordinates live in profile_locations now (accepted friends only) */
+        return fetchFriendLocations(list).then(function(locs){
+          Object.keys(locs).forEach(function(id){
+            if (friendsProfiles[id]){ friendsProfiles[id].lat = locs[id].lat; friendsProfiles[id].lng = locs[id].lng; }
+          });
+          friendsLoaded = true; renderFriends(); renderFriendResults(); renderDealFriends();
         });
+      };
+      return db.from("profiles").select("id,name,avatar,avatar_url,city,online,last_seen,mode").in("id", list)
+        .then(doneLoad, doneLoad);
     }, function(){ friendsLoading = false; renderFriends(); });
 }
 function bindFriendButtons(root){
@@ -2868,10 +2922,12 @@ function renderDealFriends(){
     }).join("") + "</div>";
 }
 /* ---- Friends on the map: accepted friends as round ghosts ----
-   Each friend's app writes its own REAL geolocation into profiles.lat/lng
-   (see cloudGeoSync). Here we read accepted friends + their profiles and
-   reconcile maplibre markers: created once, moved in place, removed when
-   someone unfriends, hides (mode ghost/offline) or has no coordinates.
+   Each friend's app writes its own REAL geolocation into the locked-down
+   profile_locations table (see cloudGeoSync); RLS lets me read only my
+   accepted friends' rows. Here we read accepted friends + their profiles,
+   merge in the locations and reconcile maplibre markers: created once,
+   moved in place, removed when someone unfriends, hides (mode
+   ghost/offline) or has no coordinates.
    Refreshed on sign-in, when the map screen opens and every 30 s. */
 var friendMapTimer = null, friendMapLoading = false;
 function friendVisibleOnMap(p){
@@ -2955,14 +3011,20 @@ function refreshFriendMarkers(){
       var list = Object.keys(ids);
       if (!list.length){ syncFriendMarkers({}); finish(); return; }
       return db.from("profiles")
-        .select("id,name,avatar,avatar_url,lat,lng,online,last_seen,mode")
+        .select("id,name,avatar,avatar_url,online,last_seen,mode")
         .in("id", list)
         .then(function(pr){
-          finish();
-          if (pr.error || !pr.data) return; /* columns may not exist yet — keep old markers */
+          if (pr.error || !pr.data){ finish(); return; }
           var byId = {};
           pr.data.forEach(function(p){ byId[p.id] = p; friendsProfiles[p.id] = p; });
-          syncFriendMarkers(byId);
+          return fetchFriendLocations(list).then(function(locs){
+            finish();
+            Object.keys(locs).forEach(function(id){
+              if (byId[id]){ byId[id].lat = locs[id].lat; byId[id].lng = locs[id].lng; }
+              if (friendsProfiles[id]){ friendsProfiles[id].lat = locs[id].lat; friendsProfiles[id].lng = locs[id].lng; }
+            });
+            syncFriendMarkers(byId);
+          });
         }, finish);
     }, finish);
 }
@@ -2986,6 +3048,67 @@ if (friendSearchBtn) friendSearchBtn.addEventListener("click", friendsSearch);
 var friendSearchInp = $("#friendSearch");
 if (friendSearchInp) friendSearchInp.addEventListener("keydown", function(e){
   if (e.key === "Enter"){ e.preventDefault(); friendsSearch(); }
+});
+
+/* ---- Friend by invite link: <origin>/?add=<my profile id> ----
+   The link carries only a profile id (no nick — anonymity holds). The
+   receiver gets a confirm sheet; a guest's id waits in sessionStorage
+   and the sheet is offered right after sign-in. The ?add= param is
+   scrubbed from the URL as soon as it is read. */
+var pendingAddId = null, addFriendTarget = null;
+(function(){
+  try {
+    var m = /[?&]add=([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/.exec(location.search || "");
+    if (m){
+      pendingAddId = m[1];
+      sessionStorage.setItem("tirada_pending_add", pendingAddId);
+      var u = new URL(location.href);
+      u.searchParams.delete("add");
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    } else {
+      pendingAddId = sessionStorage.getItem("tirada_pending_add");
+    }
+  } catch(e){}
+})();
+function maybeShowAddFriend(){
+  if (!pendingAddId || !cloudUser) return;
+  var id = pendingAddId;
+  pendingAddId = null;
+  try { sessionStorage.removeItem("tirada_pending_add"); } catch(e){}
+  if (id === cloudUser.id) return;
+  var rel = friendRelation(id);
+  if (rel && rel.kind === "friend"){ toast("Вы уже друзья 👻"); return; }
+  if (rel && rel.kind === "out"){ toast("Заявка этому призраку уже отправлена 👻"); return; }
+  if (rel && rel.kind === "in"){ toast("Этот призрак уже позвал тебя — прими заявку в списке друзей 👻"); return; }
+  addFriendTarget = id;
+  var t = $("#addFriendText");
+  if (t) t.textContent = "Добавить в друзья Призрака #" + ghostNumberFor(id) +
+    "? Заявка уйдёт от твоего призрака. Когда её примут, вы будете видеть друг друга на карте.";
+  var sh = $("#addFriendSheet");
+  if (sh) sh.hidden = false;
+}
+var friendInviteBtn = $("#friendInviteBtn");
+if (friendInviteBtn) friendInviteBtn.addEventListener("click", function(){
+  if (!cloudUser){ toast("Войди — и ссылка-приглашение станет твоей 👻"); return; }
+  var link = location.origin + location.pathname + "?add=" + cloudUser.id;
+  if (navigator.share){
+    navigator.share({ title: "TiradA anon 👻", text: "Добавляйся в друзья в TiradA anon — будем видеть друг друга на карте движа", url: link }).catch(function(){});
+  } else if (navigator.clipboard) {
+    navigator.clipboard.writeText(link).then(function(){ toast("Ссылка-приглашение скопирована 🔗 Отправь её другу"); }, function(){ toast(link); });
+  } else toast(link);
+});
+var addFriendSheetEl = $("#addFriendSheet");
+function closeAddFriendSheet(){ if (addFriendSheetEl) addFriendSheetEl.hidden = true; addFriendTarget = null; }
+var addFriendCloseBtn = $("#addFriendClose");
+if (addFriendCloseBtn) addFriendCloseBtn.addEventListener("click", closeAddFriendSheet);
+var addFriendCancelBtn = $("#addFriendCancel");
+if (addFriendCancelBtn) addFriendCancelBtn.addEventListener("click", closeAddFriendSheet);
+if (addFriendSheetEl) addFriendSheetEl.addEventListener("click", function(e){ if (e.target === addFriendSheetEl) closeAddFriendSheet(); });
+var addFriendSendBtn = $("#addFriendSend");
+if (addFriendSendBtn) addFriendSendBtn.addEventListener("click", function(){
+  var id = addFriendTarget;
+  closeAddFriendSheet();
+  if (id) friendsSend(id);
 });
 
 /* ---- Account UI ---- */
@@ -3016,8 +3139,9 @@ function cloudOnSignedIn(user){
     }, function(){ return cloudSyncNow(); })
     .then(function(){ return cloudPresence(true); })
     .then(function(){ cloudGeoSync(); startHeartbeat(); return cloudLoadMyVote(); })
-    .then(function(){ friendsLoad(); refreshFriendMarkers(); startFriendMapTimer(); },
-          function(){ friendsLoad(); refreshFriendMarkers(); startFriendMapTimer(); });
+    .then(function(){ return friendsLoad(); }, function(){ return friendsLoad(); })
+    .then(function(){ refreshFriendMarkers(); startFriendMapTimer(); maybeShowAddFriend(); },
+          function(){ refreshFriendMarkers(); startFriendMapTimer(); maybeShowAddFriend(); });
 }
 if (db){
   db.auth.getSession().then(function(r){
@@ -3108,11 +3232,37 @@ $("#authSubmit").addEventListener("click", function(){
     if (name){ state.nick = name; lsSet("tirada_nick", state.nick); var ni2 = $("#nickInput"); if (ni2) ni2.value = name; renderMyAvatar(); }
     db.auth.signUp({ email: email, password: pass, options: { data: { name: name || undefined } } })
       .then(function(res){
-        done();
-        if (res.error){ authShowError(authErrorText(res.error)); return; }
-        modal.hidden = true;
-        if (res.data && res.data.session) toast("Аккаунт создан — ты в сети, призрак 👻");
-        else toast("Аккаунт создан! Теперь войди по email и паролю.");
+        if (res.error){ done(); authShowError(authErrorText(res.error)); return; }
+        var finishUp = function(){
+          done();
+          modal.hidden = true;
+          if (res.data && res.data.session) toast("Аккаунт создан — ты в сети, призрак 👻");
+          else toast("Аккаунт создан! Теперь войди по email и паролю.");
+        };
+        /* The account exists now, but the chosen nick may already be taken
+           (unique index on lower(name)): check while we can still show the
+           error right here in the auth form. If it is taken, the account
+           stays — only the nick falls back until a free one is picked in
+           the profile. */
+        if (name && res.data && res.data.session && res.data.user){
+          var pat = name.replace(/[%_\\]/g, "\\$&");
+          db.from("profiles").select("id").ilike("name", pat).limit(5)
+            .then(function(q){
+              var taken = !q.error && q.data && q.data.some(function(r){ return r.id !== res.data.user.id; });
+              if (taken){
+                done();
+                state.nick = ""; lsSet("tirada_nick", "");
+                var ni3 = $("#nickInput"); if (ni3) ni3.value = "";
+                renderMyAvatar();
+                authShowError(NICK_TAKEN_MSG + ". Аккаунт создан — после входа придумай другой ник в профиле.");
+                showNickError(NICK_TAKEN_MSG);
+                return;
+              }
+              finishUp();
+            }, function(){ finishUp(); });
+          return;
+        }
+        finishUp();
       }, function(err){ done(); authShowError(authErrorText(err)); });
   } else {
     db.auth.signInWithPassword({ email: email, password: pass })
@@ -3138,7 +3288,7 @@ var INFO = {
   privacy: { emoji:"🔒", title:"Политика конфиденциальности",
     sections:[
       { h:"Что мы храним", t:"Ник, аватарку, статистику и голоса — в облаке, чтобы твой призрак жил на всех устройствах. Без входа всё хранится только на этом телефоне." },
-      { h:"Геолокация", t:"Только если ты сам её разрешил. Координаты пишутся в твой профиль, чтобы друзья видели твоего призрака на карте." },
+      { h:"Геолокация", t:"Только если ты сам её разрешил. Координаты лежат в отдельной закрытой таблице: их видишь только ты и твои принятые друзья — чтобы видеть призраков друг друга на карте." },
       { h:"Кто тебя видит", t:"На карте — только принятые друзья. «Невидимка» и «Оффлайн» прячут тебя полностью, «Не беспокоить» — ты на карте, но звать тебя нельзя." },
       { h:"Места и движ", t:"Места и проценты движа в превью — демонстрационные данные. Это не слежка за реальными людьми." },
       { h:"Фото", t:"Загруженная аватарка хранится в облаке и видна тем, кто видит твоего призрака." },

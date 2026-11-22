@@ -10,7 +10,7 @@
      query so phones never run a stale cached build. INCREMENT N on EVERY
      release that changes app.js or style.css (keep both in sync). -->
 <link rel="stylesheet" href="maplibre-gl.css">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 <link rel="icon" type="image/jpeg" href="tirada-logo.jpg">
 </head>
 <body>
@@ -177,6 +177,7 @@
               <input class="friend-search" id="friendSearch" type="text" maxlength="24" placeholder="🔎 Найти призрака по нику…" autocomplete="off">
               <button class="btn-yes friend-search-btn" id="friendSearchBtn">Найти</button>
             </div>
+            <button class="btn-alt friend-invite-btn" id="friendInviteBtn">🔗 Позвать друга по ссылке</button>
             <div id="friendResults"></div>
             <div id="friendSections">
               <div class="friend-empty">Загружаю друзей…</div>
@@ -388,6 +389,21 @@
   </div>
 </div>
 
+<!-- ===== Add-a-friend sheet (invite link ?add=<profile id>) ===== -->
+<div class="sheet-backdrop" id="addFriendSheet" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h3>Добавить в друзья?</h3>
+      <button class="sheet-close" id="addFriendClose" aria-label="Закрыть">✕</button>
+    </div>
+    <p class="add-friend-text" id="addFriendText"></p>
+    <div class="photo-consent-btns">
+      <button class="btn-yes" id="addFriendSend">👻 Отправить заявку</button>
+      <button class="btn-alt" id="addFriendCancel">Не сейчас</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-stack" id="toastStack"></div>
 <div class="toast" id="toast" hidden></div>
 
@@ -395,6 +411,6 @@
 <script src="map-style.js"></script>
 <script src="vendor-supabase.js"></script>
 <script src="supabase.js"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
