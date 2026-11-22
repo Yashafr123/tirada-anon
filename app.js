@@ -904,11 +904,13 @@ function startGeoWatch(){
   geoWatchId = navigator.geolocation.watchPosition(function(pos){
     state.geo = { lat: pos.coords.latitude, lng: pos.coords.longitude };
     if (meMarker) meMarker.setLngLat([state.geo.lng, state.geo.lat]);
+    trackMySpeed(state.geo.lat, state.geo.lng);
     cloudGeoSync();
   }, function(){}, { enableHighAccuracy: false, maximumAge: 60000, timeout: 20000 });
 }
 function applyGeo(lat, lng){
   state.geo = { lat: lat, lng: lng };
+  trackMySpeed(lat, lng);
   var gb = $("#geoBtn"); if (gb) gb.hidden = true;
   var near = nearestCity(state.geo);
   if (near && near.id !== state.city.id && distKm(state.geo, near) <= 30) setCity(near.id);
@@ -998,6 +1000,7 @@ function myPopupHtml(){
     '<div class="pop-head me"><div class="pop-name">Это ты — призрак #' + ghostNumber() + '</div><span class="pop-tag">ты</span></div>' +
     '<div class="pop-status">' + MODES[state.mode].mapStatus + '</div>' +
     '<div class="pop-level">⭐ Уровень ' + lv.num + ' · ' + lv.name + ' · ' + xp + ' XP</div>' +
+    speedLineHtml(mySpeedState) +
     '<div class="pop-note">Сменить вид и режим — на экране «Профиль».</div></div>';
 }
 function popupHtml(p){
@@ -2535,12 +2538,14 @@ function cloudGeoSync(){
    enough — strangers' rows simply never come back. Returns {id:{lat,lng}}. */
 function fetchFriendLocations(ids){
   if (!db || !ids || !ids.length) return Promise.resolve({});
-  return db.from("profile_locations").select("user_id,lat,lng").in("user_id", ids)
+  return db.from("profile_locations").select("user_id,lat,lng,updated_at").in("user_id", ids)
     .then(function(res){
       var out = {};
       if (!res.error && res.data) res.data.forEach(function(r){
-        if (typeof r.lat === "number" && typeof r.lng === "number")
-          out[r.user_id] = { lat: r.lat, lng: r.lng };
+        if (typeof r.lat === "number" && typeof r.lng === "number"){
+          var t = Date.parse(r.updated_at);
+          out[r.user_id] = { lat: r.lat, lng: r.lng, t: isNaN(t) ? Date.now() : t };
+        }
       });
       return out;
     }, function(){ return {}; });
@@ -2977,8 +2982,11 @@ function friendCityName(p){
 }
 function friendMetaHtml(p){
   var on = !!(p && p.online);
-  return '<span class="' + (on ? "friend-on" : "friend-off") + '">' +
+  var html = '<span class="' + (on ? "friend-on" : "friend-off") + '">' +
     (on ? "🟢 в сети" : "⚪ не в сети") + "</span> · " + escHtml(friendCityName(p));
+  var spd = friendSpeedText(p);
+  if (spd) html += ' · <span class="friend-speed">' + spd + "</span>";
+  return html;
 }
 function friendRowHtml(p, actionsHtml){
   return '<div class="friend-row">' +
@@ -3023,6 +3031,7 @@ function friendsLoad(){
         if (pr && !pr.error && pr.data) pr.data.forEach(function(p){ friendsProfiles[p.id] = p; });
         /* coordinates live in profile_locations now (accepted friends only) */
         return fetchFriendLocations(list).then(function(locs){
+          trackSpeedsFromLocs(locs);
           Object.keys(locs).forEach(function(id){
             if (friendsProfiles[id]){ friendsProfiles[id].lat = locs[id].lat; friendsProfiles[id].lng = locs[id].lng; }
           });
@@ -3257,6 +3266,64 @@ function renderDealFriends(){
         '<span class="friend-indeal">🔥 в деле</span></div>';
     }).join("") + "</div>";
 }
+/* ================= Movement speed (derived on the client) =================
+   Nobody stores a speed anywhere — it is computed HERE from two
+   consecutive coordinate fixes of the same ghost. Friend fixes come from
+   profile_locations (the position + its updated_at, re-polled every
+   30 s); my own fixes come from the live geolocation watch. Rules:
+   - the first sighting of a ghost gives NO speed (nothing to compare);
+   - a move under 15 m is GPS noise → «на месте» (0 km/h);
+   - over 200 km/h is a teleport / GPS glitch → no number, just a dash,
+     and the baseline re-seats on the new point;
+   - the number is rounded to whole km/h and the icon follows it:
+     0 🧍 · 1–7 🚶 · 8–24 🏃 · 25+ 🚗. */
+var speedTrack = {};      /* friend id -> {lat,lng,t,speed,dash} */
+var mySpeedState = null;  /* same shape, for my own ghost */
+function speedStep(prev, lat, lng, t){
+  if (!prev) return { lat: lat, lng: lng, t: t, speed: null, dash: false };
+  var dtH = (t - prev.t) / 3600000;
+  if (!(dtH > 0)) return prev; /* the same fix re-polled: keep the estimate */
+  var dKm = distKm(prev, { lat: lat, lng: lng });
+  if (dKm < 0.015) return { lat: lat, lng: lng, t: t, speed: 0, dash: false };
+  var v = dKm / dtH;
+  if (v > 200) return { lat: lat, lng: lng, t: t, speed: null, dash: true };
+  return { lat: lat, lng: lng, t: t, speed: v, dash: false };
+}
+function speedText(st){
+  if (!st) return "";
+  if (st.speed === null || st.speed === undefined) return st.dash ? "⚡ телепорт · —" : "";
+  var v = Math.round(st.speed);
+  if (v <= 0) return "🧍 на месте";
+  if (v <= 7) return "🚶 идёт · " + v + " км/ч";
+  if (v <= 24) return "🏃 бежит · " + v + " км/ч";
+  return "🚗 едет · " + v + " км/ч";
+}
+function speedLineHtml(st){
+  var s = speedText(st);
+  return s ? '<div class="pop-speed">' + s + "</div>" : "";
+}
+function trackSpeedsFromLocs(locs){
+  Object.keys(locs || {}).forEach(function(id){
+    var l = locs[id];
+    if (typeof l.lat === "number" && typeof l.lng === "number")
+      speedTrack[id] = speedStep(speedTrack[id], l.lat, l.lng, l.t || Date.now());
+  });
+}
+/* A hidden ghost (mode ghost/offline) never shows a speed anywhere. */
+function friendSpeedState(p){
+  if (!p || !p.id) return null;
+  if (p.mode === "ghost" || p.mode === "offline") return null;
+  return speedTrack[p.id] || null;
+}
+function friendSpeedText(p){ return speedText(friendSpeedState(p)); }
+function trackMySpeed(lat, lng){
+  mySpeedState = speedStep(mySpeedState, lat, lng, Date.now());
+  if (meMarker){
+    var mp = meMarker.getPopup();
+    if (mp) mp.setHTML(myPopupHtml()); /* keep the popup fresh even while closed */
+  }
+}
+
 /* ---- Friends on the map: accepted friends as round ghosts ----
    Each friend's app writes its own REAL geolocation into the locked-down
    profile_locations table (see cloudGeoSync); RLS lets me read only my
@@ -3286,6 +3353,7 @@ function friendPopupHtml(p){
   return '<div class="pop-card">' +
     '<div class="pop-head friend"><div class="pop-name">' + escHtml(p.name || "Призрак") + '</div><span class="pop-tag">друг 👻</span></div>' +
     '<div class="pop-status">' + friendLastSeenText(p) + "</div>" +
+    speedLineHtml(friendSpeedState(p)) +
     '<div class="pop-note">Твой друг-призрак — вы видите друг друга на карте.</div></div>';
 }
 function friendGhostHtml(p){
@@ -3355,11 +3423,15 @@ function refreshFriendMarkers(){
           pr.data.forEach(function(p){ byId[p.id] = p; friendsProfiles[p.id] = p; });
           return fetchFriendLocations(list).then(function(locs){
             finish();
+            trackSpeedsFromLocs(locs);
             Object.keys(locs).forEach(function(id){
               if (byId[id]){ byId[id].lat = locs[id].lat; byId[id].lng = locs[id].lng; }
               if (friendsProfiles[id]){ friendsProfiles[id].lat = locs[id].lat; friendsProfiles[id].lng = locs[id].lng; }
             });
             syncFriendMarkers(byId);
+            /* keep the friends list on the profile screen fresh too */
+            var ps = $("#screen-profile");
+            if (ps && ps.classList.contains("active")) renderFriends();
           });
         }, finish);
     }, finish);
