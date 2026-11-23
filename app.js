@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "20";
+var APP_BUILD = "21";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -150,7 +150,11 @@ function coreSurfacesHealth(){
     counter: !!(ct && ct.textContent && ct.textContent.indexOf("…") < 0 && ct.textContent.length > 3),
     ticker: tickerHasText(tt),
     cityList: !!(cl && cl.querySelectorAll(".city-item").length > 0),
-    avatar: avatarFaceState(gb) !== "dead"
+    avatar: avatarFaceState(gb) !== "dead",
+    /* v21: the map is the fifth surface. Its health is a STATE, not a
+       boolean — "loading" is healthy (a slow style must never be
+       "revived" to death), "fallback"/"dead" are what repaint retries. */
+    map: mapSurfaceState()
   };
 }
 /* Repair pass for the profile avatar: a face image that can never paint
@@ -192,12 +196,16 @@ function repaintCoreSurfaces(why){
   if (!h.ticker) dead.push("ticker");
   if (!h.cityList) dead.push("cityList");
   if (!h.avatar) dead.push("avatar");
-  if (!dead.length) { repairAvatarFace(); return; }
-  tracePush("repaint", why + ": reviving " + dead.join(", "));
-  if (!h.counter) bootStep("updateCounter", updateCounter);
-  if (!h.ticker) bootStep("buildTicker", buildTicker);
-  if (!h.cityList) bootStep("renderCityList", renderCityList);
-  if (!h.avatar){ bootStep("renderMyAvatar", renderMyAvatar); repairAvatarFace(); }
+  if (dead.length) {
+    tracePush("repaint", why + ": reviving " + dead.join(", "));
+    if (!h.counter) bootStep("updateCounter", updateCounter);
+    if (!h.ticker) bootStep("buildTicker", buildTicker);
+    if (!h.cityList) bootStep("renderCityList", renderCityList);
+    if (!h.avatar){ bootStep("renderMyAvatar", renderMyAvatar); repairAvatarFace(); }
+  } else repairAvatarFace();
+  /* The map is revived by the same pass (v21): dead/fallback maps are
+     retried, a still-loading map is left strictly alone. */
+  ensureMapAlive(why, false);
 }
 /* The «Диагностика запуска» block (About sheet): build stamps, the
    CURRENT health of the four critical surfaces, and the tail of the
@@ -206,9 +214,18 @@ function bootDiagHtml(){
   function esc(s){ return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
   var h = coreSurfacesHealth();
   function mark(ok){ return ok ? "✅" : "❌"; }
+  var mel = $("#map");
+  var mapRow = "Карта: " + (h.map === "ready" ? "готова ✅" : h.map === "loading" ? "грузится…" : h.map === "fallback" ? "показан fallback-текст" : h.map === "absent" ? "нет элемента" : "мертва ❌")
+    + " · mapReady " + (mapReady ? "да" : "нет")
+    + " · карта создана " + (mapConstructed ? "да" : "нет")
+    + " · маркер создан " + (meMarkerCreated ? "да" : "нет")
+    + " · канвас " + (mel && mel.querySelector("canvas") ? "есть" : "нет")
+    + " · data-fallback " + (mel ? (mel.getAttribute("data-fallback") || "—") : "—")
+    + (mapLastError ? " · посл. ошибка [" + mapLastError.kind + "] " + mapLastError.msg : " · ошибок карты не было");
   var rows = [
     "Сборка: html " + (window.TIRADA_BUILD || "?") + " · js " + APP_BUILD,
     "Поверхности сейчас: счётчик " + mark(h.counter) + " · тикер " + mark(h.ticker) + " · города " + mark(h.cityList) + " · аватар " + mark(h.avatar),
+    mapRow,
     "Браузер: " + String(navigator.userAgent || "").slice(0, 110)
   ];
   var a = lsGet("tirada_boot_errors", []);
@@ -1278,6 +1295,20 @@ function pumpToasts(){
    never repaints a filtered layer. Style: CARTO dark-matter GL, recolored
    to Yasha's palette (dark-green land, dark-turquoise water) — map-style.js. */
 var map = null, mapReady = false, meMarker = null, placeMarkers = {}, badgeMarkers = [], friendMarkers = {};
+/* v21 map lifecycle state: the last classified map error (for the
+   diagnostics block), whether this environment can EVER host a map
+   (no WebGL / no library — retries are pointless then), the double-init
+   guard, and the repaint retry throttle. */
+var mapLastError = null, mapUnsupported = false, mapInitInFlight = false,
+    mapLastRetryAt = 0, mapErrTraceKind = "", mapErrTraceAt = 0;
+var MAP_STYLE_DEADLINE_MS = 20000;
+/* Milestones of the CURRENT map instance, for the diagnostics block:
+   the 2026-11-23 phone screenshot showed a map tab with no tiles, no
+   fallback text and — the telling part — no ghost marker, although
+   meMarker is created synchronously inside initMap, before 'load'.
+   These flags (plus the trace lines written at each milestone) show
+   exactly how far the chain got: constructed? marker created? */
+var mapConstructed = false, meMarkerCreated = false;
 
 /* Map markers v3.6 (Snap Map style): places = small round badges by heat with a white
    SVG icon of the place type; ghosts on the map are you — a round avatar
@@ -1539,24 +1570,103 @@ function mapFallback(){
   var el = $("#map");
   if (!el) return;
   /* data-fallback marks the state for the health checks/lab: an empty
-     dark #map with neither canvas nor this text is a dead surface. */
+     dark #map with neither canvas nor this text is a dead surface.
+     Presentation lives in the .map-fallback rule in style.css (v21) —
+     no inline styles, so the text is styled even if this string is
+     reused somewhere the style attribute would be stripped. */
   el.setAttribute("data-fallback", "1");
-  el.innerHTML = '<div class="map-fallback" style="padding:24px;color:#a3a3ad;font-size:14px">' + t("Карта не загрузилась (нет сети или недоступен WebGL) — но места на экране «Места» на месте.") + '</div>';
+  el.innerHTML = '<div class="map-fallback">' + t("Карта не загрузилась (нет сети или недоступен WebGL) — но места на экране «Места» на месте.") + '</div>';
 }
-/* The map was constructed (a WebGL context existed) but its style never
-   loaded — tile/style hosts unreachable, a GPU process that died after
-   the probe: the user gets an empty dark field with no explanation
-   (v19 live check, point 5). Tear down to the supported map === null
-   state and show the honest fallback instead. */
-function mapStyleWatchdog(){
+/* The map as a surface state (v21): "ready" (style loaded, layers in),
+   "loading" (constructed, style still on its way — HEALTHY, hands
+   off), "fallback" (map === null, honest text on screen), "dead"
+   (map === null and not even the fallback), "absent" (no element). */
+function mapSurfaceState(){
+  var el = $("#map");
+  if (!el) return "absent";
+  if (map && mapReady) return "ready";
+  if (el.getAttribute("data-fallback") === "1") return "fallback";
+  if (map) return "loading";
+  return "dead";
+}
+/* Drop to the supported map === null state, with the reason traced. */
+function teardownMap(why){
+  tracePush("map", "teardown: " + why);
+  try { if (map) map.remove(); } catch (e){}
+  map = null; meMarker = null; mapReady = false;
+  mapConstructed = false; meMarkerCreated = false;
+  if (typeof window !== "undefined") window.__tiradaMap = null;
+}
+/* MapLibre error events, classified. Tile errors are routine — one bad
+   tile must never kill the map — so they are only RECORDED (the
+   diagnostics block shows the last one). A sprite/glyph failure is
+   different: those resources gate the style itself, so the 'load'
+   event may NEVER fire (the v19 symptom on Yasha's phone: one CARTO
+   host serves tiles, glyphs AND sprite from a single snapshot — a hung
+   sprite meant no load, no layers, no fallback, just the dark field).
+   For those, don't wait for the deadline: after a short grace period,
+   finish the layers manually if the style did arrive, else tear down
+   to the fallback early. */
+function onMapError(m, e){
+  var em = (e && e.error && e.error.message) || (e && e.message) || "unknown map error";
+  var kind = "other";
+  if (e && e.tile) kind = "tile";
+  else if (/sprite/i.test(em)) kind = "sprite";
+  else if (/glyph|font|\.pbf/i.test(em)) kind = "glyph";
+  else if (/tile|\.mvt|source/i.test(em)) kind = "tile";
+  mapLastError = { kind: kind, msg: String(em).slice(0, 160), t: Date.now() };
+  /* The trace is capped at 40 entries — a flapping tile host must not
+     flush the boot record out of it. Trace the first error of each
+     kind, then at most one line per 10 s. */
+  var now = Date.now();
+  if (kind !== mapErrTraceKind || now - mapErrTraceAt > 10000){
+    mapErrTraceKind = kind; mapErrTraceAt = now;
+    tracePush("map-error", kind + ": " + mapLastError.msg);
+  }
+  if (kind !== "sprite" && kind !== "glyph") return;
   setTimeout(function(){
-    if (!map || mapReady) return;
-    try { map.remove(); } catch (e){}
-    map = null; meMarker = null;
-    if (typeof window !== "undefined") window.__tiradaMap = null;
-    tracePush("map", "style never loaded in 5s — tore the map down, fallback shown");
+    if (map !== m || !map || mapReady) return;
+    try { if (map.isStyleLoaded()){ initMapLayers(); return; } } catch (e2){}
+    if (map !== m || mapReady) return;
+    teardownMap("style resource failed (" + kind + "): " + mapLastError.msg);
     mapFallback();
-  }, 5000);
+  }, 4000);
+}
+/* The map was constructed (a WebGL context existed) but its style is
+   taking forever — tile/style hosts unreachable, a GPU process that
+   died after the probe. v20 tore the map down after a flat 5 s, which
+   also killed healthy-but-slow maps on real phones (style JSON +
+   glyphs + sprite over a mobile network legitimately take longer).
+   v21: the deadline is ~20 s, the watchdog is bound to THIS map
+   instance, and before tearing anything down it gives the layers one
+   more chance — if the style did arrive and only the 'load' event was
+   missed, initMapLayers() finishes the job and the map lives. */
+function mapStyleWatchdog(){
+  var m = map;
+  setTimeout(function(){
+    if (map !== m || !map || mapReady) return;
+    try { if (map.isStyleLoaded()){ initMapLayers(); return; } } catch (e){}
+    if (map !== m || mapReady) return;
+    teardownMap("style never loaded in 20s" + (mapLastError ? "; last error [" + mapLastError.kind + "] " + mapLastError.msg : "; no error recorded"));
+    mapFallback();
+  }, MAP_STYLE_DEADLINE_MS);
+}
+/* Revive a dead/fallback map exactly like the other surfaces (v21):
+   called by repaintCoreSurfaces and when the user opens the Map tab.
+   A map that exists — ready OR still loading — is never touched, an
+   environment that cannot host a map at all (mapUnsupported) is not
+   retried, and repaint-driven retries are throttled so a dead network
+   doesn't spin construction attempts (tab-open passes force=true: the
+   user is literally looking at the map screen asking for it). */
+function ensureMapAlive(why, force){
+  if (map || mapUnsupported) return;
+  var st = mapSurfaceState();
+  if (st !== "fallback" && st !== "dead") return;
+  var now = Date.now();
+  if (!force && now - mapLastRetryAt < 10000) return;
+  mapLastRetryAt = now;
+  tracePush("map", why + ": map surface '" + st + "' — retrying initMap");
+  bootStep("initMap-retry", initMap);
 }
 /* MapLibre's Map constructor THROWS synchronously ("Failed to initialize
    WebGL") whenever the browser/WebView cannot create a WebGL context —
@@ -1574,11 +1684,24 @@ function webglAvailable(){
   } catch(e){ return false; }
 }
 function initMap(){
+  /* Double-initialisation guard (v21): repaint retries and tab-open
+     retries call initMap again — a second Map on the same container
+     would fight the first one's canvas and markers. */
+  if (map || mapInitInFlight) return;
   if (typeof maplibregl === "undefined" || !window.TIRADA_MAP_STYLE || !webglAvailable()){
+    /* Nothing a retry can change inside this page load — remember it
+       so ensureMapAlive doesn't spin on an impossible map. */
+    mapUnsupported = true;
     mapFallback();
     return;
   }
+  mapInitInFlight = true;
   try {
+  /* A retry after a fallback starts from a clean container: MapLibre
+     appends its canvas next to whatever is inside #map, it does not
+     clear it — the fallback text would stay on screen under the map. */
+  var mel = $("#map");
+  if (mel && mel.getAttribute("data-fallback") === "1"){ mel.removeAttribute("data-fallback"); mel.innerHTML = ""; }
   map = new maplibregl.Map({
     container: "map",
     style: window.TIRADA_MAP_STYLE,
@@ -1594,25 +1717,44 @@ function initMap(){
     fadeDuration: 0
   });
   window.__tiradaMap = map; /* audit/debug hook */
+  mapConstructed = true;
+  tracePush("map", "constructed — awaiting style load");
+  var thisMap = map;
+  map.on("error", function(e){ onMapError(thisMap, e); });
   mapStyleWatchdog();
   map.touchZoomRotate.disableRotation();
   map.scrollZoom.disable();
   map.getContainer().addEventListener("focusin", function(){ map.scrollZoom.enable(); });
   map.getContainer().addEventListener("focusout", function(){ map.scrollZoom.disable(); });
   map.on("load", initMapLayers);
-  setTimeout(function(){ if (!mapReady && map.isStyleLoaded()) initMapLayers(); }, 3000);
+  setTimeout(function(){ if (map === thisMap && !mapReady && map.isStyleLoaded()) initMapLayers(); }, 3000);
   setTimeout(showZoomHintOnce, 1600);
   var me = mePos();
-  meMarker = new maplibregl.Marker({ element: ghostEl() })
-    .setLngLat([me.lng, me.lat])
-    .setPopup(makePopup(myPopupHtml(), 30))
-    .addTo(map);
-  /* tap on your own avatar = center on yourself + refresh REAL geolocation */
-  meMarker.getElement().addEventListener("click", function(){
-    var p = mePos();
-    map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 15), duration: 700 });
-    requestGeo(true);
-  });
+  /* The ghost marker gets its OWN guard (v21): it is assembled from
+     app-side pieces (ghost element, popup HTML) — if any of them ever
+     throws on some device, the map itself must survive (tiles and
+     place dots are worth more than one marker), and the trace must
+     name the MARKER as the failure, not the map. The 2026-11-23 phone
+     screenshot (living app, empty map, no ghost, no fallback) is
+     exactly the case this separation exists to diagnose. */
+  try {
+    meMarker = new maplibregl.Marker({ element: ghostEl() })
+      .setLngLat([me.lng, me.lat])
+      .setPopup(makePopup(myPopupHtml(), 30))
+      .addTo(map);
+    meMarkerCreated = true;
+    tracePush("map", "meMarker created");
+    /* tap on your own avatar = center on yourself + refresh REAL geolocation */
+    meMarker.getElement().addEventListener("click", function(){
+      var p = mePos();
+      map.flyTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 15), duration: 700 });
+      requestGeo(true);
+    });
+  } catch (eMarker){
+    meMarker = null;
+    tracePush("map", "meMarker failed: " + ((eMarker && eMarker.message) || eMarker));
+    console.warn("TiradA map: ghost marker failed:", eMarker);
+  }
   refreshFriendMarkers();
   map.on("click", function(e){
     var t = $("#legendTip"); if (t) t.hidden = true;
@@ -1650,10 +1792,18 @@ function initMap(){
     if (!btn) return;
     openPlaceSheetById(btn.getAttribute("data-place-open"));
   });
+  mapInitInFlight = false;
   } catch(e){
     /* A half-wired map is worse than none: drop to the supported
-       map === null state and let the app run without it. */
-    map = null; meMarker = null;
+       map === null state and let the app run without it. v21: the
+       failure is no longer silent — it goes to the boot trace (and
+       the console), so the diagnostics block can name it. */
+    mapInitInFlight = false;
+    tracePush("map", "initMap threw: " + ((e && e.message) || e));
+    console.warn("TiradA map: initMap failed:", e);
+    try { if (map) map.remove(); } catch (e2){}
+    map = null; meMarker = null; mapReady = false;
+    mapConstructed = false; meMarkerCreated = false;
     if (typeof window !== "undefined") window.__tiradaMap = null;
     mapFallback();
   }
@@ -2299,7 +2449,20 @@ $("#shareGeoBtn").addEventListener("click", function(){
 function showScreen(name){
   $$(".tab").forEach(function(t){ t.classList.toggle("active", t.getAttribute("data-screen") === name); });
   $$(".screen").forEach(function(s){ s.classList.toggle("active", s.id === "screen-" + name); });
-  if (name === "map" && map) setTimeout(function(){ map.resize(); }, 60);
+  if (name === "map" && map) setTimeout(function(){
+    if (!map) return;
+    map.resize();
+    /* Resize alone does not reposition DOM markers in MapLibre (they
+       update on move/terrain events): re-pin the ghost explicitly, so
+       a marker created against a stale size can never sit off-screen
+       after the tab becomes visible. */
+    renderMapMarkers();
+  }, 60);
+  /* Opening the Map tab is the user asking for the map (v21): if it
+     died to the fallback earlier, retry construction right now —
+     the network may be back, and the watchdog will not fire again
+     on its own. */
+  if (name === "map" && !map) ensureMapAlive("tab-open", true);
   if (name === "map") refreshFriendMarkers();
   if (name === "places") renderPlaces();
   if (name === "profile" && typeof cloudUser !== "undefined" && cloudUser) friendsLoad();
@@ -4551,8 +4714,10 @@ function renderLangOptions(){
 }
 var settingsBtnEl = $("#settingsBtn");
 if (settingsBtnEl) settingsBtnEl.addEventListener("click", function(){
-  renderLangOptions();
+  /* Same open-first rule as the info sheet (v21): unhide before any
+     fill work, so a fill failure can never keep the sheet shut. */
   $("#settingsSheet").hidden = false;
+  try { renderLangOptions(); } catch (e){}
 });
 var settingsCloseEl = $("#settingsClose");
 if (settingsCloseEl) settingsCloseEl.addEventListener("click", function(){ $("#settingsSheet").hidden = true; });
@@ -4607,52 +4772,73 @@ function renderBootDiag(){
 }
 $$("[data-info]").forEach(function(btn){
   btn.addEventListener("click", function(){
-    /* The sheet MUST open even if something inside it is broken: in the
-       v19 live check a throw anywhere in this handler (the diagnostics
-       render ran BEFORE the modal was unhidden, unguarded) kept «О
-       приложении» shut and the failure unreadable. Now every step is
-       guarded and unhiding the modal is the unconditional last step. */
+    /* OPEN FIRST, fill after (v21). The v19 handler filled the sheet
+       and rendered the diagnostics BEFORE unhiding the modal, all
+       unguarded — one throw (the diagnostics read live DOM/storage
+       state) and «О приложении» never opened on that device, with the
+       evidence locked inside the very sheet that wouldn't open. v20
+       armored the fill and moved the unhide to the end; v21 makes the
+       unhide the unconditional FIRST step: whatever the fill does,
+       the user gets a visible sheet, and each fill step fails alone. */
+    infoModal.hidden = false;
+    var key = btn.getAttribute("data-info");
+    var d = null;
     try {
-      var key = btn.getAttribute("data-info");
-      var d = INFO[key];
+      d = INFO[key] || null;
+      if (d && LANG !== "ru" && typeof INFO_I18N !== "undefined" && INFO_I18N[LANG] && INFO_I18N[LANG][key]){
+        var LI = INFO_I18N[LANG][key];
+        d = { emoji: d.emoji, title: LI.title, body: LI.body,
+              sections: LI.sections ? LI.sections.map(function(x){ return { h: x[0], t: x[1] }; }) : null };
+      }
+    } catch (e) {
+      try { tracePush("error", "info sheet data: " + ((e && e.message) || e)); } catch (e2){}
+    }
+    try {
       if (d){
-        if (LANG !== "ru" && typeof INFO_I18N !== "undefined" && INFO_I18N[LANG] && INFO_I18N[LANG][key]){
-          var LI = INFO_I18N[LANG][key];
-          d = { emoji: d.emoji, title: LI.title, body: LI.body,
-                sections: LI.sections ? LI.sections.map(function(x){ return { h: x[0], t: x[1] }; }) : null };
-        }
         $("#infoEmoji").textContent = d.emoji;
         $("#infoTitle").textContent = d.title;
-        var bodyEl = $("#infoBody");
-        if (bodyEl){
-          if (d.sections){
-            bodyEl.innerHTML = d.sections.map(function(s){
-              return '<div class="info-sec"><h4>' + s.h + "</h4><p>" + s.t + "</p></div>";
-            }).join("");
-          } else {
-            bodyEl.textContent = d.body || "";
-          }
+      }
+    } catch (e) {
+      try { tracePush("error", "info sheet head: " + ((e && e.message) || e)); } catch (e2){}
+    }
+    try {
+      var bodyEl = $("#infoBody");
+      if (d && bodyEl){
+        if (d.sections){
+          bodyEl.innerHTML = d.sections.map(function(s){
+            return '<div class="info-sec"><h4>' + s.h + "</h4><p>" + s.t + "</p></div>";
+          }).join("");
+        } else {
+          bodyEl.textContent = d.body || "";
         }
       }
+    } catch (e) {
+      try { tracePush("error", "info sheet body: " + ((e && e.message) || e)); } catch (e2){}
+    }
+    try {
       var diagEl = $("#bootDiag");
       if (diagEl){
         if (key === "about"){ diagEl.innerHTML = renderBootDiag(); diagEl.hidden = false; }
         else diagEl.hidden = true;
       }
     } catch (e) {
-      try { tracePush("error", "info sheet: " + ((e && e.message) || e)); } catch (e2){}
+      try { tracePush("error", "info sheet diag: " + ((e && e.message) || e)); } catch (e2){}
     }
-    infoModal.hidden = false;
   });
 });
 $("#infoClose").addEventListener("click", function(){ infoModal.hidden = true; });
 $("#infoOk").addEventListener("click", function(){ infoModal.hidden = true; });
 infoModal.addEventListener("click", function(e){ if (e.target === infoModal) infoModal.hidden = true; });
 $("#linkCreators").addEventListener("click", function(){
+  /* Not a modal: it scrolls the profile to the credits block. If the
+     credits are already on screen the tap legitimately "does nothing"
+     visible — that is the designed effect, not a dead button. */
   showScreen("profile");
   setTimeout(function(){
-    var el = $("#footerCredits");
-    if (el) el.scrollIntoView({ behavior:"smooth", block:"center" });
+    try {
+      var el = $("#footerCredits");
+      if (el) el.scrollIntoView({ behavior:"smooth", block:"center" });
+    } catch (e){}
   }, 120);
 });
 

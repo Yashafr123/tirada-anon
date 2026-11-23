@@ -122,6 +122,11 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
 
 /* ===== Map screen ===== */
 .map{flex:1 1 auto;min-height:0;width:100%;background:#0b100c;z-index:1}
+/* The honest dead-map text (mapFallback() in app.js): a real rule
+   since v21 — before, the div was styled only by an inline style
+   attribute, so any reuse/CSP strip left it invisible on the dark
+   map background. */
+.map-fallback{padding:24px;color:#a3a3ad;font-size:14px;line-height:1.5}
 /* Vector map (MapLibre GL): the GPU renders the CARTO dark-matter style,
    recolored to Yasha's palette in js/map-style.js — dark-green land,
    dark-turquoise water. No raster tiles, no CSS filter anywhere: pan and
