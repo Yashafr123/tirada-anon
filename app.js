@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "28";
+var APP_BUILD = "29";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -806,7 +806,7 @@ var RAW = {
    >= 3 («Тусовщик» / Party Animal) — chosen over the AI-tasks
    alternative because the level is always on screen, so the goal
    explains itself in the UI. */
-var SECRET_PLACES = { "karmiel|Ирисим": 1, "karmiel|כיכר האירוסים": 1, "telaviv|Yarkon Park": 1, "haifa|Bat Galim Beach": 1 };
+var SECRET_PLACES = { "karmiel|Ирисим": 1, "telaviv|Yarkon Park": 1, "haifa|Bat Galim Beach": 1 };
 function secretUnlocked(){ return levelOf(myXp()).num >= 3; }
 function isSecretLocked(p){ return !!(p && p.secret && !secretUnlocked()); }
 
@@ -5430,7 +5430,7 @@ function ensureMusic(){
   try {
     musicAudio = new Audio();
     musicAudio.loop = true;
-    musicAudio.volume = 0.15;
+    musicAudio.volume = 0.3;
     musicAudio.preload = "none";
   } catch (e) { musicAudio = null; }
   return musicAudio;
@@ -5449,9 +5449,7 @@ function applySoundState(){
 }
 function armSoundOnFirstGesture(){
   var arm = function(){
-    document.removeEventListener("pointerdown", arm);
-    document.removeEventListener("keydown", arm);
-    musicArmed = true;
+    musicArmed = true; /* listener stays: every later tap retries play() if the first attempt was blocked or the phone was silent */
     applySoundState();
   };
   document.addEventListener("pointerdown", arm);
