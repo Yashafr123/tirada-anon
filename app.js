@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "24";
+var APP_BUILD = "25";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -2310,6 +2310,8 @@ function renderAvatarGrid(){
   var grid = $("#avatarGrid");
   if (!grid) return;
   var hasPhoto = !!(state.avatarUrl || state.avatarPhoto);
+  var rotateBtn = $("#avatarRotate");
+  if (rotateBtn) rotateBtn.hidden = !hasPhoto;
   var html = AVATARS.map(function(av, i){
     var sel = (!hasPhoto && state.myAvatar === i) ? " selected" : "";
     return '<button class="avatar-cell' + sel + '" data-avatar="' + i + '">' + avatarFace(i) + "</button>";
@@ -2429,6 +2431,54 @@ $("#avatarFile").addEventListener("change", function(){
       cv.toBlob(function(blob){ if (blob) cloudUploadAvatar(blob); }, "image/jpeg", 0.85);
     }
   }).catch(function(){ toast(t("Не вышло прочитать фото")); });
+});
+/* ================= Rotate the avatar photo (v25) =================
+   Yasha's cloud photo is a sharp selfie whose PIXELS are baked rotated
+   (~180°) by the pre-v15 pipeline; the EXIF flag is long gone, so no
+   automatic orientation is possible. The manual fix lives here: each
+   tap turns the CURRENT photo 90° clockwise on a canvas. The result
+   becomes the local photo (the v24 single truth) and is uploaded
+   through the same cloudUploadAvatar path as a fresh upload, which
+   stamps tirada_avatar_synced for the NEW photo — so the heal logic
+   can never roll the rotation back. Works for a cloud-only photo too:
+   it is downloaded first, then rotated like a local one. */
+$("#avatarRotate").addEventListener("click", function(){
+  var src = state.avatarPhoto || state.avatarUrl;
+  if (!src) return;
+  var img = new Image();
+  if (src.indexOf("data:") !== 0 && src.indexOf("blob:") !== 0) img.crossOrigin = "anonymous";
+  img.onload = function(){
+    try {
+      var w = img.naturalWidth || 1, h = img.naturalHeight || 1;
+      var rc = document.createElement("canvas");
+      rc.width = h; rc.height = w;
+      var rx = rc.getContext("2d");
+      rx.translate(h / 2, w / 2);
+      rx.rotate(Math.PI / 2);
+      rx.drawImage(img, -w / 2, -h / 2);
+      var S = 256, cv = document.createElement("canvas");
+      cv.width = S; cv.height = S;
+      var side = Math.min(rc.width, rc.height);
+      cv.getContext("2d").drawImage(rc, (rc.width - side) / 2, (rc.height - side) / 2, side, side, 0, 0, S, S);
+      state.avatarPhoto = cv.toDataURL("image/jpeg", 0.85);
+      lsSet("tirada_avatar_photo", state.avatarPhoto);
+      /* Show the rotated local copy at once; the cloud URL still
+         points at the old bake until the upload below lands and
+         replaces it (cloudUploadAvatar sets the fresh URL itself). */
+      state.avatarUrl = null;
+      lsSet("tirada_avatar_url", null);
+      renderMyAvatar(); renderAvatarGrid();
+      toast(t("Фото повёрнуто ⟳"));
+      /* This upload supersedes any heal that has not started yet:
+         a late heal would re-upload the pre-rotation photo. */
+      avatarHealStarted = true;
+      if (window.TiradaDB && typeof cloudUploadAvatar === "function"){
+        cv.toBlob(function(blob){ if (blob) cloudUploadAvatar(blob, true); }, "image/jpeg", 0.85);
+      }
+    } catch (e){ toast(t("Не вышло повернуть фото")); }
+  };
+  img.onerror = function(){ toast(t("Не вышло повернуть фото")); };
+  img.src = src;
 });
 /* ================= Nick validation =================
    A ghost name may be written in Russian, Hebrew or Latin letters —

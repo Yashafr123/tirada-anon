@@ -81,9 +81,15 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
 
 /* ===== Ticker ===== */
 .ticker{
-  flex:0 0 auto;overflow:hidden;height:32px;
+  flex:0 0 auto;overflow:hidden;height:32px;position:relative;z-index:60;
   border-top:1px solid rgba(255,30,30,.25);border-bottom:1px solid rgba(255,30,30,.25);
-  background:linear-gradient(90deg, rgba(255,30,30,.14), rgba(229,9,20,.10), rgba(255,30,30,.14));
+  /* v25: the strip must be OPAQUE. The red tint used to be a lone
+     translucent gradient, so while a screen scrolled, its text showed
+     through the strip and read as a second line inside the ticker
+     (live report 2026-11-23). The solid app background under the same
+     gradient keeps the exact tint but lets nothing bleed through. */
+  background-color:var(--bg);
+  background-image:linear-gradient(90deg, rgba(255,30,30,.14), rgba(229,9,20,.10), rgba(255,30,30,.14));
   display:flex;align-items:center;
 }
 .ticker-track{
