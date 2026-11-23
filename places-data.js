@@ -17,8 +17,8 @@ window.REAL_PLACES = {"telaviv":[{"name":"Yarkon Park","type":"park","lat":32.09
      (32.908349, 35.292397), Sderot Nesi'ei Israel 102. */
 window.CUSTOM_PLACES = {
   karmiel: [
-    { name: "Ирисим", type: "park", lat: 32.906739, lng: 35.291984, rating: null, reviews: null, priceLevel: null, address: "район Ха-Ирусим, у школы «Ха-Ирисим»", source: "local" },
-    { name: "Парк за новым каньоном", type: "park", lat: 32.930500, lng: 35.325600, rating: null, reviews: null, priceLevel: null, address: "за каньоном «Хуцот Кармиэль», Маале-Камон 5", source: "local" },
-    { name: "Магазин «Тик Так»", type: "cafe", lat: 32.908349, lng: 35.292397, rating: null, reviews: null, priceLevel: null, address: "Сдерот Несиэй Исраэль 102", source: "local" }
+    { name: "Ирисим", type: "park", lat: 32.906739, lng: 35.291984, rating: null, reviews: null, priceLevel: null, address: "район Ха-Ирусим, у школы «Ха-Ирисим»", addressHe: "שכונת האירוסים, ליד בית הספר «האירוסים»", addressEn: "Ha-Irusim neighborhood, next to the Ha-Irisim school", source: "local" },
+    { name: "Парк за новым каньоном", type: "park", lat: 32.930500, lng: 35.325600, rating: null, reviews: null, priceLevel: null, address: "за каньоном «Хуцот Кармиэль», Маале-Камон 5", addressHe: "מאחורי קניון «חוצות כרמיאל», מעלה כמון 5", addressEn: "Behind the Hutzot Karmiel mall, Ma'ale Kamon 5", source: "local" },
+    { name: "Магазин «Тик Так»", type: "cafe", lat: 32.908349, lng: 35.292397, rating: null, reviews: null, priceLevel: null, address: "Сдерот Несиэй Исраэль 102", addressHe: "שדרות נשיאי ישראל 102", addressEn: "Sderot Nesi'ei Israel 102", source: "local" }
   ]
 };

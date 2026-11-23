@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "22";
+var APP_BUILD = "23";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -241,28 +241,28 @@ function bootDiagHtml(){
   var h = coreSurfacesHealth();
   function mark(ok){ return ok ? "✅" : "❌"; }
   var mel = $("#map");
-  var mapRow = "Карта: " + (h.map === "ready" ? "готова ✅" : h.map === "loading" ? "грузится…" : h.map === "fallback" ? "показан fallback-текст" : h.map === "absent" ? "нет элемента" : "мертва ❌")
-    + " · mapReady " + (mapReady ? "да" : "нет")
-    + " · карта создана " + (mapConstructed ? "да" : "нет")
-    + " · маркер создан " + (meMarkerCreated ? "да" : "нет")
-    + " · канвас " + (mel && mel.querySelector("canvas") ? "есть" : "нет")
-    + " · data-fallback " + (mel ? (mel.getAttribute("data-fallback") || "—") : "—")
-    + (mapLastError ? " · посл. ошибка [" + mapLastError.kind + "] " + mapLastError.msg : " · ошибок карты не было");
+  function yn(b){ return b ? t("да") : t("нет"); }
+  var mapStateWord = h.map === "ready" ? t("готова ✅") : h.map === "loading" ? t("грузится…") : h.map === "fallback" ? t("показан fallback-текст") : h.map === "absent" ? t("нет элемента") : t("мертва ❌");
+  var mapRow = tf("Карта: {state} · mapReady {a} · карта создана {b} · маркер создан {c} · канвас {d} · data-fallback {e}",
+      { state: mapStateWord, a: yn(mapReady), b: yn(mapConstructed), c: yn(meMarkerCreated),
+        d: (mel && mel.querySelector("canvas")) ? t("есть") : t("нет"),
+        e: mel ? (mel.getAttribute("data-fallback") || "—") : "—" })
+    + (mapLastError ? " · " + tf("посл. ошибка [{k}] {m}", { k: mapLastError.kind, m: mapLastError.msg }) : " · " + t("ошибок карты не было"));
   var rows = [
-    "Сборка: html " + (window.TIRADA_BUILD || "?") + " · js " + APP_BUILD,
-    "Поверхности сейчас: счётчик " + mark(h.counter) + " · тикер " + mark(h.ticker) + " · города " + mark(h.cityList) + " · аватар " + mark(h.avatar),
+    tf("Сборка: html {a} · js {b}", { a: window.TIRADA_BUILD || "?", b: APP_BUILD }),
+    tf("Поверхности сейчас: счётчик {c} · тикер {t} · города {g} · аватар {a}", { c: mark(h.counter), t: mark(h.ticker), g: mark(h.cityList), a: mark(h.avatar) }),
     mapRow,
-    "Браузер: " + String(navigator.userAgent || "").slice(0, 110)
+    tf("Браузер: {ua}", { ua: String(navigator.userAgent || "").slice(0, 110) })
   ];
   var a = lsGet("tirada_boot_errors", []);
   if (Array.isArray(a) && a.length){
-    rows.push("— журнал запуска —");
+    rows.push(t("— журнал запуска —"));
     a.slice(-16).forEach(function(en){
       var d = new Date(en.t || 0);
       var hh = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2) + ":" + ("0" + d.getSeconds()).slice(-2);
       rows.push(hh + " [" + en.kind + "] " + en.msg);
     });
-  } else rows.push("Журнал запуска пуст.");
+  } else rows.push(t("Журнал запуска пуст."));
   return "<b>" + esc(t("Диагностика запуска")) + "</b><br>" + rows.map(esc).join("<br>");
 }
 
@@ -817,7 +817,7 @@ function buildPlaces(city){
         rating: (typeof rp.rating === "number" ? rp.rating : null),
         reviews: rp.reviews || null,
         priceLevel: (rp.priceLevel === undefined ? null : rp.priceLevel),
-        address: rp.address || null, real: rp.source !== "local", local: rp.source === "local",
+        address: rp.address || null, addressHe: rp.addressHe || null, addressEn: rp.addressEn || null, real: rp.source !== "local", local: rp.source === "local",
         tags: typeTags(rp.type).slice(), tagsRu: t.tags.slice(), song: song, task: task,
         art: t.art, grad: t.grad };
     });
@@ -989,7 +989,14 @@ function distFromText(p){
 /* ================= Place details (demo data, deterministic) ================= */
 var STREET_POOL = ["ул. Герцль","ул. Вайцман","ул. Бен-Гурион","ул. Жаботински","ул. Бялик","ул. Соколов","ул. Ротшильд","ул. Дизенгоф","ул. Аленби","ул. Левински"];
 function placeAddress(p){
-  if (p.real || p.local) return p.address || "";
+  if (p.real || p.local){
+    /* Hand-added local spots carry hand-written addresses: show the
+       he/en variant when the entry provides one (CUSTOM_PLACES). Real
+       Google addresses are source data, like place names. */
+    if (LANG === "he" && p.addressHe) return p.addressHe;
+    if (LANG === "en" && p.addressEn) return p.addressEn;
+    return p.address || "";
+  }
   var r = rng(hashStr("addr|" + p.id));
   var pool = (LANG !== "ru" && typeof STREET_POOL_I18N !== "undefined" && STREET_POOL_I18N[LANG]) || STREET_POOL;
   return pool[Math.floor(r() * pool.length)] + ", " + (1 + Math.floor(r() * 120));
@@ -1009,22 +1016,38 @@ function openStatus(p){
   if (open) return { open: true, text: tf("Открыто сейчас · до {h}", { h: fmtHour(c) }) };
   return { open: false, text: tf("Откроется в {h}", { h: fmtHour(o) }) };
 }
-var PRICES = { bar:"₪₪", club:"₪₪₪", cafe:"₪", beach:"Бесплатно", park:"Бесплатно", view:"Бесплатно", prom:"Бесплатно", roof:"₪₪₪", hookah:"₪₪", stage:"₪₪", market:"₪" };
 /* Google price levels for real venues: 0 free … 4 very expensive.
-   null level → no price line at all, nothing is invented. */
+   One display format everywhere (card, sheet, map popup): the level's
+   symbols + word from PRICE_LEVELS, always through t() so he/en match.
+   Commercial places with a null level show NO price line — nothing is
+   invented. Open public spaces (park / beach / viewpoint / promenade)
+   are the one exception: they are free by nature, Google itself rates
+   every park it lists at level 0, and the generated catalogue has
+   always shown them as free — so a null level there reads «Бесплатно»
+   for real and local spots too, instead of a mysteriously empty line
+   next to an identical free park across the street. */
 var PRICE_LEVELS = { 0:"Бесплатно", 1:"₪ · недорого", 2:"₪₪ · умеренно", 3:"₪₪₪ · дорого", 4:"₪₪₪₪ · очень дорого" };
+var FREE_TYPES = { park:1, beach:1, view:1, prom:1 };
+/* Generated (fallback) places have no Google level; map each type to
+   the equivalent PRICE_LEVELS entry so they render in the exact same
+   symbols + word format as real venues instead of bare symbols. */
+var GEN_PRICE_LEVEL = { bar:2, club:3, cafe:1, market:1, hookah:2, stage:2, roof:3 };
 function priceOf(p){
   if (p.real){
-    if (p.priceLevel === null || p.priceLevel === undefined) return "";
+    if (p.priceLevel === null || p.priceLevel === undefined)
+      return FREE_TYPES[p.type] ? t("Бесплатно") : "";
     return t(PRICE_LEVELS[p.priceLevel] || "");
   }
   if (p.local){
-    /* Hand-added local spots carry no Google price level: parks are free,
-       anything else shows no price line rather than an invented one. */
+    /* Hand-added local spots carry no Google price level: open public
+       spaces are free, anything else shows no price line rather than
+       an invented one. */
     if (p.priceLevel !== null && p.priceLevel !== undefined) return t(PRICE_LEVELS[p.priceLevel] || "");
-    return p.type === "park" ? t("Бесплатно") : "";
+    return FREE_TYPES[p.type] ? t("Бесплатно") : "";
   }
-  return t(PRICES[p.type] || "₪");
+  if (FREE_TYPES[p.type]) return t("Бесплатно");
+  var gl = GEN_PRICE_LEVEL[p.type];
+  return gl !== undefined ? t(PRICE_LEVELS[gl]) : "";
 }
 function ratingText(p){ return (typeof p.rating === "number" && p.rating > 0) ? fmtRating(p.rating) : "—"; }
 function reviewsText(p){
@@ -2034,14 +2057,18 @@ function placeCard(p, i){
   var fav = !!state.favs[p.id];
   var fHere = friendsAtPlaceNames(p.id);
   var fBadge = fHere.length ? '<div class="friend-here-badge">👻 ' + t("Здесь:") + " " + fHere.map(escHtml).join(", ") + '</div>' : '';
+  /* One meta line for every place class, same bits in the same order:
+     reviews (real venues) · local mark (hand-added) · price (any class
+     that has one). Before v23 local cards hid their price behind the
+     «Местное место» mark and generated cards showed no price at all,
+     while the sheet and the map popup showed it — the card now agrees
+     with them. */
   var realMeta = "";
-  if (p.real){
-    var bits = [];
-    if (p.reviews) bits.push("👥 " + reviewsText(p));
-    if (priceOf(p)) bits.push(t("💰 Цены:") + " " + priceOf(p));
-    if (bits.length) realMeta = '<div class="place-real-meta">' + bits.join(" · ") + '</div>';
-  }
-  if (p.local) realMeta = '<div class="place-real-meta">🏠 ' + t("Местное место") + '</div>';
+  var bits = [];
+  if (p.real && p.reviews) bits.push("👥 " + reviewsText(p));
+  if (p.local) bits.push("🏠 " + t("Местное место"));
+  if (priceOf(p)) bits.push(t("💰 Цены:") + " " + priceOf(p));
+  if (bits.length) realMeta = '<div class="place-real-meta">' + bits.join(" · ") + '</div>';
   return '<article class="place-card' + (p.id === TOP_ID ? ' top-card' : '') + '" data-id="' + p.id + '" style="animation-delay:' + (Math.min(i, 10) * 0.06).toFixed(2) + 's">' +
     '<div class="place-art" style="background:' + p.grad + '">' + emojiImg(p.art, "art-img") + badge +
     '<button class="fav-btn' + (fav ? " active" : "") + '" data-fav="' + p.id + '" aria-label="' + t("В избранное") + '">' + (fav ? "❤️" : "🤍") + '</button>' +
@@ -4814,7 +4841,7 @@ function renderBootDiag(){
   catch (e){
     try { tracePush("error", "bootDiag render: " + ((e && e.message) || e)); } catch (e2){}
     var msg = String((e && e.message) || e || "?").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return "<b>Диагностика запуска</b><br>Сборка: js " + APP_BUILD + " · журнал не прочитался (" + msg + ")";
+    return "<b>" + t("Диагностика запуска") + "</b><br>" + tf("Сборка: js {b} · журнал не прочитался ({m})", { b: APP_BUILD, m: msg });
   }
 }
 $$("[data-info]").forEach(function(btn){
@@ -4967,10 +4994,16 @@ bootStep("welcome", function(){
     setTimeout(function(){ $("#welcomeSheet").hidden = false; }, 500);
   }
 });
-/* deep-link for previews/screenshots: #places #route #profile #deal #city=eilat */
-bootStep("deepLink", function(){
+/* Deep links: #places #route #profile #map #deal #city=eilat — used by
+   previews/screenshots AND by push notifications (v23): the service
+   worker navigates/focuses the app to index.html#<screen> per event
+   type, and the hashchange listener below makes that navigation land
+   on the right screen even when the app is already open (a hash-only
+   navigation does not reboot the page, so boot alone is not enough). */
+function applyDeepLink(fromBoot){
   var h = location.hash || "";
-  if (h) document.body.classList.add("shots");
+  if (!h) return;
+  if (fromBoot) document.body.classList.add("shots");
   var cm = h.match(/city=([a-z]+)/);
   if (cm && PLACES_BY_CITY[cm[1]]) setCity(cm[1]);
   var vm = h.match(/vote=([a-z0-9,\-]+)/);
@@ -4978,7 +5011,12 @@ bootStep("deepLink", function(){
   if (h.indexOf("places") >= 0) showScreen("places");
   else if (h.indexOf("route") >= 0) showScreen("route");
   else if (h.indexOf("profile") >= 0) showScreen("profile");
+  else if (h.indexOf("map") >= 0) showScreen("map");
   if (h.indexOf("deal") >= 0) openDeal();
+}
+bootStep("deepLink", function(){ applyDeepLink(true); });
+window.addEventListener("hashchange", function(){
+  try { applyDeepLink(false); } catch (e) { /* a bad hash must never break the app */ }
 });
 tracePush("boot", "complete, ok: " + bootStepOk.join(", ") + (bootStepFail.length ? " | FAILED: " + bootStepFail.join(", ") : ""));
 /* Self-repair (v19): if anything in this environment still managed to
