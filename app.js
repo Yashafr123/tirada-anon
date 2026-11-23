@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "23";
+var APP_BUILD = "24";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -226,6 +226,16 @@ function repaintCoreSurfaces(why){
     if (!h.cityList) bootStep("renderCityList", renderCityList);
     if (!h.avatar){ bootStep("renderMyAvatar", renderMyAvatar); repairAvatarFace(); }
   } else repairAvatarFace();
+  /* v24: a ticker rebuilt while the page was hidden parked its
+     animation (see buildTicker); restart it now, on the foreground
+     pass, so the marquee layer is created from the CURRENT text and
+     no stale strip can ghost over it. The ticker is "alive" by the
+     health criteria — this is about the compositor layer, not the
+     content, so it runs even when nothing was dead. */
+  if (why === "visible-again" && tickerRestartPending){
+    var tt3 = $("#tickerTrack");
+    if (tt3){ restartTickerRun(tt3); tickerRestartPending = false; }
+  }
   /* The map is revived by the same pass (v21): dead/fallback maps are
      retried, a still-loading map is left strictly alone. Guarded
      (v22): a map-revival error must never abort the surface pass —
@@ -2200,8 +2210,26 @@ function buildTicker(){
      (the v19 live-check symptom). Removing .tick-run drops the animated
      layer entirely; re-adding it after the reflow starts the loop on a
      layer created from the CURRENT content. */
-  track.classList.remove("tick-run");
   track.innerHTML = '<span class="tick-half">' + half + '</span><span class="tick-half">' + half + "</span>";
+  /* v24: never (re)start the marquee layer while the page is hidden.
+     A rebuild that lands in a backgrounded/frozen page (the push-entry
+     path: the app unfreezes with async rebuilds already queued) had
+     its class toggle coalesced by the compositor, which kept painting
+     the PREVIOUS strip's text over the new one — two fragments
+     ghosting in one line, the v15 symptom back on the notification
+     path. While hidden, park the animation and let the
+     foreground-return pass restart it on a fresh layer. */
+  if (document.hidden){
+    track.classList.remove("tick-run");
+    tickerRestartPending = true;
+  } else {
+    restartTickerRun(track);
+    tickerRestartPending = false;
+  }
+}
+var tickerRestartPending = false;
+function restartTickerRun(track){
+  track.classList.remove("tick-run");
   void track.offsetWidth;
   track.classList.add("tick-run");
 }
@@ -3194,6 +3222,27 @@ function applyCitySilent(id){
     map.jumpTo({ center: [state.city.lng, state.city.lat], zoom: 13 });
   }
 }
+/* Stable-enough fingerprint of the local photo dataURL: length plus a
+   sampled FNV hash. Only ever compared for equality on this device —
+   it answers "is THIS photo the one the cloud last confirmed?" */
+function avatarPhotoHash(s){
+  if (!s) return "";
+  var h = 5381;
+  for (var i = 0; i < s.length; i += 7) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return s.length + ":" + h.toString(36);
+}
+var avatarHealStarted = false;
+function healAvatarToCloud(){
+  if (avatarHealStarted || !state.avatarPhoto) return;
+  if (typeof db === "undefined" || !db || !cloudUser) return;
+  avatarHealStarted = true;
+  try {
+    var bin = atob(String(state.avatarPhoto).split(",")[1] || "");
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    cloudUploadAvatar(new Blob([arr], { type: "image/jpeg" }), true);
+  } catch (e) { avatarHealStarted = false; }
+}
 function applyRemoteProfile(row){
   if (!row) return;
   if (row.name){ state.nick = row.name; lsSet("tirada_nick", state.nick);
@@ -3202,8 +3251,25 @@ function applyRemoteProfile(row){
     for (var i = 0; i < AVATARS.length; i++)
       if (AVATARS[i].e === row.avatar){ state.myAvatar = i; lsSet("tirada_avatar_idx", i); break; }
   }
-  state.avatarUrl = row.avatar_url || null;
-  lsSet("tirada_avatar_url", state.avatarUrl);
+  /* v24 — ONE truth for the avatar photo. This device's local photo is
+     the copy the user picked and SAW at upload time; the cloud file is
+     only its replica. The two could diverge (Yasha's bucket copy was
+     baked rotated by a pre-v15 pipeline pass while his local copy is a
+     different bake of the same photo), and the old code then silently
+     swapped the displayed photo to the cloud bake the moment the
+     profile landed — the "avatar blows out after opening the app from
+     a push" report (2026-11-23). If the local photo was never
+     confirmed synced to the cloud, it wins: keep showing it and
+     re-upload it once (heal), so from then on cloud == local and the
+     swap can never be visible again. */
+  if (state.avatarPhoto && lsGet("tirada_avatar_synced", "") !== avatarPhotoHash(state.avatarPhoto)){
+    state.avatarUrl = null;
+    lsSet("tirada_avatar_url", null);
+    healAvatarToCloud();
+  } else {
+    state.avatarUrl = row.avatar_url || null;
+    lsSet("tirada_avatar_url", state.avatarUrl);
+  }
   if (row.stats){
     /* Monotonic merge: lifetime counters only ever grow, so take the max of
        cloud and local per counter (an older build's cloud stats must not
@@ -3347,19 +3413,22 @@ function refreshOnlineLine(){
 }
 
 /* ---- Photo avatar → Storage bucket 'avatars' ---- */
-function cloudUploadAvatar(blob){
+function cloudUploadAvatar(blob, quiet){
   if (!db || !cloudUser || !blob) return;
   var path = cloudUser.id + "/avatar.jpg";
   db.storage.from("avatars").upload(path, blob, { upsert: true, contentType: "image/jpeg" })
     .then(function(res){
-      if (res.error){ console.warn("TiradA avatar upload:", res.error.message); toast(t("Фото не уехало в облако — останется на устройстве")); return; }
+      if (res.error){ console.warn("TiradA avatar upload:", res.error.message); if (!quiet) toast(t("Фото не уехало в облако — останется на устройстве")); return; }
       var pub = db.storage.from("avatars").getPublicUrl(path);
       state.avatarUrl = pub.data.publicUrl + "?v=" + Date.now();
       lsSet("tirada_avatar_url", state.avatarUrl);
+      /* The cloud now holds THIS device’s photo: mark it synced, so
+         applyRemoteProfile never treats it as a divergent copy again. */
+      if (state.avatarPhoto) lsSet("tirada_avatar_synced", avatarPhotoHash(state.avatarPhoto));
       renderMyAvatar(); renderAvatarGrid();
       cloudSyncNow();
-      toast(t("Фото-аватарка в облаке ☁️ Теперь она на всех устройствах"));
-    }, function(){ toast(t("Фото не уехало в облако — останется на устройстве")); });
+      if (!quiet) toast(t("Фото-аватарка в облаке ☁️ Теперь она на всех устройствах"));
+    }, function(){ if (!quiet) toast(t("Фото не уехало в облако — останется на устройстве")); });
 }
 
 /* ================= Place photos: camera proof, check-ins, galleries =================
