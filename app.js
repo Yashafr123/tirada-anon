@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "29";
+var APP_BUILD = "30";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -1050,8 +1050,9 @@ function openStatus(p){
 /* Google price levels for real venues: 0 free … 4 very expensive.
    One display format everywhere (card, sheet, map popup): the level's
    symbols + word from PRICE_LEVELS, always through t() so he/en match.
-   Commercial places with a null level show NO price line — nothing is
-   invented. Open public spaces (park / beach / viewpoint / promenade)
+   Commercial places with a null level show the typical level of
+   their category (TYPICAL_PRICE) — since v30, by Yasha's demand
+   that prices show everywhere. Open public spaces (park / beach / viewpoint / promenade)
    are the one exception: they are free by nature, Google itself rates
    every park it lists at level 0, and the generated catalogue has
    always shown them as free — so a null level there reads «Бесплатно»
@@ -1063,18 +1064,26 @@ var FREE_TYPES = { park:1, beach:1, view:1, prom:1 };
    the equivalent PRICE_LEVELS entry so they render in the exact same
    symbols + word format as real venues instead of bare symbols. */
 var GEN_PRICE_LEVEL = { bar:2, club:3, cafe:1, market:1, hookah:2, stage:2, roof:3 };
+/* Real/local places whose Google level is missing get the typical
+   level of their category — Yasha (2026-11-23): prices must show
+   everywhere; a missing price line reads as a bug to him. */
+var TYPICAL_PRICE = { cafe:2, bar:2, club:3, hookah:2, market:1, stage:2, roof:3 };
 function priceOf(p){
   if (p.real){
-    if (p.priceLevel === null || p.priceLevel === undefined)
-      return FREE_TYPES[p.type] ? t("Бесплатно") : "";
+    if (p.priceLevel === null || p.priceLevel === undefined){
+      if (FREE_TYPES[p.type]) return t("Бесплатно");
+      var tp = TYPICAL_PRICE[p.type];
+      return tp !== undefined ? t(PRICE_LEVELS[tp]) : "";
+    }
     return t(PRICE_LEVELS[p.priceLevel] || "");
   }
   if (p.local){
     /* Hand-added local spots carry no Google price level: open public
-       spaces are free, anything else shows no price line rather than
-       an invented one. */
+       spaces are free, the rest get their category's typical level. */
     if (p.priceLevel !== null && p.priceLevel !== undefined) return t(PRICE_LEVELS[p.priceLevel] || "");
-    return FREE_TYPES[p.type] ? t("Бесплатно") : "";
+    if (FREE_TYPES[p.type]) return t("Бесплатно");
+    var tp2 = TYPICAL_PRICE[p.type];
+    return tp2 !== undefined ? t(PRICE_LEVELS[tp2]) : "";
   }
   if (FREE_TYPES[p.type]) return t("Бесплатно");
   var gl = GEN_PRICE_LEVEL[p.type];
@@ -5417,11 +5426,12 @@ function renderStreakChip(){
   if (n > 0){ el.textContent = "🔥 " + n; el.title = t("Стрик") + ": " + n; }
 }
 
-/* ---- Sound: Yasha's track as a barely-audible background loop
-   (~0.15 — "on the edge of hearing"), plus synthesized ambience.
-   Nothing plays before the first user gesture; preferences persist;
-   the master switch silences EVERYTHING. Music is lazy: the file
-   is not even requested until the first play. ---- */
+/* ---- Sound: background music loop plus synthesized ambience.
+   v30: Jarvis's own track at FULL volume (Yasha: another track, loud,
+   already playing on entry). Browsers forbid audible autoplay before
+   a gesture, so boot TRIES to play at once; when refused, an entry
+   splash makes the very first tap start the music. Preferences
+   persist; the master switch silences EVERYTHING. ---- */
 var soundOn = lsGet("tirada_sound_on", true) === true;
 var musicOn = lsGet("tirada_music_on", true) === true;
 var musicAudio = null, musicArmed = false;
@@ -5430,7 +5440,7 @@ function ensureMusic(){
   try {
     musicAudio = new Audio();
     musicAudio.loop = true;
-    musicAudio.volume = 0.3;
+    musicAudio.volume = 1.0;
     musicAudio.preload = "none";
   } catch (e) { musicAudio = null; }
   return musicAudio;
@@ -5449,11 +5459,34 @@ function applySoundState(){
 }
 function armSoundOnFirstGesture(){
   var arm = function(){
+    if (splashShown) return; /* while the entry splash is up, its own buttons decide */
     musicArmed = true; /* listener stays: every later tap retries play() if the first attempt was blocked or the phone was silent */
     applySoundState();
   };
   document.addEventListener("pointerdown", arm);
   document.addEventListener("keydown", arm);
+}
+var splashShown = false;
+function hideEnterSplash(){ var sp = $("#enterSplash"); if (sp) sp.hidden = true; splashShown = false; }
+function showEnterSplash(){
+  var sp = $("#enterSplash"); if (!sp) return;
+  var b = $("#enterBtn"); if (b) b.textContent = "🔊 " + t("Зайти в город");
+  var s2 = $("#enterSub"); if (s2) s2.textContent = t("Город уже шумит. Заходи — музыка играет.");
+  var q = $("#enterSilent"); if (q) q.textContent = t("без звука");
+  sp.hidden = false; splashShown = true;
+}
+function enterWithSound(){ musicArmed = true; hideEnterSplash(); applySoundState(); }
+function enterSilent(){ soundOn = false; renderSoundBox(); hideEnterSplash(); applySoundState(); }
+function tryAutoplayMusic(){
+  if (!soundOn || !musicOn){ hideEnterSplash(); return; }
+  var m = ensureMusic();
+  if (!m){ showEnterSplash(); return; }
+  try {
+    if (!m.src) m.src = "assets/music.mp3";
+    var pr = m.play();
+    if (pr && pr.then) pr.then(function(){ musicArmed = true; hideEnterSplash(); applyAmbienceState(); }, function(){ showEnterSplash(); });
+    else { musicArmed = true; hideEnterSplash(); }
+  } catch (e) { showEnterSplash(); }
 }
 function renderSoundBox(){
   var s1 = $("#sndToggle"), s2 = $("#musicToggle");
@@ -5477,6 +5510,7 @@ function stopAmbience(){
 }
 function applyAmbienceState(){
   var want = ambDesired();
+  if (ambCtx && ambCtx.state === "suspended" && musicArmed){ try { ambCtx.resume(); } catch (e) {} }
   if (want === ambKind) return;
   stopAmbience();
   if (!want || !musicArmed) return;
@@ -5565,6 +5599,12 @@ function bindV28Ui(){
     musicArmed = true;
     renderSoundBox(); applySoundState();
   });
+  var eb = $("#enterBtn");
+  if (eb) eb.addEventListener("click", function(){ enterWithSound(); });
+  var es = $("#enterSilent");
+  if (es) es.addEventListener("click", function(ev){ if (ev && ev.stopPropagation) ev.stopPropagation(); enterSilent(); });
+  var esp = $("#enterSplash");
+  if (esp) esp.addEventListener("click", function(e){ if (e.target === esp) enterWithSound(); });
   var fb = $("#feedbackBtn");
   if (fb) fb.addEventListener("click", openFeedbackSheet);
   var fc = $("#feedbackClose");
@@ -5643,6 +5683,7 @@ bootStep("v28init", function(){
   renderSoundBox();
   armSoundOnFirstGesture();
   bindV28Ui();
+  tryAutoplayMusic();
   loadWeather();
 });
 bootStep("deepLink", function(){ applyDeepLink(true); });

@@ -12,7 +12,7 @@
    version query makes it detectable, and the build guard in app.js
    heals a pair that still slips through. Cross-origin traffic
    (Supabase, map tiles, emoji CDN) is never touched. */
-var CACHE = "tirada-shell-v29";
+var CACHE = "tirada-shell-v30";
 
 self.addEventListener("install", function (e) {
   self.skipWaiting();
