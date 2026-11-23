@@ -92,7 +92,10 @@ function emojiImg(e, cls){
    cards, sheets and route steps reuse the same dozen glyphs. */
 AVATARS.forEach(function(av){ var im = new Image(); im.src = emojiUrl(av.e); });
 function avatarFace(idx){
-  var av = AVATARS[idx % AVATARS.length];
+  /* Any legacy/damaged index (negative, NaN from a non-numeric stored
+     value) must still yield a face — never an undefined.bg throw. */
+  var n = AVATARS.length;
+  var av = AVATARS[((idx % n) + n) % n] || AVATARS[0];
   return '<span class="avface" style="background:' + av.bg + '">' + emojiImg(av.e, "avimg") + '</span>';
 }
 /* CDN fallback: if an emoji image fails, swap it for the font glyph —
@@ -655,6 +658,13 @@ CITIES.forEach(function(c){ PLACES_BY_CITY[c.id] = buildPlaces(c); });
 /* ================= State & helpers ================= */
 function lsGet(k, d){ try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e){ return d; } }
 function lsSet(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
+/* lsGet returns whatever JSON.parse produced. For a legacy or damaged
+   key that can be null, a string, a number or an array where the code
+   expects a plain object — and reading a property of null (or writing
+   one onto a primitive, in strict mode) throws and used to abort the
+   whole boot (v18 post-mortem). objOr() is the single coercion point:
+   anything that is not a plain object becomes the fallback. */
+function objOr(v, d){ return (v && typeof v === "object" && !Array.isArray(v)) ? v : d; }
 var state = {
   city: cityById("karmiel"),
   filter: "all",
@@ -676,6 +686,20 @@ var state = {
   routeDone: lsGet("tirada_route_done", {}),
   geo: null
 };
+/* Sanitise legacy/damaged local state BEFORE anything renders from it.
+   A returning user's storage may hold values written by any older build
+   (or damaged ones): stats always pass through normalizeStats — the same
+   shape the cloud merge produces — favs/routeDone are always plain
+   objects, and the avatar index is always a valid AVATARS slot. No
+   single stored key may be able to abort the boot ever again (v18). */
+state.stats = normalizeStats(state.stats);
+state.favs = objOr(state.favs, {});
+state.routeDone = objOr(state.routeDone, {});
+state.myAvatar = (function(){
+  var i = parseInt(state.myAvatar, 10);
+  if (!isFinite(i)) return 0;
+  return ((i % AVATARS.length) + AVATARS.length) % AVATARS.length;
+})();
 function places(){ return PLACES_BY_CITY[state.city.id]; }
 function $(s){ return document.querySelector(s); }
 function $$(s){ return Array.prototype.slice.call(document.querySelectorAll(s)); }
@@ -903,9 +927,10 @@ function renderLevel(){
    on every counter is incremented at the real action. */
 function seedStatsWave3(){
   if (lsGet("tirada_stats_w3", 0)) return;
-  var st = lsGet("tirada_streak", { last: "", streak: 0 });
+  var st = objOr(lsGet("tirada_streak", null), { last: "", streak: 0 });
   var qb = lsGet("tirada_quest_badges", 0);
-  var q = lsGet("tirada_quest", { week: -1, done: 0 });
+  if (typeof qb !== "number" || !isFinite(qb)) qb = 0;
+  var q = objOr(lsGet("tirada_quest", null), { week: -1, done: 0 });
   var s = state.stats;
   s.quests = Math.max(s.quests || 0, qb);
   s.questSteps = Math.max(s.questSteps || 0, s.quests * 5 + (q.week === weekIndex() ? (q.done || 0) : 0));
@@ -955,6 +980,7 @@ function renderStats(){
      this device becomes a cloud event (friends + the user pushed).
      The first render only seeds the known set, never fires. */
   var knownBadges = lsGet("tirada_ev_badges", null);
+  if (!Array.isArray(knownBadges)) knownBadges = null; /* legacy/damaged value -> treat as first sighting, never .indexOf a non-array */
   var haveNow = ach.filter(function(a){ return a.have; }).map(function(a){ return a.name; });
   if (knownBadges){
     haveNow.forEach(function(nm){
@@ -2604,7 +2630,7 @@ function weekQuest(){ var idx = weekIndex() % WEEK_QUESTS.length; var C = conten
 function renderTasks(){
   var dt = $("#dailyTaskText"); if (!dt) return;
   dt.textContent = dailyTask();
-  var st = lsGet("tirada_streak", { last: "", streak: 0 });
+  var st = objOr(lsGet("tirada_streak", null), { last: "", streak: 0 });
   var doneToday = (st.last === todayKey());
   var btn = $("#dailyDoneBtn");
   btn.disabled = doneToday;
@@ -2622,7 +2648,7 @@ function renderTasks(){
   var ps = $("#profileStreak"); if (ps) ps.textContent = line;
   var q = weekQuest();
   $("#questTheme").textContent = q.theme;
-  var qs = lsGet("tirada_quest", { week: -1, done: 0 });
+  var qs = objOr(lsGet("tirada_quest", null), { week: -1, done: 0 });
   if (qs.week !== weekIndex()){ qs = { week: weekIndex(), done: 0 }; lsSet("tirada_quest", qs); }
   $("#questFill").style.width = (qs.done / q.steps.length * 100) + "%";
   $("#questProgressText").textContent = tf("{a} из {b}", { a: qs.done, b: q.steps.length });
@@ -4437,35 +4463,50 @@ $("#welcomeGeo").addEventListener("click", function(){
 });
 $("#geoBtn").addEventListener("click", function(){ requestGeo(true); });
 
-/* ================= Go ================= */
-applyStaticI18n();
-if (typeof setAuthMode === "function") setAuthMode("in"); /* auth modal strings in the boot language too — atomic from the first paint */
-seedStatsWave3();
-renderCityList();
-renderMyAvatar();
-renderAvatarGrid();
-renderStats();
-renderTasks();
-var nickInit = $("#nickInput"); if (nickInit) nickInit.value = state.nick || "";
+/* ================= Go =================
+   Every boot step runs in its OWN try/catch (v18). The steps paint
+   independent surfaces — city list, profile avatar, stats, tasks,
+   places, header counter, ticker, route, map — and a failure in any
+   one of them (legacy local state, a damaged storage key, a future
+   bug) must never again take the whole app down with it: on the v17
+   prod, one unguarded throw in an early step left returning users
+   with a dead counter, no ticker, an empty map and empty tasks.
+   Failures stay loud in the console, silent in the UI. */
+function bootStep(name, fn){
+  try { fn(); }
+  catch (e) { console.warn("TiradA boot: step '" + name + "' failed:", e); }
+}
+bootStep("applyStaticI18n", applyStaticI18n);
+bootStep("setAuthMode", function(){ if (typeof setAuthMode === "function") setAuthMode("in"); }); /* auth modal strings in the boot language too — atomic from the first paint */
+bootStep("seedStatsWave3", seedStatsWave3);
+bootStep("renderCityList", renderCityList);
+bootStep("renderMyAvatar", renderMyAvatar);
+bootStep("renderAvatarGrid", renderAvatarGrid);
+bootStep("renderStats", renderStats);
+bootStep("renderTasks", renderTasks);
+bootStep("nickInit", function(){
+  var nickInit = $("#nickInput"); if (nickInit) nickInit.value = state.nick || "";
+});
 /* Core UI first, map LAST: the counter, ticker, places list and route
    must be alive even if map initialisation fails outright (it is fully
    guarded now, but boot order is the second line of defence — a dead
    map must never again take the header and the list down with it). */
-renderFilter();
-renderPlaces();
-updateCounter();
-buildTicker();
-refreshCityPhotoCount();
-buildRoute();
-initMap();
-requestGeo(false);
-if (!lsGet("tirada_welcomed", false) && !location.hash){
-  renderWelcomeCities();
-  setTimeout(function(){ $("#welcomeSheet").hidden = false; }, 500);
-}
-
+bootStep("renderFilter", renderFilter);
+bootStep("renderPlaces", renderPlaces);
+bootStep("updateCounter", updateCounter);
+bootStep("buildTicker", buildTicker);
+bootStep("refreshCityPhotoCount", refreshCityPhotoCount);
+bootStep("buildRoute", buildRoute);
+bootStep("initMap", initMap);
+bootStep("requestGeo", function(){ requestGeo(false); });
+bootStep("welcome", function(){
+  if (!lsGet("tirada_welcomed", false) && !location.hash){
+    renderWelcomeCities();
+    setTimeout(function(){ $("#welcomeSheet").hidden = false; }, 500);
+  }
+});
 /* deep-link for previews/screenshots: #places #route #profile #deal #city=eilat */
-(function(){
+bootStep("deepLink", function(){
   var h = location.hash || "";
   if (h) document.body.classList.add("shots");
   var cm = h.match(/city=([a-z]+)/);
@@ -4476,5 +4517,5 @@ if (!lsGet("tirada_welcomed", false) && !location.hash){
   else if (h.indexOf("route") >= 0) showScreen("route");
   else if (h.indexOf("profile") >= 0) showScreen("profile");
   if (h.indexOf("deal") >= 0) openDeal();
-})();
+});
 })();
