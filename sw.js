@@ -1,10 +1,18 @@
 /* TiradA anon — service worker.
-   Two jobs: (1) a minimal shell cache so the app opens fast and the
-   PWA installs; (2) Web Push — show the notification and open the app
-   on tap. Navigations are network-first (fresh HTML wins), static
-   assets are stale-while-revalidate. Cross-origin traffic (Supabase,
-   map tiles, emoji CDN) is never touched. */
-var CACHE = "tirada-shell-v18";
+   Two jobs: (1) a minimal shell cache so the app still opens offline;
+   (2) Web Push — show the notification and open the app on tap.
+   EVERY same-origin GET is network-first (v19): the cache is only an
+   offline fallback, never a source of truth. The old
+   stale-while-revalidate branch served the previous release's files
+   on the first load after every deploy — and for the four UNVERSIONED
+   scripts (maplibre-gl.js, map-style.js, vendor-supabase.js,
+   supabase.js) "previous release" could mean arbitrarily old code
+   stitched into a new page. All first-party assets are ?v=-versioned
+   since v19 as well; network-first makes the mix impossible, the
+   version query makes it detectable, and the build guard in app.js
+   heals a pair that still slips through. Cross-origin traffic
+   (Supabase, map tiles, emoji CDN) is never touched. */
+var CACHE = "tirada-shell-v19";
 
 self.addEventListener("install", function (e) {
   self.skipWaiting();
@@ -25,29 +33,17 @@ self.addEventListener("fetch", function (e) {
   if (req.method !== "GET") return;
   var url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  if (req.mode === "navigate") {
-    e.respondWith(
-      fetch(req).then(function (res) {
-        if (res && res.ok) {
-          var copy = res.clone();
-          caches.open(CACHE).then(function (c) { c.put(req, copy); });
-        }
-        return res;
-      }).catch(function () { return caches.match(req); })
-    );
-    return;
-  }
+  /* Network-first for navigations AND assets alike: a fresh response
+     always wins and refreshes the offline copy; the cache answers
+     only when the network is gone. */
   e.respondWith(
-    caches.match(req).then(function (hit) {
-      var net = fetch(req).then(function (res) {
-        if (res && res.ok) {
-          var copy = res.clone();
-          caches.open(CACHE).then(function (c) { c.put(req, copy); });
-        }
-        return res;
-      }).catch(function () { return hit; });
-      return hit || net;
-    })
+    fetch(req).then(function (res) {
+      if (res && res.ok) {
+        var copy = res.clone();
+        caches.open(CACHE).then(function (c) { c.put(req, copy); });
+      }
+      return res;
+    }).catch(function () { return caches.match(req); })
   );
 });
 

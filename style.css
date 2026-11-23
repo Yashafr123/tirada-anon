@@ -1571,6 +1571,8 @@ body::before{
 
 /* --- info modal: short headed sections instead of a text wall --- */
 .info-body{text-align:left;max-height:52vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.boot-diag{margin-top:14px;padding:10px 12px;border:1px solid rgba(255,255,255,.12);border-radius:12px;background:rgba(255,255,255,.04);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.55;color:var(--muted);text-align:left;word-break:break-word;max-height:32vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.boot-diag b{color:var(--text)}
 .info-body p{margin:0}
 .info-sec{padding:10px 0;border-top:1px solid rgba(255,255,255,.06)}
 .info-sec:first-child{border-top:0;padding-top:2px}

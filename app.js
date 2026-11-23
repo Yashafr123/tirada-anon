@@ -64,6 +64,102 @@ function setLangChoice(choice, skipCloud){
 }
 applyLang();
 
+/* ================= Boot diagnostics & build guard (v19) =================
+   Why this exists: on the v18 prod, a returning user's first load could
+   come up with every boot surface dead (counter stuck on "…", empty
+   ticker, empty city list, blank avatar, empty map) while the SAME
+   functions worked fine when triggered by taps — and a clean-room
+   jsdom boot with the same files and every legacy storage state stayed
+   alive. The one layer no lab here can reproduce is the phone's own
+   cache stack (service worker + HTTP cache) stitching files from
+   different releases into one page. So v19 (1) stamps the build into
+   the HTML itself and self-heals a mismatched pair, and (2) records
+   the whole boot — step by step — into localStorage
+   "tirada_boot_errors", rendered readably by the «Диагностика
+   запуска» block in the About sheet, so the next failure is readable
+   from a screenshot instead of a DevTools session nobody can open. */
+var APP_BUILD = "19";
+function tracePush(kind, msg){
+  try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
+  try {
+    var a = lsGet("tirada_boot_errors", []);
+    if (!Array.isArray(a)) a = [];
+    a.push({ t: Date.now(), b: window.__tiradaBootId || 0, kind: String(kind), msg: String(msg == null ? "" : msg).slice(0, 300) });
+    if (a.length > 40) a = a.slice(a.length - 40);
+    lsSet("tirada_boot_errors", a);
+  } catch(e){}
+}
+(function bootBuildGuard(){
+  var htmlBuild = null;
+  try { htmlBuild = window.TIRADA_BUILD || null; } catch(e){}
+  tracePush("trace", "app.js executing, js build " + APP_BUILD + ", html build " + htmlBuild);
+  if (htmlBuild === APP_BUILD) return;
+  var healed = false;
+  try { healed = !!sessionStorage.getItem("tirada_healed_" + APP_BUILD); } catch(e){}
+  tracePush("guard", "build mismatch: html=" + htmlBuild + " js=" + APP_BUILD + (healed ? " (already healed once — continuing)" : " — healing: unregister SW, clear caches, reload"));
+  if (healed) return;
+  try { sessionStorage.setItem("tirada_healed_" + APP_BUILD, "1"); } catch(e){}
+  var reloaded = false;
+  function reloadOnce(){ if (reloaded) return; reloaded = true; try { location.reload(); } catch(e){} }
+  try {
+    var jobs = [];
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations)
+      jobs.push(navigator.serviceWorker.getRegistrations().then(function(rs){ return Promise.all(rs.map(function(r){ return r.unregister(); })); }));
+    if (window.caches && caches.keys)
+      jobs.push(caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k); })); }));
+    if (jobs.length){ Promise.all(jobs).then(reloadOnce, reloadOnce); setTimeout(reloadOnce, 1800); return; }
+  } catch(e){}
+  reloadOnce();
+})();
+/* Health of the four surfaces whose death defined the v17/v18 bug, and
+   an idempotent revival used after window load, after auth settles and
+   by a 3 s watchdog: whatever the environment did to the first paint,
+   the same load repairs itself — and leaves a trace of what was dead. */
+function coreSurfacesHealth(){
+  var ct = $("#counterText"), tt = $("#tickerTrack"), cl = $("#cityList"), gb = $("#ghostBig");
+  return {
+    counter: !!(ct && ct.textContent && ct.textContent.indexOf("…") < 0 && ct.textContent.length > 3),
+    ticker: !!(tt && tt.querySelector(".tick-half")),
+    cityList: !!(cl && cl.children.length > 0),
+    avatar: !!(gb && gb.innerHTML.length > 0)
+  };
+}
+function repaintCoreSurfaces(why){
+  var h = coreSurfacesHealth(), dead = [];
+  if (!h.counter) dead.push("counter");
+  if (!h.ticker) dead.push("ticker");
+  if (!h.cityList) dead.push("cityList");
+  if (!h.avatar) dead.push("avatar");
+  if (!dead.length) return;
+  tracePush("repaint", why + ": reviving " + dead.join(", "));
+  if (!h.counter) bootStep("updateCounter", updateCounter);
+  if (!h.ticker) bootStep("buildTicker", buildTicker);
+  if (!h.cityList) bootStep("renderCityList", renderCityList);
+  if (!h.avatar) bootStep("renderMyAvatar", renderMyAvatar);
+}
+/* The «Диагностика запуска» block (About sheet): build stamps, the
+   CURRENT health of the four critical surfaces, and the tail of the
+   boot trace — everything needed to read a failure off a screenshot. */
+function bootDiagHtml(){
+  function esc(s){ return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+  var h = coreSurfacesHealth();
+  function mark(ok){ return ok ? "✅" : "❌"; }
+  var rows = [
+    "Сборка: html " + (window.TIRADA_BUILD || "?") + " · js " + APP_BUILD,
+    "Поверхности сейчас: счётчик " + mark(h.counter) + " · тикер " + mark(h.ticker) + " · города " + mark(h.cityList) + " · аватар " + mark(h.avatar),
+    "Браузер: " + String(navigator.userAgent || "").slice(0, 110)
+  ];
+  var a = lsGet("tirada_boot_errors", []);
+  if (Array.isArray(a) && a.length){
+    rows.push("— журнал запуска —");
+    a.slice(-16).forEach(function(en){
+      var d = new Date(en.t || 0);
+      var hh = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2) + ":" + ("0" + d.getSeconds()).slice(-2);
+      rows.push(hh + " [" + en.kind + "] " + en.msg);
+    });
+  } else rows.push("Журнал запуска пуст.");
+  return "<b>" + esc(t("Диагностика запуска")) + "</b><br>" + rows.map(esc).join("<br>");
+}
 
 /* ================= Ghost avatars: emoji characters in glowing circles ================= */
 var AVATARS = [
@@ -3979,7 +4075,8 @@ function cloudOnSignedIn(user){
     .then(function(){ cloudGeoSync(); startHeartbeat(); return cloudLoadMyVote(); })
     .then(function(){ return friendsLoad(); }, function(){ return friendsLoad(); })
     .then(function(){ refreshFriendMarkers(); startFriendMapTimer(); maybeShowAddFriend(); },
-          function(){ refreshFriendMarkers(); startFriendMapTimer(); maybeShowAddFriend(); });
+          function(){ refreshFriendMarkers(); startFriendMapTimer(); maybeShowAddFriend(); })
+    .then(function(){ repaintCoreSurfaces("profile-applied"); }, function(){ repaintCoreSurfaces("profile-applied"); });
 }
 /* ================= Cloud events (fan-out pushes) =================
    Live moments and milestones are written by the client into the
@@ -4164,7 +4261,7 @@ if (db){
     var s = r.data && r.data.session;
     cloudSession = s || null;
     if (s && s.user) cloudOnSignedIn(s.user); else renderAccount();
-  }, function(){ renderAccount(); });
+  }, function(){ renderAccount(); }).then(function(){ repaintCoreSurfaces("auth-settled"); }, function(){ repaintCoreSurfaces("auth-settled"); });
   db.auth.onAuthStateChange(function(ev, session){
     cloudSession = session || null;
     if (ev === "SIGNED_IN" && session && session.user) cloudOnSignedIn(session.user);
@@ -4421,6 +4518,11 @@ $$("[data-info]").forEach(function(btn){
     } else {
       bodyEl.textContent = d.body || "";
     }
+    var diagEl = $("#bootDiag");
+    if (diagEl){
+      if (btn.getAttribute("data-info") === "about"){ diagEl.innerHTML = bootDiagHtml(); diagEl.hidden = false; }
+      else diagEl.hidden = true;
+    }
     infoModal.hidden = false;
   });
 });
@@ -4471,11 +4573,22 @@ $("#geoBtn").addEventListener("click", function(){ requestGeo(true); });
    bug) must never again take the whole app down with it: on the v17
    prod, one unguarded throw in an early step left returning users
    with a dead counter, no ticker, an empty map and empty tasks.
-   Failures stay loud in the console, silent in the UI. */
+   Failures stay loud in the console, silent in the UI.
+   v19: every step ALSO leaves a line in the boot trace
+   (localStorage "tirada_boot_errors", see the diagnostics block at
+   the top of this file) — failures immediately, successes as one
+   summary line — and the four critical surfaces are re-checked after
+   window load, after auth settles and by a watchdog (below). */
+var bootStepOk = [], bootStepFail = [];
 function bootStep(name, fn){
-  try { fn(); }
-  catch (e) { console.warn("TiradA boot: step '" + name + "' failed:", e); }
+  try { fn(); bootStepOk.push(name); }
+  catch (e) {
+    bootStepFail.push(name);
+    tracePush("step-fail", name + ": " + ((e && e.message) || e));
+    console.warn("TiradA boot: step '" + name + "' failed:", e);
+  }
 }
+tracePush("trace", "boot start");
 bootStep("applyStaticI18n", applyStaticI18n);
 bootStep("setAuthMode", function(){ if (typeof setAuthMode === "function") setAuthMode("in"); }); /* auth modal strings in the boot language too — atomic from the first paint */
 bootStep("seedStatsWave3", seedStatsWave3);
@@ -4483,6 +4596,12 @@ bootStep("renderCityList", renderCityList);
 bootStep("renderMyAvatar", renderMyAvatar);
 bootStep("renderAvatarGrid", renderAvatarGrid);
 bootStep("renderStats", renderStats);
+/* The four surfaces whose death defined the v17/v18 bug paint BEFORE
+   the heavier work (tasks, route, map): whatever happens later in the
+   boot, the header counter, the ticker, the city list and the avatar
+   are already on screen. */
+bootStep("updateCounter", updateCounter);
+bootStep("buildTicker", buildTicker);
 bootStep("renderTasks", renderTasks);
 bootStep("nickInit", function(){
   var nickInit = $("#nickInput"); if (nickInit) nickInit.value = state.nick || "";
@@ -4493,8 +4612,6 @@ bootStep("nickInit", function(){
    map must never again take the header and the list down with it). */
 bootStep("renderFilter", renderFilter);
 bootStep("renderPlaces", renderPlaces);
-bootStep("updateCounter", updateCounter);
-bootStep("buildTicker", buildTicker);
 bootStep("refreshCityPhotoCount", refreshCityPhotoCount);
 bootStep("buildRoute", buildRoute);
 bootStep("initMap", initMap);
@@ -4518,4 +4635,14 @@ bootStep("deepLink", function(){
   else if (h.indexOf("profile") >= 0) showScreen("profile");
   if (h.indexOf("deal") >= 0) openDeal();
 });
+tracePush("boot", "complete, ok: " + bootStepOk.join(", ") + (bootStepFail.length ? " | FAILED: " + bootStepFail.join(", ") : ""));
+/* Self-repair (v19): if anything in this environment still managed to
+   leave a critical surface dead — a cache-stitched build the guard
+   could not detect, a paint that never committed, an async wipe —
+   revive it on the same load: once the window finishes loading, and
+   once more on a 3 s watchdog. repaintCoreSurfaces() only touches
+   surfaces that are actually dead and traces what it revived. */
+if (document.readyState === "complete") repaintCoreSurfaces("window-load");
+else window.addEventListener("load", function(){ repaintCoreSurfaces("window-load"); });
+setTimeout(function(){ repaintCoreSurfaces("watchdog-3s"); }, 3000);
 })();
