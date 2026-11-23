@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "19";
+var APP_BUILD = "20";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -113,16 +113,78 @@ function tracePush(kind, msg){
 })();
 /* Health of the four surfaces whose death defined the v17/v18 bug, and
    an idempotent revival used after window load, after auth settles and
-   by a 3 s watchdog: whatever the environment did to the first paint,
-   the same load repairs itself — and leaves a trace of what was dead. */
+   by watchdogs: whatever the environment did to the first paint, the
+   same load repairs itself — and leaves a trace of what was dead.
+   v20: the v19 criteria were too weak and let the watchdog certify
+   corpses — the live check found all four "alive" while visibly dead:
+   a .tick-half shell with no text in it counted as a live ticker, any
+   child of #cityList (the empty-state div, a static footer) counted as
+   a live city list, and ANY innerHTML in #ghostBig counted as a live
+   avatar — including a broken <img> whose pixels never arrive, which
+   is exactly the empty red circle the user sees. Now a surface is
+   alive only when it holds the real thing: text items in the ticker,
+   actual city rows, and a face that can paint (a glyph with text, or
+   an image that is not broken). */
+function tickerHasText(tt){
+  if (!tt) return false;
+  var items = tt.querySelectorAll(".tick-item"), len = 0;
+  for (var i = 0; i < items.length; i++) len += (items[i].textContent || "").replace(/\s+/g, "").length;
+  return len > 0;
+}
+function imgBroken(img){ return !!(img && img.complete && img.naturalWidth === 0); }
+function avatarFaceState(gb){
+  if (!gb) return "dead";
+  var font = gb.querySelector(".avfont");
+  if (font && (font.textContent || "").trim().length > 0) return "ok";
+  var img = gb.querySelector("img");
+  if (img){
+    if (imgBroken(img)) return "dead";
+    if (img.complete && img.naturalWidth > 0) return "ok";
+    return "pending"; /* still loading: not a corpse, not yet a face */
+  }
+  return "dead"; /* empty circle / faceless span */
+}
 function coreSurfacesHealth(){
   var ct = $("#counterText"), tt = $("#tickerTrack"), cl = $("#cityList"), gb = $("#ghostBig");
   return {
     counter: !!(ct && ct.textContent && ct.textContent.indexOf("…") < 0 && ct.textContent.length > 3),
-    ticker: !!(tt && tt.querySelector(".tick-half")),
-    cityList: !!(cl && cl.children.length > 0),
-    avatar: !!(gb && gb.innerHTML.length > 0)
+    ticker: tickerHasText(tt),
+    cityList: !!(cl && cl.querySelectorAll(".city-item").length > 0),
+    avatar: avatarFaceState(gb) !== "dead"
   };
+}
+/* Repair pass for the profile avatar: a face image that can never paint
+   (dead photo URL, emoji CDN unreachable) is swapped for something that
+   always renders — the current emoji face for a broken photo, the font
+   glyph for a broken CDN face — so the profile never shows the empty
+   red circle the v19 live check found. DOM-only: state is untouched,
+   and a later successful render still wins. */
+function glyphSpanFor(img, gb){
+  var w = img.offsetWidth || (gb && gb.offsetWidth) || 88;
+  var s = document.createElement("span");
+  s.className = img.className + " avfont";
+  s.textContent = img.getAttribute("data-emoji") || "👻";
+  s.style.fontSize = Math.max(11, Math.round(w * 0.84)) + "px";
+  return s;
+}
+function repairAvatarFace(force){
+  var gb = $("#ghostBig");
+  if (!gb || avatarFaceState(gb) === "ok") return;
+  var photo = gb.querySelector("img.avphoto");
+  if (photo && (imgBroken(photo) || force)){
+    gb.innerHTML = avatarFace(state.myAvatar);
+    /* A forced repair (the 8 s pass) terminates in the glyph right
+       away: in an environment where the photo never painted, a fresh
+       CDN <img> is not a credible next step. */
+    if (force){
+      var ni = gb.querySelector("img[data-emoji]");
+      if (ni) ni.replaceWith(glyphSpanFor(ni, gb));
+    }
+    return;
+  }
+  var img = gb.querySelector("img[data-emoji]");
+  if (img && (imgBroken(img) || force)){ img.replaceWith(glyphSpanFor(img, gb)); return; }
+  if (avatarFaceState(gb) === "dead") gb.innerHTML = currentAvatarHtml();
 }
 function repaintCoreSurfaces(why){
   var h = coreSurfacesHealth(), dead = [];
@@ -130,12 +192,12 @@ function repaintCoreSurfaces(why){
   if (!h.ticker) dead.push("ticker");
   if (!h.cityList) dead.push("cityList");
   if (!h.avatar) dead.push("avatar");
-  if (!dead.length) return;
+  if (!dead.length) { repairAvatarFace(); return; }
   tracePush("repaint", why + ": reviving " + dead.join(", "));
   if (!h.counter) bootStep("updateCounter", updateCounter);
   if (!h.ticker) bootStep("buildTicker", buildTicker);
   if (!h.cityList) bootStep("renderCityList", renderCityList);
-  if (!h.avatar) bootStep("renderMyAvatar", renderMyAvatar);
+  if (!h.avatar){ bootStep("renderMyAvatar", renderMyAvatar); repairAvatarFace(); }
 }
 /* The «Диагностика запуска» block (About sheet): build stamps, the
    CURRENT health of the four critical surfaces, and the tail of the
@@ -1475,7 +1537,26 @@ function showZoomHintOnce(){
 }
 function mapFallback(){
   var el = $("#map");
-  if (el) el.innerHTML = '<div style="padding:24px;color:#a3a3ad;font-size:14px">' + t("Карта не загрузилась (нет сети или недоступен WebGL) — но места на экране «Места» на месте.") + '</div>';
+  if (!el) return;
+  /* data-fallback marks the state for the health checks/lab: an empty
+     dark #map with neither canvas nor this text is a dead surface. */
+  el.setAttribute("data-fallback", "1");
+  el.innerHTML = '<div class="map-fallback" style="padding:24px;color:#a3a3ad;font-size:14px">' + t("Карта не загрузилась (нет сети или недоступен WebGL) — но места на экране «Места» на месте.") + '</div>';
+}
+/* The map was constructed (a WebGL context existed) but its style never
+   loaded — tile/style hosts unreachable, a GPU process that died after
+   the probe: the user gets an empty dark field with no explanation
+   (v19 live check, point 5). Tear down to the supported map === null
+   state and show the honest fallback instead. */
+function mapStyleWatchdog(){
+  setTimeout(function(){
+    if (!map || mapReady) return;
+    try { map.remove(); } catch (e){}
+    map = null; meMarker = null;
+    if (typeof window !== "undefined") window.__tiradaMap = null;
+    tracePush("map", "style never loaded in 5s — tore the map down, fallback shown");
+    mapFallback();
+  }, 5000);
 }
 /* MapLibre's Map constructor THROWS synchronously ("Failed to initialize
    WebGL") whenever the browser/WebView cannot create a WebGL context —
@@ -1513,6 +1594,7 @@ function initMap(){
     fadeDuration: 0
   });
   window.__tiradaMap = map; /* audit/debug hook */
+  mapStyleWatchdog();
   map.touchZoomRotate.disableRotation();
   map.scrollZoom.disable();
   map.getContainer().addEventListener("focusin", function(){ map.scrollZoom.enable(); });
@@ -1571,7 +1653,8 @@ function initMap(){
   } catch(e){
     /* A half-wired map is worse than none: drop to the supported
        map === null state and let the app run without it. */
-    map = null;
+    map = null; meMarker = null;
+    if (typeof window !== "undefined") window.__tiradaMap = null;
     mapFallback();
   }
 }
@@ -1895,19 +1978,29 @@ function buildTicker(){
   if (cityPhotoCount) items.push(tf("📸 Призраки опубликовали в городе уже {n} фото — загляни в карточки мест", { n: cityPhotoCount }));
   if (open[1]) items.push(tf("🎵 Вайб места <i>{name}</i>: {song} — трек под настроение", { name: open[1].name, song: open[1].song }));
   items.push(tf("🗺️ Маршрутов ты построил: {n} — вечер собирается на экране «Маршрут»", { n: state.stats.routes }));
+  /* The strip must never be able to end up textless: if data hiccups
+     emptied the items, one honest line about the current city remains. */
+  if (!items.length) items.push(tf("📍 <i>{city}</i>: загляни на экран «Места» — там весь движ города", { city: cityName(state.city) }));
   var half = items.map(function(t){ return '<span class="tick-item">' + t + '</span>'; }).join("");
   var track = $("#tickerTrack");
   if (!track) return;
   /* Atomic rebuild (v15 ticker fix): the old code swapped innerHTML under a
      running transform animation, and on several WebViews the compositor kept
      painting the previous text over the new one — two messages ghosting in
-     one strip. Now: stop the animation, swap BOTH identical halves in a
-     single write, force a reflow, restart. One strip, one track, and the
-     -50% keyframe always spans exactly one half — a seamless loop. */
-  track.style.animation = "none";
+     one strip. Swap BOTH identical halves in a single write, force a
+     reflow, restart. One strip, one track, and the -50% keyframe always
+     spans exactly one half — a seamless loop.
+     v20: the restart is a CLASS toggle, not inline style. Setting
+     style.animation="none" and back to "" inside one task left several
+     WebViews with the compositor layer from the stopped state — the
+     strip stayed visibly empty until a tab switch forced a fresh layer
+     (the v19 live-check symptom). Removing .tick-run drops the animated
+     layer entirely; re-adding it after the reflow starts the loop on a
+     layer created from the CURRENT content. */
+  track.classList.remove("tick-run");
   track.innerHTML = '<span class="tick-half">' + half + '</span><span class="tick-half">' + half + "</span>";
   void track.offsetWidth;
-  track.style.animation = "";
+  track.classList.add("tick-run");
 }
 
 /* ================= Fake-live heat =================
@@ -4499,29 +4592,55 @@ var INFO = {
     ] }
 };
 var infoModal = $("#infoModal");
+/* Bulletproof diagnostics render (v20): the «Диагностика запуска» block
+   exists to be readable exactly when the app is half-dead — so its own
+   render must never throw into the click handler. Worst case it
+   degrades to a one-line stub that still names the build and says the
+   journal could not be read. */
+function renderBootDiag(){
+  try { return bootDiagHtml(); }
+  catch (e){
+    try { tracePush("error", "bootDiag render: " + ((e && e.message) || e)); } catch (e2){}
+    var msg = String((e && e.message) || e || "?").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return "<b>Диагностика запуска</b><br>Сборка: js " + APP_BUILD + " · журнал не прочитался (" + msg + ")";
+  }
+}
 $$("[data-info]").forEach(function(btn){
   btn.addEventListener("click", function(){
-    var d = INFO[btn.getAttribute("data-info")];
-    if (!d) return;
-    if (LANG !== "ru" && typeof INFO_I18N !== "undefined" && INFO_I18N[LANG] && INFO_I18N[LANG][btn.getAttribute("data-info")]){
-      var LI = INFO_I18N[LANG][btn.getAttribute("data-info")];
-      d = { emoji: d.emoji, title: LI.title, body: LI.body,
-            sections: LI.sections ? LI.sections.map(function(x){ return { h: x[0], t: x[1] }; }) : null };
-    }
-    $("#infoEmoji").textContent = d.emoji;
-    $("#infoTitle").textContent = d.title;
-    var bodyEl = $("#infoBody");
-    if (d.sections){
-      bodyEl.innerHTML = d.sections.map(function(s){
-        return '<div class="info-sec"><h4>' + s.h + "</h4><p>" + s.t + "</p></div>";
-      }).join("");
-    } else {
-      bodyEl.textContent = d.body || "";
-    }
-    var diagEl = $("#bootDiag");
-    if (diagEl){
-      if (btn.getAttribute("data-info") === "about"){ diagEl.innerHTML = bootDiagHtml(); diagEl.hidden = false; }
-      else diagEl.hidden = true;
+    /* The sheet MUST open even if something inside it is broken: in the
+       v19 live check a throw anywhere in this handler (the diagnostics
+       render ran BEFORE the modal was unhidden, unguarded) kept «О
+       приложении» shut and the failure unreadable. Now every step is
+       guarded and unhiding the modal is the unconditional last step. */
+    try {
+      var key = btn.getAttribute("data-info");
+      var d = INFO[key];
+      if (d){
+        if (LANG !== "ru" && typeof INFO_I18N !== "undefined" && INFO_I18N[LANG] && INFO_I18N[LANG][key]){
+          var LI = INFO_I18N[LANG][key];
+          d = { emoji: d.emoji, title: LI.title, body: LI.body,
+                sections: LI.sections ? LI.sections.map(function(x){ return { h: x[0], t: x[1] }; }) : null };
+        }
+        $("#infoEmoji").textContent = d.emoji;
+        $("#infoTitle").textContent = d.title;
+        var bodyEl = $("#infoBody");
+        if (bodyEl){
+          if (d.sections){
+            bodyEl.innerHTML = d.sections.map(function(s){
+              return '<div class="info-sec"><h4>' + s.h + "</h4><p>" + s.t + "</p></div>";
+            }).join("");
+          } else {
+            bodyEl.textContent = d.body || "";
+          }
+        }
+      }
+      var diagEl = $("#bootDiag");
+      if (diagEl){
+        if (key === "about"){ diagEl.innerHTML = renderBootDiag(); diagEl.hidden = false; }
+        else diagEl.hidden = true;
+      }
+    } catch (e) {
+      try { tracePush("error", "info sheet: " + ((e && e.message) || e)); } catch (e2){}
     }
     infoModal.hidden = false;
   });
@@ -4645,4 +4764,15 @@ tracePush("boot", "complete, ok: " + bootStepOk.join(", ") + (bootStepFail.lengt
 if (document.readyState === "complete") repaintCoreSurfaces("window-load");
 else window.addEventListener("load", function(){ repaintCoreSurfaces("window-load"); });
 setTimeout(function(){ repaintCoreSurfaces("watchdog-3s"); }, 3000);
+/* v20: two more revival points, aimed at how the v19 live check actually
+   failed — the page was painted in a throttled/background browser where
+   first paints and image loads never committed until an interaction.
+   The late pass also forces the avatar repair: a face image still
+   pending after 8 s is treated as never-arriving and swapped for the
+   always-renderable glyph. Becoming visible again re-checks everything
+   for the same reason. */
+setTimeout(function(){ repaintCoreSurfaces("watchdog-8s"); repairAvatarFace(true); }, 8000);
+document.addEventListener("visibilitychange", function(){
+  if (!document.hidden) repaintCoreSurfaces("visible-again");
+});
 })();

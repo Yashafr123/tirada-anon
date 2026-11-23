@@ -88,8 +88,14 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
 }
 .ticker-track{
   display:inline-flex;flex:0 0 auto;min-width:max-content;white-space:nowrap;gap:0;
-  animation:tickerMove 30s linear infinite;will-change:transform;
+  will-change:transform;
 }
+/* The animation lives on .tick-run (v20): buildTicker toggles the class
+   around its atomic content swap, so the compositor layer is dropped
+   and recreated from the new text instead of repainting a stopped
+   inline-style animation — the strip that stayed empty until a tab
+   switch in the v19 live check. */
+.ticker-track.tick-run{animation:tickerMove 30s linear infinite}
 .tick-half{display:inline-flex;white-space:nowrap}
 .ticker:hover .ticker-track{animation-play-state:paused}
 .tick-item{font-size:12.5px;font-weight:700;color:#f3e2e2;padding:0 18px;white-space:nowrap}
