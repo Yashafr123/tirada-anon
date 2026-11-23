@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "21";
+var APP_BUILD = "22";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -88,6 +88,29 @@ function tracePush(kind, msg){
     if (a.length > 40) a = a.slice(a.length - 40);
     lsSet("tirada_boot_errors", a);
   } catch(e){}
+}
+/* bootStep and its result arrays live HERE, at the top (v22), not next
+   to the boot calls at the bottom of the file. repaintCoreSurfaces()
+   revives dead surfaces by calling bootStep(), and repaint is invoked
+   from promise handlers (auth-settled, profile-applied) — in v21 the
+   `var bootStepOk = []` initialiser sat at line ~4887, BELOW the
+   strict-mode ReferenceError that aborted the script at 4736, so the
+   arrays stayed undefined and every bootStep() call ran its step and
+   then threw "Cannot read properties of undefined (reading 'push')" —
+   aborting the repaint mid-pass (first revived surface won, the rest
+   stayed dead) and surfacing as an unhandled rejection right after
+   each repaint trace line. Initialised here, before anything can call
+   bootStep, and bootStep also self-heals a missing array. */
+var bootStepOk = [], bootStepFail = [];
+function bootStep(name, fn){
+  if (!bootStepOk) bootStepOk = [];
+  if (!bootStepFail) bootStepFail = [];
+  try { fn(); bootStepOk.push(name); }
+  catch (e) {
+    bootStepFail.push(name);
+    tracePush("step-fail", name + ": " + ((e && e.message) || e));
+    console.warn("TiradA boot: step '" + name + "' failed:", e);
+  }
 }
 (function bootBuildGuard(){
   var htmlBuild = null;
@@ -204,8 +227,11 @@ function repaintCoreSurfaces(why){
     if (!h.avatar){ bootStep("renderMyAvatar", renderMyAvatar); repairAvatarFace(); }
   } else repairAvatarFace();
   /* The map is revived by the same pass (v21): dead/fallback maps are
-     retried, a still-loading map is left strictly alone. */
-  ensureMapAlive(why, false);
+     retried, a still-loading map is left strictly alone. Guarded
+     (v22): a map-revival error must never abort the surface pass —
+     repaint runs inside promise handlers, where a throw becomes an
+     unhandled rejection and kills the remaining revival triggers. */
+  try { ensureMapAlive(why, false); } catch (e) {}
 }
 /* The «Диагностика запуска» block (About sheet): build stamps, the
    CURRENT health of the four critical surfaces, and the tail of the
@@ -2514,7 +2540,15 @@ function setCity(id){
   toast(tf("Ты теперь призрак в городе {city} 👻", { city: cityName(state.city) }));
 }
 $("#citySearch").addEventListener("input", function(){ renderCityList(); });
-$("#cityBtn").addEventListener("click", function(){ $("#citySheet").hidden = false; });
+$("#cityBtn").addEventListener("click", function(){
+  /* Open first, then render (v22): the sheet must never present a
+     stale or never-rendered list. Before v22 this handler only
+     unhid the sheet, so whenever the boot render of #cityList had
+     not happened (the v21 cascade) the user opened an empty sheet
+     that only filled after typing in the search box. */
+  $("#citySheet").hidden = false;
+  try { renderCityList(); } catch (e) { try { tracePush("error", "citySheet render: " + ((e && e.message) || e)); } catch (e2){} }
+});
 $("#cityClose").addEventListener("click", function(){ $("#citySheet").hidden = true; });
 $("#citySheet").addEventListener("click", function(e){ if (e.target === this) this.hidden = true; });
 
@@ -3173,7 +3207,11 @@ function applyRemoteProfile(row){
     }
   }
   cloudProfileData = row.data || {};
-  if (window.__pendingLangSave){ window.__pendingLangSave = false; cloudSaveLang(); }
+  if (window.__pendingLangSave){ window.__pendingLangSave = false;
+    /* Never throw here (v22): the city/mode application and the final
+       renders below — and the rest of the signed-in chain — depend on
+       this function completing. Guarded exactly like setLangChoice. */
+    try { if (typeof cloudSaveLang === "function") cloudSaveLang(); } catch (e) {} }
   else if (row.data && row.data.lang){
     /* Cloud language applies only when THIS device has no explicit
        choice of its own (raw key absent — langChoiceGet() defaults to
@@ -4733,7 +4771,16 @@ $$("#settingsSheet [data-lang-opt]").forEach(function(b){
    choice while signed in, applied on sign-in when this device has no
    explicit choice of its own. "auto" is stored as-is. */
 var cloudProfileData = {};
-cloudSaveLang = function(){
+/* v22: this MUST stay a function declaration, never an assignment.
+   `cloudSaveLang = function(){...}` was an assignment to an undeclared
+   identifier inside this strict-mode IIFE: in a real browser it threw
+   ReferenceError at load and aborted the whole script at that line —
+   boot, the footer bindings and everything below never ran (the
+   v16–v21 "half-dead app" bug; jsdom could not see it because its
+   window proxy resolves any name). As a declaration it is hoisted, so
+   every call site — setLangChoice, applyRemoteProfile — is safe no
+   matter when it runs. */
+function cloudSaveLang(){
   if (!db || !cloudUser) return;
   var data = {};
   try { data = JSON.parse(JSON.stringify(cloudProfileData || {})); } catch(e){}
@@ -4884,15 +4931,8 @@ $("#geoBtn").addEventListener("click", function(){ requestGeo(true); });
    the top of this file) — failures immediately, successes as one
    summary line — and the four critical surfaces are re-checked after
    window load, after auth settles and by a watchdog (below). */
-var bootStepOk = [], bootStepFail = [];
-function bootStep(name, fn){
-  try { fn(); bootStepOk.push(name); }
-  catch (e) {
-    bootStepFail.push(name);
-    tracePush("step-fail", name + ": " + ((e && e.message) || e));
-    console.warn("TiradA boot: step '" + name + "' failed:", e);
-  }
-}
+/* bootStep and bootStepOk/bootStepFail are defined at the TOP of this
+   file (right after tracePush) since v22 — see the comment there. */
 tracePush("trace", "boot start");
 bootStep("applyStaticI18n", applyStaticI18n);
 bootStep("setAuthMode", function(){ if (typeof setAuthMode === "function") setAuthMode("in"); }); /* auth modal strings in the boot language too — atomic from the first paint */
