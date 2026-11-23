@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "27";
+var APP_BUILD = "28";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -226,19 +226,10 @@ function repaintCoreSurfaces(why){
     if (!h.cityList) bootStep("renderCityList", renderCityList);
     if (!h.avatar){ bootStep("renderMyAvatar", renderMyAvatar); repairAvatarFace(); }
   } else repairAvatarFace();
-  /* A ticker rebuilt while the page was hidden parked its animation
-     (see buildTicker); on the foreground pass rebuild it once more —
-     v26: by NODE REPLACEMENT (buildTicker), not by a class restart.
-     The v24 class toggle restarted the animation but kept the same
-     DOM node, whose compositor layer could still hold the stale
-     texture that ghosts as a second phrase; a fresh node starts a
-     fresh layer. buildTicker itself clears tickerRestartPending
-     when it runs in the foreground. The ticker is "alive" by the
-     health criteria — this is about the compositor layer, not the
-     content, so it runs even when nothing was dead. */
-  if (why === "visible-again" && tickerRestartPending){
-    bootStep("buildTicker", buildTicker);
-  }
+  /* v28: nothing ticker-specific remains here — the fade ticker
+     has no parked animation to restart, its single cycle is
+     resumed by onAppResume (startTickerFade is idempotent), and
+     buildTicker no-ops when the phrases did not change. */
   /* The map is revived by the same pass (v21): dead/fallback maps are
      retried, a still-loading map is left strictly alone. Guarded
      (v22): a map-revival error must never abort the surface pass —
@@ -399,6 +390,7 @@ var CITIES = [
   { id:"acre",        name:"Акко",          lat:32.9275, lng:35.0817, big:false },
   { id:"tiberias",    name:"Тверия",        lat:32.7959, lng:35.5310, big:false },
   { id:"safed",       name:"Цфат",          lat:32.9646, lng:35.4960, big:false },
+  { id:"amiad",       name:"Амиад",         lat:32.9270, lng:35.5420, big:false },
   { id:"afula",       name:"Афула",         lat:32.6091, lng:35.2892, big:false },
   { id:"kiryatshmona",name:"Кирьят-Шмона",  lat:33.2073, lng:35.5698, big:false },
   { id:"modiin",      name:"Модиин",        lat:31.8903, lng:35.0104, big:false },
@@ -807,6 +799,17 @@ var RAW = {
   ]
 };
 
+/* v28 — secret places, hidden behind the ghost levels. Until the
+   unlock every surface masks them: no name, photo, song or price in
+   cards, map badges, popups, the place sheet, search, routes, the
+   deal or the ticker. THE unlock condition (one, documented): level
+   >= 3 («Тусовщик» / Party Animal) — chosen over the AI-tasks
+   alternative because the level is always on screen, so the goal
+   explains itself in the UI. */
+var SECRET_PLACES = { "karmiel|Ирисим": 1, "karmiel|כיכר האירוסים": 1, "telaviv|Yarkon Park": 1, "haifa|Bat Galim Beach": 1 };
+function secretUnlocked(){ return levelOf(myXp()).num >= 3; }
+function isSecretLocked(p){ return !!(p && p.secret && !secretUnlocked()); }
+
 function buildPlaces(city){
   /* Real venues from Google (places-data.js) win over the generated
      catalogue: real names, coordinates, ratings, review counts and price
@@ -831,6 +834,7 @@ function buildPlaces(city){
         reviews: rp.reviews || null,
         priceLevel: (rp.priceLevel === undefined ? null : rp.priceLevel),
         address: rp.address || null, addressHe: rp.addressHe || null, addressEn: rp.addressEn || null, real: rp.source !== "local", local: rp.source === "local",
+        secret: !!SECRET_PLACES[city.id + "|" + rp.name],
         tags: typeTags(rp.type).slice(), tagsRu: t.tags.slice(), song: song, task: task,
         art: t.art, grad: t.grad };
     });
@@ -1154,8 +1158,17 @@ function renderLevel(){
      becomes a cloud event — friends and the user get a push. The
      first sighting only seeds the marker, never fires. */
   var prevLv = lsGet("tirada_ev_level", 0);
-  if (prevLv && lv.num > prevLv)
+  if (prevLv && lv.num > prevLv){
     writeEvent("level_up", tf("⭐ {name} поднялся до уровня {num} · {lname}", { name: myDisplayName(), num: lv.num, lname: lv.name }));
+    fireConfetti();
+    /* v28: crossing into level 3 opens the secret places — repaint
+       the surfaces that mask them and say so out loud. */
+    if (prevLv < 3 && lv.num >= 3){
+      toast(t("🔓 Секретные места открыты!"));
+      try { renderPlaces(); } catch (e) {}
+      try { if (map && mapReady) renderMapMarkers(); } catch (e) {}
+    }
+  }
   if (lv.num !== prevLv) lsSet("tirada_ev_level", lv.num);
   var bEl = $("#levelBadge"); if (bEl) bEl.textContent = lv.num;
   var nEl2 = $("#levelName"); if (nEl2) nEl2.textContent = lv.name;
@@ -1234,10 +1247,14 @@ function renderStats(){
   if (!Array.isArray(knownBadges)) knownBadges = null; /* legacy/damaged value -> treat as first sighting, never .indexOf a non-array */
   var haveNow = ach.filter(function(a){ return a.have; }).map(function(a){ return a.name; });
   if (knownBadges){
+    var freshBadges = 0;
     haveNow.forEach(function(nm){
-      if (knownBadges.indexOf(nm) < 0)
+      if (knownBadges.indexOf(nm) < 0){
+        freshBadges++;
         writeEvent("badge", tf("🏅 {name} получил бейдж «{b}»", { name: myDisplayName(), b: t(nm) }));
+      }
     });
+    if (freshBadges) fireConfetti();
   }
   lsSet("tirada_ev_badges", haveNow);
   box.innerHTML = ach.map(function(a){
@@ -1250,7 +1267,36 @@ function renderStats(){
 var currentSheetPlaceId = null;
 function openPlaceSheet(p){
   if (!p) return;
+  /* v28 hardening: unhide the sheet FIRST and never let a build
+     error look like a dead tap — on failure the sheet still opens
+     with a minimal fallback and the boot trace names the place. */
+  var sheetEl = $("#placeSheet");
+  if (sheetEl) sheetEl.hidden = false;
+  try { openPlaceSheetInner(p); }
+  catch (e) {
+    tracePush("sheet", "open failed " + (p && p.id) + ": " + (e && e.message));
+    var b = $("#placeSheetBody");
+    if (b) b.innerHTML = '<div class="ps-body"><div class="ps-name">' + (isSecretLocked(p) ? t("🔒 Секретное место") : escHtml(p.name || "")) + '</div>' +
+      '<button class="btn-alt" id="psCloseFallback">' + t("Закрыть") + "</button></div>";
+    var fb2 = $("#psCloseFallback");
+    if (fb2) fb2.addEventListener("click", closePlaceSheet);
+  }
+  try { updateAmbientForPlace(p); } catch (e) {}
+}
+function openPlaceSheetInner(p){
   currentSheetPlaceId = p.id;
+  /* v28: a locked secret place opens as a lock — no name, photo,
+     song, price or task leaks, and it does not count as opened. */
+  if (isSecretLocked(p)){
+    $("#placeSheetBody").innerHTML =
+      '<div class="ps-art ps-art-lock"><div class="ps-lock-emoji">🔒</div>' +
+      '<button class="sheet-close ps-close" id="psClose" aria-label="' + t("Закрыть") + '">✕</button></div>' +
+      '<div class="ps-body"><div class="ps-name">' + t("🔒 Секретное место") + '</div>' +
+      '<div class="ps-sub">' + cityName(state.city) + '</div>' +
+      '<div class="ps-task">🔒 ' + tf("Откроется на уровне 3 — «{name}». Качай XP заданиями дня, квестами и маршрутами — и возвращайся.", { name: levelName(2) }) + '</div></div>';
+    $("#psClose").addEventListener("click", closePlaceSheet);
+    return;
+  }
   markPlaceOpened(p.id);
   var h = heatOf(p), st = openStatus(p), fav = !!state.favs[p.id];
   $("#placeSheetBody").innerHTML =
@@ -1294,7 +1340,7 @@ function openPlaceSheet(p){
   });
   loadPlaceGallery(p.id);
 }
-function closePlaceSheet(){ $("#placeSheet").hidden = true; }
+function closePlaceSheet(){ $("#placeSheet").hidden = true; try { updateAmbientForPlace(null); } catch (e) {} }
 function openPlaceSheetById(id){
   var f = findPlace(id);
   if (!f) return;
@@ -1340,6 +1386,7 @@ function applyGeo(lat, lng){
   if (meMarker) meMarker.setLngLat([lng, lat]);
   if (map) map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15), duration: 800 });
   cloudGeoSync();
+  try { loadWeather(); } catch (e) {}
   checkSelfAtPlace();
   startGeoWatch();
 }
@@ -1442,6 +1489,12 @@ function myPopupHtml(){
     '<div class="pop-note">' + t("Сменить вид и режим — на экране «Профиль».") + '</div></div>';
 }
 function popupHtml(p){
+  /* v28: locked secret — the map popup shows the lock, never the name. */
+  if (isSecretLocked(p)){
+    return '<div class="pop-card"><div class="pop-head"><div class="pop-name">' + t("🔒 Секретное место") + '</div></div>' +
+      '<div class="pop-meta">' + tf("Откроется на уровне 3 — «{name}»", { name: levelName(2) }) + '</div>' +
+      '<button class="pop-btn" data-place-open="' + p.id + '">' + t("Смотреть место →") + '</button></div>';
+  }
   var h = heatOf(p), hc = heatClass(h);
   return '<div class="pop-card">' +
     '<div class="pop-head ' + hc + '"><div class="pop-name">' + p.name + '</div>' +
@@ -2084,6 +2137,16 @@ $("#placeSort").addEventListener("change", function(){
 });
 var TOP_ID = null;
 function placeCard(p, i){
+  /* v28: a locked secret place renders as a lock — no name, photo,
+     heat, song or price leaks into the list. Tap still opens the
+     (locked) sheet, which explains the unlock condition. */
+  if (isSecretLocked(p)){
+    return '<article class="place-card card-locked" data-id="' + p.id + '">' +
+      '<div class="place-art" style="background:' + p.grad + '"><span class="art-emoji">🔒</span></div>' +
+      '<div class="place-body"><div class="place-top"><div><div class="place-name">' + t("🔒 Секретное место") + '</div>' +
+      '<div class="place-type">' + tf("Откроется на уровне 3 — «{name}»", { name: levelName(2) }) + '</div></div></div>' +
+      '<div class="song">🔒 ' + t("Название, фото и вайб — после открытия") + '</div></div></article>';
+  }
   var h = heatOf(p), hc = heatClass(h);
   var badge = (p.id === TOP_ID) ? '<span class="art-badge">👑 ' + t("ТОП движа") + '</span>'
     : (h >= 85 ? '<span class="art-badge heat-badge">⚡ ' + t("Сейчас жарко") + '</span>' : '');
@@ -2124,7 +2187,7 @@ function renderPlaces(){
   if (state.filter === "fav") list = list.filter(function(p){ return !!state.favs[p.id]; });
   else if (state.filter === "free") list = list.filter(isFree);
   else if (state.filter !== "all") list = list.filter(function(p){ return p.type === state.filter; });
-  if (state.search) list = list.filter(function(p){ return p.name.toLowerCase().indexOf(state.search) >= 0; });
+  if (state.search) list = list.filter(function(p){ return !isSecretLocked(p) && p.name.toLowerCase().indexOf(state.search) >= 0; });
   if (state.sort === "near") list.sort(function(a,b){ return distKm(mePos(), a) - distKm(mePos(), b); });
   else if (state.sort === "rating") list.sort(function(a,b){ return (b.rating || 0) - (a.rating || 0); });
   else list.sort(function(a,b){ return heatOf(b) - heatOf(a); });
@@ -2217,45 +2280,49 @@ function buildTicker(){
   /* The strip must never be able to end up textless: if data hiccups
      emptied the items, one honest line about the current city remains. */
   if (!items.length) items.push(tf("📍 <i>{city}</i>: загляни на экран «Места» — там весь движ города", { city: cityName(state.city) }));
-  var half = items.map(function(t){ return '<span class="tick-item">' + t + '</span>'; }).join("");
-  var oldTrack = $("#tickerTrack");
-  if (!oldTrack || !oldTrack.parentNode) return;
-  /* v26 — REPLACE the track node on every rebuild; never rewrite the
-     contents of the animated element. History: v15 swapped innerHTML
-     under the running transform animation and the compositor kept
-     painting the previous text over the new one; v20/v24 restarted
-     the animation with a .tick-run class toggle (remove → reflow →
-     add), which creates the animation afresh but keeps the SAME DOM
-     node — and on Android Chrome the node's compositor layer, above
-     all when the page was frozen/backgrounded at rebuild time (the
-     push-entry path), retained the OLD layer texture: the previous
-     phrase ghosting through the new strip, confirmed on the user's
-     phone on v25 with a fully clean boot. A brand-new node has no
-     layer history at all: the compositor must allocate a fresh layer
-     from the CURRENT text, so there is no stale texture left to show
-     through. The structure is unchanged — one track, two identical
-     halves, the -50% keyframe spanning exactly one half.
-     The v24 parking rule is kept: while the page is hidden the new
-     node is left WITHOUT .tick-run (no layer is started in the
-     background) and tickerRestartPending tells the foreground-return
-     pass to rebuild once more — again by node replacement. */
-  var track = document.createElement("div");
-  track.className = "ticker-track";
-  track.id = "tickerTrack";
-  track.innerHTML = '<span class="tick-half">' + half + '</span><span class="tick-half">' + half + "</span>";
-  oldTrack.parentNode.replaceChild(track, oldTrack);
-  if (document.hidden){
-    tickerRestartPending = true;
-  } else {
-    restartTickerRun(track);
-    tickerRestartPending = false;
-  }
+  /* v28 — FADE ticker. The marquee is gone for good: no transform
+     animation, no duplicated halves, exactly ONE .tick-item in the
+     track at any moment, phrases rotate by fading (an opacity
+     transition on the item itself). One phrase physically cannot
+     overlap or mirror another — there is never a second copy.
+     The rotation runs on ONE interval whose starter is idempotent
+     (v28 loop discipline: every periodic loop in the app is a
+     single instance; a starter called while its loop is alive is
+     a no-op). buildTicker touches the DOM only when the phrase
+     list actually changed — repaint/resume cycles with the same
+     phrases leave the running cycle completely alone. */
+  var sig = items.join("\u0001");
+  if (sig === tickerSig){ startTickerFade(); return; }
+  tickerSig = sig;
+  tickerItems = items;
+  tickerIdx = 0;
+  var track = $("#tickerTrack");
+  if (track) track.innerHTML = '<span class="tick-item">' + items[0] + "</span>";
+  startTickerFade();
 }
-var tickerRestartPending = false;
-function restartTickerRun(track){
-  track.classList.remove("tick-run");
-  void track.offsetWidth;
-  track.classList.add("tick-run");
+var tickerItems = [], tickerIdx = 0, tickerSig = "";
+var tickerTimer = null, tickerSwapTo = null;
+function startTickerFade(){
+  if (tickerTimer || document.hidden || tickerItems.length < 2) return;
+  tickerTimer = setInterval(tickerAdvance, 5200);
+}
+function stopTickerFade(){
+  if (tickerTimer){ clearInterval(tickerTimer); tickerTimer = null; }
+  if (tickerSwapTo){ clearTimeout(tickerSwapTo); tickerSwapTo = null; }
+}
+function tickerAdvance(){
+  if (document.hidden || tickerItems.length < 2) return;
+  var track = $("#tickerTrack"); if (!track) return;
+  var item = track.querySelector(".tick-item");
+  if (!item){ track.innerHTML = '<span class="tick-item">' + tickerItems[tickerIdx % tickerItems.length] + "</span>"; return; }
+  item.classList.add("tick-fade");
+  if (tickerSwapTo) clearTimeout(tickerSwapTo);
+  tickerSwapTo = setTimeout(function(){
+    tickerSwapTo = null;
+    tickerIdx = (tickerIdx + 1) % tickerItems.length;
+    var it = track.querySelector(".tick-item");
+    if (it){ it.innerHTML = tickerItems[tickerIdx]; it.classList.remove("tick-fade"); }
+  }, 480);
 }
 
 /* ================= Fake-live heat =================
@@ -2265,6 +2332,8 @@ function restartTickerRun(track){
    when a new window starts (and stays silent while the map is moving). */
 var lastHeatWindow = heatWindow(), tickN = 0;
 setInterval(function(){
+  if (document.hidden) return; /* v28: visual loops pause in the background */
+  try { applySkyPhase(); } catch (e) {}
   if (mapMoving) return;
   var w = heatWindow();
   if (w !== lastHeatWindow){
@@ -2683,7 +2752,7 @@ $("#cityClose").addEventListener("click", function(){ $("#citySheet").hidden = t
 $("#citySheet").addEventListener("click", function(e){ if (e.target === this) this.hidden = true; });
 
 /* ================= Deal overlay ================= */
-function hottest(){ return places().slice().sort(function(a,b){ return heatOf(b) - heatOf(a); }); }
+function hottest(){ return places().filter(function(p){ return !isSecretLocked(p); }).sort(function(a,b){ return heatOf(b) - heatOf(a); }); }
 /* Voting for the meetup place: the 3 hottest places of the city (or the 3
    from a shared #vote= link). Votes live in the votes table and count for
    signed-in ghosts only; a guest is offered sign-in and nothing is
@@ -2805,7 +2874,7 @@ function legMinutes(km, mode){
   return km / 28 * 60;
 }
 function pickRouteSteps(){
-  var all = places();
+  var all = places().filter(function(p){ return !isSecretLocked(p); });
   var chill = all.filter(function(p){ var tg = p.tagsRu || p.tags; return tg.indexOf("тихо") >= 0 || tg.indexOf("вкусно") >= 0; });
   var calm  = all.filter(function(p){ var tg = p.tagsRu || p.tags; return tg.indexOf("романтика") >= 0; });
   var hot = hottest();
@@ -3189,6 +3258,7 @@ function renderTasks(){
           state.stats.quests++;
           saveStats(); renderStats();
           toast(t("Квест недели пройден! Бейдж в профиле 🏅"));
+          fireConfetti();
           writeEvent("quest_done", tf("🏆 {name} прошёл квест «{q}»", { name: myDisplayName(), q: weekQuest().theme }));
         } else { saveStats(); renderStats(); toast(t("Шаг квеста засчитан 🗺️")); }
         renderTasks();
@@ -3214,6 +3284,8 @@ $("#dailyDoneBtn").addEventListener("click", function(){
     saveStats(); renderStats();
     renderTasks();
     toast(tf("Задание дня выполнено 🔥 Серия: {n}", { n: st2.streak }));
+    fireConfetti();
+    renderStreakChip();
   });
 });
 
@@ -3284,6 +3356,7 @@ function aiTaskComplete(id){
   saveStats(); renderStats();
   renderAiDay();
   toast(tf("Задание ИИ выполнено · +{xp} XP", { xp: +task.xp || 0 }));
+  fireConfetti();
 }
 function loadAiDay(){
   var box = $("#aiDayBox"); if (!box) return;
@@ -5018,6 +5091,7 @@ function refreshI18n(){
   renderFilter(); renderPlaces(); updateCounter(); buildTicker();
   state.routeSteps = null; buildRoute();
   renderFriends(); renderFriendsPlacesBar(); renderAccount(); refreshPushUI();
+  renderWxChip(); renderStreakChip(); renderSoundBox();
   /* The auth modal's submit/note are only (re)written by setAuthMode on
      open/tab-switch — repaint them too, so no surface keeps the previous
      language after a switch or a cloud-language apply. */
@@ -5218,6 +5292,298 @@ $("#geoBtn").addEventListener("click", function(){ requestGeo(true); });
    window load, after auth settles and by a watchdog (below). */
 /* bootStep and bootStepOk/bootStepFail are defined at the TOP of this
    file (right after tracePush) since v22 — see the comment there. */
+/* ================= v28: confetti, sky, weather, sound, feedback =================
+   Everything in this block follows the v28 loop discipline: no new
+   periodic loops except the ones with idempotent starters (ticker
+   fade lives with the ticker), one-shot rAF only for confetti, and
+   every audio graph is created at most once and torn down on mute. */
+
+/* ---- Confetti: tiny canvas burst, no libraries. Single-flight,
+   stops when the page hides, respects prefers-reduced-motion. ---- */
+var confettiRunning = false;
+function fireConfetti(){
+  if (confettiRunning) return;
+  try { if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return; } catch (e) {}
+  var cv = $("#confettiCanvas");
+  if (!cv) {
+    /* The canvas sits before the scripts in the HTML, but if a
+       stitched page ever lacks it, build it on the spot — a missed
+       celebration must never become a silent no-op. */
+    try {
+      cv = document.createElement("canvas");
+      cv.id = "confettiCanvas";
+      document.body.appendChild(cv);
+    } catch (e) { return; }
+  }
+  var ctx = null;
+  try { ctx = cv.getContext("2d"); } catch (e) {}
+  if (!ctx) return;
+  confettiRunning = true;
+  cv.width = window.innerWidth || 360; cv.height = window.innerHeight || 640;
+  cv.hidden = false;
+  var colors = ["#ff1e1e", "#ff7a1a", "#ffd23c", "#7ee2a0", "#ffffff"];
+  var parts = [];
+  for (var i = 0; i < 90; i++){
+    parts.push({ x: cv.width / 2 + (Math.random() - 0.5) * cv.width * 0.45, y: cv.height * 0.35,
+      vx: (Math.random() - 0.5) * 9, vy: -(Math.random() * 7 + 4),
+      w: 5 + Math.random() * 6, h: 8 + Math.random() * 8,
+      r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.3, c: colors[i % colors.length] });
+  }
+  var t0 = Date.now();
+  (function frame(){
+    var el = Date.now() - t0;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    parts.forEach(function(pt){
+      pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.22; pt.vx *= 0.99; pt.r += pt.vr;
+      ctx.save(); ctx.translate(pt.x, pt.y); ctx.rotate(pt.r);
+      ctx.fillStyle = pt.c; ctx.globalAlpha = Math.max(0, 1 - el / 2200);
+      ctx.fillRect(-pt.w / 2, -pt.h / 2, pt.w, pt.h); ctx.restore();
+    });
+    if (el < 2300 && !document.hidden) requestAnimationFrame(frame);
+    else { ctx.clearRect(0, 0, cv.width, cv.height); cv.hidden = true; confettiRunning = false; }
+  })();
+}
+
+/* ---- Living sky: a fixed layer UNDER the UI (pointer-events:none,
+   it can never intercept a tap). Phase by local hour: night 22–05
+   stars, morning 05–10 a small red sun, day 10–17 a soft glow,
+   evening 17–22 a warm sunset gradient. Cheap: pure CSS gradients,
+   the only animation is an opacity twinkle on the star layer. ---- */
+function applySkyPhase(){
+  var h = new Date().getHours();
+  var ph = (h >= 22 || h < 5) ? "night" : (h < 10 ? "morning" : (h < 17 ? "day" : "evening"));
+  if (document.body && document.body.getAttribute("data-sky") !== ph)
+    document.body.setAttribute("data-sky", ph);
+}
+
+/* ---- Weather: Open-Meteo (no key) for the current position/city.
+   Chip in the topbar: icon + temperature, condition in the title.
+   30-minute cache; any failure simply hides the chip. Rain codes
+   switch the rain ambience layer on. ---- */
+var wxState = null;
+var WX_RAIN_CODES = { 51:1, 53:1, 55:1, 56:1, 57:1, 61:1, 63:1, 65:1, 66:1, 67:1, 80:1, 81:1, 82:1, 95:1, 96:1, 99:1 };
+function wxInfo(code){
+  if (code === 0) return { i: "☀️", k: "Ясно" };
+  if (code === 1) return { i: "🌤️", k: "Преимущественно ясно" };
+  if (code === 2) return { i: "⛅", k: "Переменная облачность" };
+  if (code === 3) return { i: "☁️", k: "Облачно" };
+  if (code === 45 || code === 48) return { i: "🌫️", k: "Туман" };
+  if (code >= 51 && code <= 57) return { i: "🌦️", k: "Морось" };
+  if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return { i: "🌧️", k: "Дождь" };
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return { i: "🌨️", k: "Снег" };
+  if (code >= 95) return { i: "⛈️", k: "Гроза" };
+  return { i: "🌡️", k: "Погода" };
+}
+function renderWxChip(){
+  var chip = $("#wxChip"); if (!chip) return;
+  if (!wxState || typeof wxState.t !== "number"){ chip.hidden = true; return; }
+  var info = wxInfo(wxState.code);
+  chip.hidden = false;
+  chip.textContent = info.i + " " + Math.round(wxState.t) + "°";
+  chip.title = t(info.k);
+  chip.setAttribute("aria-label", t("Погода") + ": " + t(info.k) + ", " + Math.round(wxState.t) + "°");
+}
+function loadWeather(){
+  if (typeof fetch !== "function") return;
+  var c = null;
+  try { c = mePos(); } catch (e) {}
+  if (!c || typeof c.lat !== "number") return;
+  var cache = lsGet("tirada_wx_cache", null);
+  if (cache && typeof cache.at === "number" && Date.now() - cache.at < 30 * 60000 &&
+      Math.abs(cache.lat - c.lat) < 0.05 && Math.abs(cache.lng - c.lng) < 0.05){
+    wxState = cache; renderWxChip(); updateRainAmbience(); return;
+  }
+  var url = "https://api.open-meteo.com/v1/forecast?latitude=" + c.lat.toFixed(4) + "&longitude=" + c.lng.toFixed(4) +
+    "&current=temperature_2m,weather_code&timezone=auto";
+  fetch(url).then(function(r){ return r.json(); }).then(function(j){
+    if (j && j.current && typeof j.current.temperature_2m === "number"){
+      wxState = { t: j.current.temperature_2m, code: j.current.weather_code | 0, at: Date.now(), lat: c.lat, lng: c.lng };
+      lsSet("tirada_wx_cache", wxState);
+    }
+    renderWxChip(); updateRainAmbience();
+  }).catch(function(){ renderWxChip(); });
+}
+
+/* ---- Streak chip in the topbar (the streak itself already lives
+   in tirada_streak / stats; this is only its visible face). ---- */
+function currentStreak(){
+  var st = objOr(lsGet("tirada_streak", null), { streak: 0 });
+  return Math.max((state.stats && state.stats.streak) || 0, st.streak || 0);
+}
+function renderStreakChip(){
+  var el = $("#streakChip"); if (!el) return;
+  var n = currentStreak();
+  el.hidden = !(n > 0);
+  if (n > 0){ el.textContent = "🔥 " + n; el.title = t("Стрик") + ": " + n; }
+}
+
+/* ---- Sound: Yasha's track as a barely-audible background loop
+   (~0.15 — "on the edge of hearing"), plus synthesized ambience.
+   Nothing plays before the first user gesture; preferences persist;
+   the master switch silences EVERYTHING. Music is lazy: the file
+   is not even requested until the first play. ---- */
+var soundOn = lsGet("tirada_sound_on", true) === true;
+var musicOn = lsGet("tirada_music_on", true) === true;
+var musicAudio = null, musicArmed = false;
+function ensureMusic(){
+  if (musicAudio) return musicAudio;
+  try {
+    musicAudio = new Audio();
+    musicAudio.loop = true;
+    musicAudio.volume = 0.15;
+    musicAudio.preload = "none";
+  } catch (e) { musicAudio = null; }
+  return musicAudio;
+}
+function applySoundState(){
+  var m = ensureMusic();
+  if (m){
+    try {
+      if (soundOn && musicOn && musicArmed){
+        if (!m.src) m.src = "assets/music.mp3";
+        var pr = m.play(); if (pr && pr.catch) pr.catch(function(){});
+      } else m.pause();
+    } catch (e) {}
+  }
+  applyAmbienceState();
+}
+function armSoundOnFirstGesture(){
+  var arm = function(){
+    document.removeEventListener("pointerdown", arm);
+    document.removeEventListener("keydown", arm);
+    musicArmed = true;
+    applySoundState();
+  };
+  document.addEventListener("pointerdown", arm);
+  document.addEventListener("keydown", arm);
+}
+function renderSoundBox(){
+  var s1 = $("#sndToggle"), s2 = $("#musicToggle");
+  if (s1){ s1.textContent = soundOn ? t("🔊 Звук: вкл") : t("🔊 Звук: выкл"); s1.setAttribute("data-on", soundOn ? "1" : "0"); }
+  if (s2){ s2.textContent = musicOn ? t("🎵 Музыка: вкл") : t("🎵 Музыка: выкл"); s2.setAttribute("data-on", musicOn ? "1" : "0"); }
+}
+/* Ambience: WebAudio-synthesized layers, no files. Rain = band-passed
+   noise; wind (parks/beaches/views) = low-passed noise with a slow
+   LFO; crowd (cafes/bars/markets) = mid-band noise, quieter still.
+   Rain from the weather wins over the place layer. One graph at a
+   time; switching or muting tears it down. */
+var ambCtx = null, ambNodes = null, ambKind = null, ambPlaceKind = null, ambRainOn = false;
+function ambDesired(){ if (!soundOn) return null; if (ambRainOn) return "rain"; return ambPlaceKind; }
+function stopAmbience(){
+  if (ambNodes){
+    try { ambNodes.src.stop(); } catch (e) {}
+    try { if (ambNodes.lfo) ambNodes.lfo.stop(); } catch (e) {}
+    ambNodes = null;
+  }
+  ambKind = null;
+}
+function applyAmbienceState(){
+  var want = ambDesired();
+  if (want === ambKind) return;
+  stopAmbience();
+  if (!want || !musicArmed) return;
+  var AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  try {
+    ambCtx = ambCtx || new AC();
+    if (ambCtx.state === "suspended") ambCtx.resume();
+    var len = ambCtx.sampleRate * 2;
+    var buf = ambCtx.createBuffer(1, len, ambCtx.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    var src = ambCtx.createBufferSource(); src.buffer = buf; src.loop = true;
+    var filt = ambCtx.createBiquadFilter();
+    var gain = ambCtx.createGain();
+    var lfo = null;
+    if (want === "rain"){ filt.type = "bandpass"; filt.frequency.value = 1400; filt.Q.value = 0.4; gain.gain.value = 0.05; }
+    else if (want === "wind"){ filt.type = "lowpass"; filt.frequency.value = 420; gain.gain.value = 0.045; }
+    else { filt.type = "bandpass"; filt.frequency.value = 700; filt.Q.value = 0.6; gain.gain.value = 0.028; }
+    if (want === "wind" || want === "crowd"){
+      lfo = ambCtx.createOscillator();
+      lfo.frequency.value = want === "wind" ? 0.13 : 0.4;
+      var lg = ambCtx.createGain(); lg.gain.value = want === "wind" ? 160 : 120;
+      lfo.connect(lg); lg.connect(filt.frequency); lfo.start();
+    }
+    src.connect(filt); filt.connect(gain); gain.connect(ambCtx.destination);
+    src.start();
+    ambNodes = { src: src, lfo: lfo };
+    ambKind = want;
+  } catch (e) { ambKind = null; }
+}
+function updateAmbientForPlace(p){
+  if (!p) ambPlaceKind = null;
+  else if (p.type === "park" || p.type === "beach" || p.type === "prom" || p.type === "view" || p.type === "roof" || p.type === "stage") ambPlaceKind = "wind";
+  else if (p.type === "cafe" || p.type === "bar" || p.type === "hookah" || p.type === "market" || p.type === "club") ambPlaceKind = "crowd";
+  else ambPlaceKind = null;
+  applyAmbienceState();
+}
+function updateRainAmbience(){
+  ambRainOn = !!(wxState && WX_RAIN_CODES[wxState.code]);
+  applyAmbienceState();
+}
+
+/* ---- Feedback: «Сообщить / предложить» → the feedback table.
+   If the table is not there yet (or the network is gone) the error
+   is friendly and points at Yasha's Telegram instead. ---- */
+var fbType = "bug";
+function openFeedbackSheet(){
+  var sh = $("#feedbackSheet"); if (!sh) return;
+  var ta = $("#fbText"); if (ta) ta.placeholder = t("Опиши, что случилось или что хочешь предложить…");
+  sh.hidden = false;
+}
+function closeFeedbackSheet(){ var sh = $("#feedbackSheet"); if (sh) sh.hidden = true; }
+function submitFeedback(){
+  var ta = $("#fbText");
+  var txt = ta ? String(ta.value || "").trim() : "";
+  if (!txt){ toast(t("Напиши хоть пару слов 🙂")); return; }
+  var btn = $("#fbSend"); if (btn) btn.disabled = true;
+  var done = function(ok){
+    if (btn) btn.disabled = false;
+    if (ok){
+      if (ta) ta.value = "";
+      closeFeedbackSheet();
+      toast(t("Отправлено! Яша увидит это в базе 🙏"));
+      fireConfetti();
+    } else {
+      toast(t("Не отправилось — нет связи с базой. Напиши Яше напрямую: @black_prince_18"));
+    }
+  };
+  if (typeof db === "undefined" || !db){ done(false); return; }
+  try {
+    db.from("feedback").insert({ user_id: (typeof cloudUser !== "undefined" && cloudUser) ? cloudUser.id : null, type: fbType, text: txt, lang: LANG })
+      .then(function(res){ done(!(res && res.error)); }, function(){ done(false); });
+  } catch (e) { done(false); }
+}
+function bindV28Ui(){
+  var st = $("#sndToggle");
+  if (st) st.addEventListener("click", function(){
+    soundOn = !soundOn; lsSet("tirada_sound_on", soundOn);
+    musicArmed = true; /* the tap itself is the gesture */
+    renderSoundBox(); applySoundState();
+  });
+  var mt = $("#musicToggle");
+  if (mt) mt.addEventListener("click", function(){
+    musicOn = !musicOn; lsSet("tirada_music_on", musicOn);
+    musicArmed = true;
+    renderSoundBox(); applySoundState();
+  });
+  var fb = $("#feedbackBtn");
+  if (fb) fb.addEventListener("click", openFeedbackSheet);
+  var fc = $("#feedbackClose");
+  if (fc) fc.addEventListener("click", closeFeedbackSheet);
+  var fsh = $("#feedbackSheet");
+  if (fsh) fsh.addEventListener("click", function(e){ if (e.target === fsh) closeFeedbackSheet(); });
+  var fs = $("#fbSend");
+  if (fs) fs.addEventListener("click", submitFeedback);
+  var ft = $("#fbTypes");
+  if (ft) ft.addEventListener("click", function(e){
+    var b = e.target && e.target.closest ? e.target.closest("[data-fbtype]") : null;
+    if (!b) return;
+    fbType = b.getAttribute("data-fbtype") || "bug";
+    ft.querySelectorAll(".fb-type").forEach(function(x){ x.classList.toggle("sel", x === b); });
+  });
+}
+
 tracePush("trace", "boot start");
 bootStep("applyStaticI18n", applyStaticI18n);
 bootStep("setAuthMode", function(){ if (typeof setAuthMode === "function") setAuthMode("in"); }); /* auth modal strings in the boot language too — atomic from the first paint */
@@ -5273,6 +5639,14 @@ function applyDeepLink(fromBoot){
   else if (h.indexOf("map") >= 0) showScreen("map");
   if (h.indexOf("deal") >= 0) openDeal();
 }
+bootStep("v28init", function(){
+  applySkyPhase();
+  renderStreakChip();
+  renderSoundBox();
+  armSoundOnFirstGesture();
+  bindV28Ui();
+  loadWeather();
+});
 bootStep("deepLink", function(){ applyDeepLink(true); });
 window.addEventListener("hashchange", function(){
   try { applyDeepLink(false); } catch (e) { /* a bad hash must never break the app */ }
@@ -5295,7 +5669,28 @@ setTimeout(function(){ repaintCoreSurfaces("watchdog-3s"); }, 3000);
    always-renderable glyph. Becoming visible again re-checks everything
    for the same reason. */
 setTimeout(function(){ repaintCoreSurfaces("watchdog-8s"); repairAvatarFace(true); }, 8000);
+/* v28 — ONE resume path for every return (visibility, bfcache
+   pageshow, focus): repaint dead surfaces, resume the single
+   ticker cycle, refresh the avatar node and the sky phase. It
+   starts NO other loop and re-runs NO boot step: every periodic
+   loop in the app is a guarded single instance (heartbeat, friend
+   map, route dash, heat tick, ticker fade), so a resume can never
+   stack a second copy of anything — the «effects ×10» failure of
+   the push-entry path. While hidden, the visual loops pause. */
+function onAppResume(why){
+  repaintCoreSurfaces(why);
+  startTickerFade();
+  try { renderMyAvatar(); } catch (e) {}
+  try { applySkyPhase(); } catch (e) {}
+  try {
+    var rc = $("#routeChip");
+    if (rc && !rc.hidden && map && mapReady) startRouteDash();
+  } catch (e) {}
+}
 document.addEventListener("visibilitychange", function(){
-  if (!document.hidden) repaintCoreSurfaces("visible-again");
+  if (document.hidden){ stopTickerFade(); stopRouteDash(); }
+  else onAppResume("visible-again");
 });
+window.addEventListener("pageshow", function(e){ if (e.persisted) onAppResume("pageshow"); });
+window.addEventListener("focus", function(){ startTickerFade(); });
 })();

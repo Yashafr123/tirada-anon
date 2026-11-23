@@ -19,7 +19,7 @@
    TIRADA_BUILD must equal APP_BUILD in app.js — a mismatch means the
    browser stitched two releases together from cache, and app.js then
    self-heals (unregister SW, clear caches, one reload). */
-window.TIRADA_BUILD = "27";
+window.TIRADA_BUILD = "28";
 window.__tiradaBootId = Date.now();
 (function(){
   function push(kind, msg){
@@ -48,14 +48,16 @@ window.__tiradaBootId = Date.now();
      ?v=N version query so a phone never runs a stale cached build, and
      N must equal TIRADA_BUILD above and APP_BUILD in app.js. INCREMENT
      N on EVERY release (keep all in sync). -->
-<link rel="stylesheet" href="maplibre-gl.css?v=27">
-<link rel="stylesheet" href="style.css?v=27">
+<link rel="stylesheet" href="maplibre-gl.css?v=28">
+<link rel="stylesheet" href="style.css?v=28">
 <link rel="icon" type="image/jpeg" href="tirada-logo.jpg">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 </head>
 <body>
 
+<div class="sky-layer" id="skyLayer" aria-hidden="true"></div>
+<canvas id="confettiCanvas" hidden></canvas>
 <div class="app">
 
   <!-- ===== Header ===== -->
@@ -64,6 +66,8 @@ window.__tiradaBootId = Date.now();
       <div class="logo"><img class="logo-img" src="tirada-logo.jpg" alt="TIRADA">TiradA <span class="logo-anon">anon</span></div>
       <div class="topbar-right">
         <button class="city-chip" id="cityBtn">📍 <span id="cityName">Кармиэль</span> <span class="city-caret">▾</span></button>
+        <span class="wx-chip" id="wxChip" hidden></span>
+        <span class="streak-chip" id="streakChip" hidden></span>
         <button class="btn-login" id="loginBtn">Войти</button>
       </div>
     </div>
@@ -226,6 +230,15 @@ window.__tiradaBootId = Date.now();
           <div class="mode-label" data-i18n="Уведомления">Уведомления</div>
           <button class="btn-alt push-btn" id="pushBtn">🔔 Включить уведомления</button>
           <p class="account-text push-note" id="pushNote">Все события города — пушем на это устройство, даже когда приложение закрыто. Работают и без геолокации.</p>
+        </div>
+
+        <!-- Sound: background music + place ambience (v28) -->
+        <div class="account-box sound-box" id="soundBox">
+          <div class="mode-label" data-i18n="Звук">Звук</div>
+          <button class="btn-alt push-btn" id="sndToggle">🔊 Звук: вкл</button>
+          <button class="btn-alt push-btn" id="musicToggle">🎵 Музыка: вкл</button>
+          <p class="account-text push-note" data-i18n="Музыка и звуки мест играют очень тихо, фоном — на грани слышимости. В парке — ветерок, в кафе — тихий гул, в дождь — дождь.">Музыка и звуки мест играют очень тихо, фоном — на грани слышимости. В парке — ветерок, в кафе — тихий гул, в дождь — дождь.</p>
+          <button class="btn-alt push-btn" id="feedbackBtn" data-i18n="✉️ Сообщить / предложить">✉️ Сообщить / предложить</button>
         </div>
 
         <!-- Friends (Supabase friendships) -->
@@ -505,12 +518,30 @@ window.__tiradaBootId = Date.now();
 <div class="toast-stack" id="toastStack"></div>
 <div class="toast" id="toast" hidden></div>
 
-<script src="maplibre-gl.js?v=27"></script>
-<script src="map-style.js?v=27"></script>
-<script src="vendor-supabase.js?v=27"></script>
-<script src="supabase.js?v=27"></script>
-<script src="i18n.js?v=27"></script>
-<script src="places-data.js?v=27"></script>
-<script src="app.js?v=27"></script>
+<script src="maplibre-gl.js?v=28"></script>
+<script src="map-style.js?v=28"></script>
+<script src="vendor-supabase.js?v=28"></script>
+<script src="supabase.js?v=28"></script>
+<script src="i18n.js?v=28"></script>
+<script src="places-data.js?v=28"></script>
+<script src="app.js?v=28"></script>
+<!-- ===== Feedback sheet (v28) ===== -->
+<div class="sheet-backdrop" id="feedbackSheet" hidden>
+  <div class="sheet">
+    <div class="sheet-head">
+      <h3 data-i18n="Сообщить / предложить">Сообщить / предложить</h3>
+      <button class="sheet-close" id="feedbackClose" aria-label="Закрыть" data-i18n-aria="Закрыть">✕</button>
+    </div>
+    <div class="fb-types" id="fbTypes">
+      <button class="fb-type sel" data-fbtype="bug" data-i18n="🐞 Жалоба">🐞 Жалоба</button>
+      <button class="fb-type" data-fbtype="fix" data-i18n="✏️ Исправить место">✏️ Исправить место</button>
+      <button class="fb-type" data-fbtype="add" data-i18n="➕ Добавить место">➕ Добавить место</button>
+    </div>
+    <textarea class="fb-text" id="fbText" rows="4" maxlength="2000" data-i18n-ph="Опиши, что случилось или что хочешь предложить…"></textarea>
+    <button class="btn-yes" id="fbSend" data-i18n="Отправить">Отправить</button>
+    <p class="fb-contact"><span data-i18n="Или напиши напрямую:">Или напиши напрямую:</span> <a href="https://t.me/black_prince_18" target="_blank" rel="noopener">Яша — @black_prince_18</a></p>
+  </div>
+</div>
+
 </body>
 </html>

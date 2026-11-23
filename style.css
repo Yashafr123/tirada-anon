@@ -92,21 +92,16 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
   background-image:linear-gradient(90deg, rgba(255,30,30,.14), rgba(229,9,20,.10), rgba(255,30,30,.14));
   display:flex;align-items:center;
 }
-.ticker-track{
-  display:inline-flex;flex:0 0 auto;min-width:max-content;white-space:nowrap;gap:0;
-  will-change:transform;
+.ticker-track{display:flex;align-items:center;width:100%;height:100%;overflow:hidden}
+/* v28: FADE ticker — exactly one phrase, an opacity transition, no
+   transform, no duplicated halves: after a background return there
+   is physically nothing to double or mirror in this strip. */
+.tick-item{
+  font-size:12.5px;font-weight:700;color:#f3e2e2;padding:0 18px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;opacity:1;transition:opacity .45s ease;
 }
-/* The animation lives on .tick-run (v20): buildTicker toggles the class
-   around its atomic content swap, so the compositor layer is dropped
-   and recreated from the new text instead of repainting a stopped
-   inline-style animation — the strip that stayed empty until a tab
-   switch in the v19 live check. */
-.ticker-track.tick-run{animation:tickerMove 30s linear infinite}
-.tick-half{display:inline-flex;white-space:nowrap}
-.ticker:hover .ticker-track{animation-play-state:paused}
-.tick-item{font-size:12.5px;font-weight:700;color:#f3e2e2;padding:0 18px;white-space:nowrap}
+.tick-item.tick-fade{opacity:0}
 .tick-item i{font-style:normal;color:var(--pink)}
-@keyframes tickerMove{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 
 /* ===== Screens ===== */
 .screens{flex:1 1 auto;position:relative;overflow:hidden;min-height:0}
@@ -282,7 +277,6 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
 }
 .art-emoji{
   font-size:56px;line-height:1;filter:drop-shadow(0 8px 18px rgba(0,0,0,.45));
-  animation:artFloat 4.5s ease-in-out infinite;
 }
 @keyframes artFloat{0%,100%{transform:translateY(0) rotate(-2deg)}50%{transform:translateY(-5px) rotate(2deg)}}
 .art-heat{
@@ -361,10 +355,10 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
   background:rgba(255,30,30,.16);border:2px solid var(--violet);
   box-shadow:0 0 34px rgba(255,30,30,.5);
   display:flex;align-items:center;justify-content:center;
-  animation:ghostBob 3.6s ease-in-out infinite;transition:transform .15s;
+  /* v28: NO infinite animation on the avatar and the photo is never transformed — the post-background compositor class (steer 2026-11-23). The red glow stays, static. */
   padding:0;
 }
-.ghost-big:active{transform:scale(.93)}
+.ghost-big:active{box-shadow:0 0 12px rgba(255,30,30,.65)}
 .ghost-big{font-size:60px}
 @keyframes ghostBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 .ghost-tap-hint{font-size:11.5px;color:var(--muted);margin-top:9px}
@@ -446,7 +440,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
 @keyframes fabGlow{0%,100%{box-shadow:0 10px 28px rgba(255,90,60,.45), 0 0 0 5px rgba(8,8,10,.94)}50%{box-shadow:0 10px 38px rgba(229,9,20,.7), 0 0 0 5px rgba(8,8,10,.94)}}
 .fab-ring{
   position:absolute;top:0;left:50%;width:60px;height:60px;margin-left:-30px;border-radius:50%;
-  border:2px solid rgba(229,9,20,.55);animation:fabRing 2.4s ease-out infinite;
+  border:2px solid rgba(229,9,20,.55); /* v28: static ring — no infinite transform on persistent chrome */
 }
 @keyframes fabRing{0%{transform:scale(1);opacity:.8}100%{transform:scale(1.45);opacity:0}}
 .fab-label{font-size:10.5px;font-weight:900;color:#ffb3b3;margin-top:5px;letter-spacing:.2px}
@@ -454,7 +448,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
 /* ===== Deal overlay ===== */
 .deal-overlay{
   position:fixed;inset:0;z-index:120;display:flex;align-items:flex-end;justify-content:center;
-  background:rgba(0,0,0,.78);backdrop-filter:blur(4px);
+  background:rgba(0,0,0,.84); /* v28: no backdrop-filter over scrollable sheet content (compositor mirror class) */
 }
 .deal-overlay[hidden]{display:none}
 .deal-sheet{
@@ -465,13 +459,13 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
   animation:sheetUp .34s cubic-bezier(.2,.8,.3,1) both;
   box-shadow:0 -18px 60px rgba(255,30,30,.35);
 }
-@keyframes sheetUp{from{opacity:0;transform:translateY(46px)}to{opacity:1;transform:none}}
+@keyframes sheetUp{from{opacity:0}to{opacity:1}} /* v28: opacity-only — no transform on sheet containers */
 .deal-close{
   position:absolute;top:12px;right:14px;z-index:3;border:0;background:rgba(255,255,255,.07);
   color:var(--muted);font-size:15px;cursor:pointer;width:34px;height:34px;border-radius:50%;
 }
 .deal-head{text-align:center;margin-bottom:6px}
-.deal-flame{font-size:44px;animation:artFloat 3s ease-in-out infinite}
+.deal-flame{font-size:44px}
 .deal-head h3{font-size:24px;font-weight:900;margin-top:2px}
 .deal-head p{color:var(--muted);font-size:13.5px;margin-top:3px}
 .searching{padding:26px 0 12px;color:var(--muted);font-size:15px;text-align:center}
@@ -509,7 +503,7 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
 }
 .sheet-backdrop[hidden]{display:none}
 .sheet{
-  width:100%;max-width:520px;max-height:78vh;display:flex;flex-direction:column;
+  width:100%;max-width:520px;max-height:88vh;max-height:88dvh;display:flex;flex-direction:column;overscroll-behavior:contain;
   background:#121214;border:1px solid var(--line);border-bottom:0;
   border-radius:24px 24px 0 0;padding:18px 16px calc(14px + env(safe-area-inset-bottom));
   animation:sheetUp .32s cubic-bezier(.2,.8,.3,1) both;
@@ -611,10 +605,9 @@ button:focus-visible,a:focus-visible{outline:2px solid var(--violet);outline-off
 .art-badge{
   position:absolute;top:10px;left:10px;z-index:2;
   font-size:11.5px;font-weight:900;color:#fff;letter-spacing:.2px;
-  padding:5px 10px;border-radius:999px;backdrop-filter:blur(4px);
+  padding:5px 10px;border-radius:999px;
   background:linear-gradient(90deg,#ff7a1a,#e50914);
   box-shadow:0 4px 16px rgba(229,9,20,.55);
-  animation:badgePop 2.6s ease-in-out infinite;
 }
 .art-badge.heat-badge{background:linear-gradient(90deg,#ff2213,#ff7a1a);box-shadow:0 4px 16px rgba(255,90,60,.55)}
 @keyframes badgePop{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
@@ -689,7 +682,6 @@ body.shots *,body.shots *::before,body.shots *::after{
 .art-img{
   width:80px;height:80px;object-fit:contain;position:relative;z-index:1;
   filter:drop-shadow(0 10px 20px rgba(0,0,0,.45));
-  animation:artFloat 4.5s ease-in-out infinite;
 }
 .art-img.avfont{width:auto;height:auto}
 .core-img{width:15px;height:15px;object-fit:contain;display:block}
@@ -1584,7 +1576,7 @@ body::before{
 @media (prefers-reduced-motion: reduce){.skel{animation:none}}
 
 /* --- empty states with character --- */
-.empty-art{font-size:46px;line-height:1.1;margin-bottom:8px;animation:artFloat 4s ease-in-out infinite}
+.empty-art{font-size:46px;line-height:1.1;margin-bottom:8px;}
 .empty-title{font-size:17px;font-weight:900;color:var(--text);margin-bottom:4px}
 .empty-text{font-size:13.5px;color:var(--muted);line-height:1.5;max-width:34ch;margin:0 auto}
 .empty-btn{width:auto;margin:14px auto 2px;padding:12px 22px;min-height:46px}
@@ -1617,7 +1609,7 @@ body::before{
 .welcome-sheet{position:relative}
 .welcome-close{position:absolute;top:12px;right:14px;z-index:2}
 .welcome-hero{text-align:center;padding:8px 4px 2px}
-.welcome-ghost{font-size:66px;line-height:1.1;animation:ghostBob 3.4s ease-in-out infinite;filter:drop-shadow(0 12px 24px rgba(255,30,30,.35))}
+.welcome-ghost{font-size:66px;line-height:1.1;filter:drop-shadow(0 12px 24px rgba(255,30,30,.35))}
 .welcome-title{font-size:29px;font-weight:900;letter-spacing:-.6px;line-height:1.1;margin-top:4px}
 .welcome-sub{color:var(--muted);font-size:13.5px;line-height:1.45;margin:7px auto 0;max-width:32ch}
 .welcome-sheet .welcome-text{margin-top:13px}
@@ -1743,7 +1735,7 @@ body::before{
 .fp-chip::after{
   content:"";position:absolute;inset:0;pointer-events:none;
   background:linear-gradient(115deg,transparent 30%,rgba(255,120,110,.30) 48%,rgba(255,255,255,.16) 52%,transparent 70%);
-  transform:translateX(-130%);animation:fpShine 2.8s ease-in-out infinite;
+  transform:translateX(-130%); /* v28: shine slide removed — infinite transform on a persistent chip */
 }
 @keyframes fpShine{0%{transform:translateX(-130%)}55%,100%{transform:translateX(130%)}}
 @keyframes fpPulse{0%,100%{box-shadow:0 6px 22px rgba(229,9,20,.22)}50%{box-shadow:0 6px 30px rgba(255,40,50,.52)}}
@@ -1756,7 +1748,6 @@ body::before{
   font-size:12px;font-weight:900;color:#fff;padding:5px 11px;border-radius:999px;
   background:linear-gradient(90deg,#ff2213,#e50914);
   box-shadow:0 4px 16px rgba(229,9,20,.5);
-  animation:badgePop 2.2s ease-in-out infinite;
 }
 .ps-friends{
   margin-top:10px;font-size:14px;font-weight:800;color:#ffb3ae;
@@ -1792,3 +1783,92 @@ html[dir="rtl"] .deal-close{right:auto;left:14px}
 html[dir="rtl"] .modal-close{right:auto;left:12px}
 html[dir="rtl"] .photo-viewer-close{right:auto;left:14px}
 html[dir="rtl"] .welcome-close{right:auto;left:12px}
+
+/* ===== v28: living sky, header chips, sheet scrolling, feedback, confetti =====
+   The sky is a fixed layer UNDER the app (z-index 0; .app is z-index 1)
+   with pointer-events:none — it can never intercept a tap. Phases are
+   set on <body data-sky> by applySkyPhase(): night 22–05 (stars),
+   morning 05–10 (a small red sun), day 10–17 (soft glow), evening
+   17–22 (warm sunset). Only animation: an opacity twinkle. */
+.sky-layer{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.sky-layer::before{
+  content:"";position:absolute;inset:0;opacity:0;transition:opacity 1.2s ease;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 16%, rgba(255,255,255,.95) 50%, transparent 51%),
+    radial-gradient(1px 1px at 28% 30%, rgba(255,255,255,.8) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 44% 10%, rgba(255,255,255,.9) 50%, transparent 51%),
+    radial-gradient(1px 1px at 61% 24%, rgba(255,255,255,.75) 50%, transparent 51%),
+    radial-gradient(2px 2px at 73% 12%, rgba(255,255,255,.95) 50%, transparent 51%),
+    radial-gradient(1px 1px at 85% 32%, rgba(255,255,255,.8) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 92% 8%, rgba(255,255,255,.9) 50%, transparent 51%),
+    radial-gradient(1px 1px at 36% 38%, rgba(255,255,255,.7) 50%, transparent 51%),
+    radial-gradient(1px 1px at 55% 42%, rgba(255,255,255,.65) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 6% 40%, rgba(255,255,255,.85) 50%, transparent 51%);
+  background-repeat:no-repeat;
+}
+body[data-sky="night"] .sky-layer{background:radial-gradient(120% 90% at 50% 0%, #0a0d16 0%, transparent 60%)}
+body[data-sky="night"] .sky-layer::before{opacity:.85;animation:skyTwinkle 3.4s ease-in-out infinite}
+@keyframes skyTwinkle{0%,100%{opacity:.55}50%{opacity:.95}}
+.sky-layer::after{content:"";position:absolute;border-radius:50%;opacity:0;transition:opacity 1.2s ease}
+body[data-sky="morning"] .sky-layer{background:linear-gradient(180deg, rgba(255,120,60,.09), transparent 55%)}
+body[data-sky="morning"] .sky-layer::after{
+  opacity:1;left:7%;bottom:11%;width:56px;height:56px;
+  background:radial-gradient(circle, #ff3b30 0%, rgba(255,59,48,.55) 45%, transparent 72%);
+}
+body[data-sky="day"] .sky-layer{background:radial-gradient(90% 60% at 50% -10%, rgba(255,214,150,.10), transparent 60%)}
+body[data-sky="evening"] .sky-layer{background:linear-gradient(180deg, rgba(255,90,40,.11), rgba(229,9,20,.06) 55%, transparent)}
+@media (prefers-reduced-motion: reduce){
+  body[data-sky="night"] .sky-layer::before{animation:none}
+}
+
+/* Header chips: weather + streak */
+.wx-chip,.streak-chip{
+  display:inline-flex;align-items:center;font-size:12px;font-weight:800;color:#ffd9d4;
+  background:rgba(255,30,30,.13);border:1px solid rgba(255,30,30,.35);
+  border-radius:999px;padding:4px 9px;white-space:nowrap;
+}
+.wx-chip[hidden],.streak-chip[hidden]{display:none}
+
+/* Sheet scrolling (the v28 place-sheet fix): the sheet body is its own
+   scroll area — momentum touch scrolling, vertical pan only, no
+   scroll chaining to the page behind. Heights use dvh so the mobile
+   URL bar can no longer clip the sheet's tail. */
+#placeSheetBody{
+  flex:1 1 auto;min-height:0;overflow-y:auto;
+  -webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;
+}
+.avatar-grid{
+  flex:1 1 auto;min-height:0;overflow-y:auto;
+  -webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;
+}
+.city-list{min-height:0}
+
+/* Secret places */
+.ps-art-lock{display:flex;align-items:center;justify-content:center;min-height:150px;background:radial-gradient(300px 150px at 50% 0%, rgba(255,30,30,.25), transparent 70%), #17171a}
+.ps-lock-emoji{font-size:64px;line-height:1}
+.card-locked .place-art{display:flex;align-items:center;justify-content:center}
+
+/* Sound box (profile) */
+.sound-box .push-btn{margin-bottom:8px}
+.sound-box .push-btn[data-on="1"]{border-color:rgba(126,226,160,.55);color:#b9f4cd}
+#feedbackBtn{margin-top:2px}
+
+/* Feedback sheet */
+.fb-types{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.fb-type{
+  flex:1 1 auto;padding:9px 10px;border-radius:12px;border:1px solid var(--line);
+  background:var(--card);color:var(--text);font:inherit;font-size:13.5px;font-weight:700;cursor:pointer;
+}
+.fb-type.sel{border-color:rgba(255,30,30,.7);background:rgba(229,9,20,.16)}
+.fb-text{
+  width:100%;box-sizing:border-box;border-radius:14px;border:1px solid var(--line);
+  background:#0c0c0e;color:var(--text);font:inherit;font-size:14.5px;
+  padding:11px 12px;margin-bottom:12px;resize:vertical;
+}
+#feedbackSheet .btn-yes{width:100%}
+.fb-contact{margin-top:12px;font-size:13px;color:var(--muted);text-align:center}
+.fb-contact a{color:var(--pink);font-weight:800;text-decoration:none}
+
+/* Confetti canvas: above everything, never intercepts taps */
+#confettiCanvas{position:fixed;inset:0;width:100%;height:100%;z-index:400;pointer-events:none}
+#confettiCanvas[hidden]{display:none}
