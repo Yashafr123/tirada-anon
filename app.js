@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "30";
+var APP_BUILD = "31";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -5450,7 +5450,7 @@ function applySoundState(){
   if (m){
     try {
       if (soundOn && musicOn && musicArmed){
-        if (!m.src) m.src = "assets/music.mp3";
+        if (!m.src) m.src = "assets/music.mp3?v=31";
         var pr = m.play(); if (pr && pr.catch) pr.catch(function(){});
       } else m.pause();
     } catch (e) {}
@@ -5482,7 +5482,7 @@ function tryAutoplayMusic(){
   var m = ensureMusic();
   if (!m){ showEnterSplash(); return; }
   try {
-    if (!m.src) m.src = "assets/music.mp3";
+    if (!m.src) m.src = "assets/music.mp3?v=31";
     var pr = m.play();
     if (pr && pr.then) pr.then(function(){ musicArmed = true; hideEnterSplash(); applyAmbienceState(); }, function(){ showEnterSplash(); });
     else { musicArmed = true; hideEnterSplash(); }
