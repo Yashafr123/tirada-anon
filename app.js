@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "25";
+var APP_BUILD = "26";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -226,15 +226,18 @@ function repaintCoreSurfaces(why){
     if (!h.cityList) bootStep("renderCityList", renderCityList);
     if (!h.avatar){ bootStep("renderMyAvatar", renderMyAvatar); repairAvatarFace(); }
   } else repairAvatarFace();
-  /* v24: a ticker rebuilt while the page was hidden parked its
-     animation (see buildTicker); restart it now, on the foreground
-     pass, so the marquee layer is created from the CURRENT text and
-     no stale strip can ghost over it. The ticker is "alive" by the
+  /* A ticker rebuilt while the page was hidden parked its animation
+     (see buildTicker); on the foreground pass rebuild it once more —
+     v26: by NODE REPLACEMENT (buildTicker), not by a class restart.
+     The v24 class toggle restarted the animation but kept the same
+     DOM node, whose compositor layer could still hold the stale
+     texture that ghosts as a second phrase; a fresh node starts a
+     fresh layer. buildTicker itself clears tickerRestartPending
+     when it runs in the foreground. The ticker is "alive" by the
      health criteria — this is about the compositor layer, not the
      content, so it runs even when nothing was dead. */
   if (why === "visible-again" && tickerRestartPending){
-    var tt3 = $("#tickerTrack");
-    if (tt3){ restartTickerRun(tt3); tickerRestartPending = false; }
+    bootStep("buildTicker", buildTicker);
   }
   /* The map is revived by the same pass (v21): dead/fallback maps are
      retried, a still-loading map is left strictly alone. Guarded
@@ -911,6 +914,20 @@ state.myAvatar = (function(){
   if (!isFinite(i)) return 0;
   return ((i % AVATARS.length) + AVATARS.length) % AVATARS.length;
 })();
+/* v26 — the avatar priority applies from the FIRST frame, not from the
+   moment the cloud profile lands. The state literal above seeds
+   avatarUrl from localStorage (the cloud bake — for Yasha a rotated
+   pre-v15 copy), so the first profile render showed the cloud photo
+   and applyRemoteProfile swapped it to the local pick seconds later:
+   a visible swap on exactly the screen the push-entry path lands on.
+   When this device holds a local photo the cloud has not confirmed
+   (localPhotoWins), the stored URL is NOT seeded — state starts
+   URL-less and every render shows the local photo until the heal
+   re-upload makes the two copies identical. The stored key itself is
+   left in place: cloudSyncNow echoes it back while the local photo
+   wins, so a sync can never wipe the cloud copy's URL from the
+   profile row before the heal lands. */
+if (localPhotoWins()) state.avatarUrl = null;
 function places(){ return PLACES_BY_CITY[state.city.id]; }
 function $(s){ return document.querySelector(s); }
 function $$(s){ return Array.prototype.slice.call(document.querySelectorAll(s)); }
@@ -1288,8 +1305,14 @@ $("#placeSheet").addEventListener("click", function(e){ if (e.target === this) c
 
 /* ================= My avatar: emoji face or own photo ================= */
 function currentAvatarHtml(){
-  if (state.avatarUrl) return '<img class="avphoto" src="' + state.avatarUrl + '" alt="' + t("Аватарка призрака") + '">';
-  if (state.avatarPhoto) return '<img class="avphoto" src="' + state.avatarPhoto + '" alt="' + t("Аватарка призрака") + '">';
+  /* v26: the source comes from avatarDisplaySrc() — the single
+     priority (local photo while unconfirmed, cloud URL once synced
+     or when there is no local photo). The old url-first order here
+     was the visible half of the push-entry swap: the boot-seeded
+     cloud URL rendered first, the local pick replaced it seconds
+     later when the profile landed. */
+  var src = avatarDisplaySrc();
+  if (src) return '<img class="avphoto" src="' + src + '" alt="' + t("Аватарка призрака") + '">';
   return avatarFace(state.myAvatar);
 }
 
@@ -2195,32 +2218,33 @@ function buildTicker(){
      emptied the items, one honest line about the current city remains. */
   if (!items.length) items.push(tf("📍 <i>{city}</i>: загляни на экран «Места» — там весь движ города", { city: cityName(state.city) }));
   var half = items.map(function(t){ return '<span class="tick-item">' + t + '</span>'; }).join("");
-  var track = $("#tickerTrack");
-  if (!track) return;
-  /* Atomic rebuild (v15 ticker fix): the old code swapped innerHTML under a
-     running transform animation, and on several WebViews the compositor kept
-     painting the previous text over the new one — two messages ghosting in
-     one strip. Swap BOTH identical halves in a single write, force a
-     reflow, restart. One strip, one track, and the -50% keyframe always
-     spans exactly one half — a seamless loop.
-     v20: the restart is a CLASS toggle, not inline style. Setting
-     style.animation="none" and back to "" inside one task left several
-     WebViews with the compositor layer from the stopped state — the
-     strip stayed visibly empty until a tab switch forced a fresh layer
-     (the v19 live-check symptom). Removing .tick-run drops the animated
-     layer entirely; re-adding it after the reflow starts the loop on a
-     layer created from the CURRENT content. */
+  var oldTrack = $("#tickerTrack");
+  if (!oldTrack || !oldTrack.parentNode) return;
+  /* v26 — REPLACE the track node on every rebuild; never rewrite the
+     contents of the animated element. History: v15 swapped innerHTML
+     under the running transform animation and the compositor kept
+     painting the previous text over the new one; v20/v24 restarted
+     the animation with a .tick-run class toggle (remove → reflow →
+     add), which creates the animation afresh but keeps the SAME DOM
+     node — and on Android Chrome the node's compositor layer, above
+     all when the page was frozen/backgrounded at rebuild time (the
+     push-entry path), retained the OLD layer texture: the previous
+     phrase ghosting through the new strip, confirmed on the user's
+     phone on v25 with a fully clean boot. A brand-new node has no
+     layer history at all: the compositor must allocate a fresh layer
+     from the CURRENT text, so there is no stale texture left to show
+     through. The structure is unchanged — one track, two identical
+     halves, the -50% keyframe spanning exactly one half.
+     The v24 parking rule is kept: while the page is hidden the new
+     node is left WITHOUT .tick-run (no layer is started in the
+     background) and tickerRestartPending tells the foreground-return
+     pass to rebuild once more — again by node replacement. */
+  var track = document.createElement("div");
+  track.className = "ticker-track";
+  track.id = "tickerTrack";
   track.innerHTML = '<span class="tick-half">' + half + '</span><span class="tick-half">' + half + "</span>";
-  /* v24: never (re)start the marquee layer while the page is hidden.
-     A rebuild that lands in a backgrounded/frozen page (the push-entry
-     path: the app unfreezes with async rebuilds already queued) had
-     its class toggle coalesced by the compositor, which kept painting
-     the PREVIOUS strip's text over the new one — two fragments
-     ghosting in one line, the v15 symptom back on the notification
-     path. While hidden, park the animation and let the
-     foreground-return pass restart it on a fresh layer. */
+  oldTrack.parentNode.replaceChild(track, oldTrack);
   if (document.hidden){
-    track.classList.remove("tick-run");
     tickerRestartPending = true;
   } else {
     restartTickerRun(track);
@@ -2317,7 +2341,7 @@ function renderAvatarGrid(){
     return '<button class="avatar-cell' + sel + '" data-avatar="' + i + '">' + avatarFace(i) + "</button>";
   }).join("");
   if (hasPhoto)
-    html += '<button class="avatar-cell selected" data-avatar="photo"><img class="avphoto" src="' + (state.avatarUrl || state.avatarPhoto) + '" alt="' + t("Моё фото") + '"></button>';
+    html += '<button class="avatar-cell selected" data-avatar="photo"><img class="avphoto" src="' + avatarDisplaySrc() + '" alt="' + t("Моё фото") + '"></button>';
   grid.innerHTML = html;
   $$("#avatarGrid [data-avatar]").forEach(function(btn){
     btn.addEventListener("click", function(){
@@ -2443,7 +2467,8 @@ $("#avatarFile").addEventListener("change", function(){
    can never roll the rotation back. Works for a cloud-only photo too:
    it is downloaded first, then rotated like a local one. */
 $("#avatarRotate").addEventListener("click", function(){
-  var src = state.avatarPhoto || state.avatarUrl;
+  /* Rotate the photo the user actually SEES (v26 priority). */
+  var src = avatarDisplaySrc();
   if (!src) return;
   var img = new Image();
   if (src.indexOf("data:") !== 0 && src.indexOf("blob:") !== 0) img.crossOrigin = "anonymous";
@@ -3228,7 +3253,11 @@ function cloudSyncNow(){
     id: cloudUser.id,
     name: state.nick || "Призрак",
     avatar: AVATARS[state.myAvatar % AVATARS.length].e,
-    avatar_url: state.avatarUrl || null,
+    /* While the local photo wins (v26) state.avatarUrl is null, but
+       the row must keep pointing at the cloud copy until the heal
+       replaces it — echo the last stored URL instead of nulling the
+       field the heal is about to repair. */
+    avatar_url: state.avatarUrl || (localPhotoWins() ? lsGet("tirada_avatar_url", null) : null),
     mode: state.mode,
     city: state.city.id,
     stats: cloudStatsPayload(),
@@ -3272,6 +3301,23 @@ function applyCitySilent(id){
     map.jumpTo({ center: [state.city.lng, state.city.lat], zoom: 13 });
   }
 }
+/* v26 — THE avatar priority, one predicate for every seed and render
+   (boot state, currentAvatarHtml, the avatar grid, applyRemoteProfile):
+   this device's local photo wins exactly while the cloud has not
+   confirmed it — i.e. its fingerprint differs from the one the last
+   successful upload stamped into tirada_avatar_synced. Once synced,
+   the local photo and the cloud copy are the same image and the cloud
+   URL is the display source again (it is also the only source on
+   devices that never picked a photo locally). */
+function localPhotoWins(){
+  return typeof state.avatarPhoto === "string" && !!state.avatarPhoto &&
+    lsGet("tirada_avatar_synced", "") !== avatarPhotoHash(state.avatarPhoto);
+}
+/* The photo src the UI must show right now, per the priority above. */
+function avatarDisplaySrc(){
+  if (localPhotoWins()) return state.avatarPhoto;
+  return state.avatarUrl || state.avatarPhoto || null;
+}
 /* Stable-enough fingerprint of the local photo dataURL: length plus a
    sampled FNV hash. Only ever compared for equality on this device —
    it answers "is THIS photo the one the cloud last confirmed?" */
@@ -3311,10 +3357,19 @@ function applyRemoteProfile(row){
      a push" report (2026-11-23). If the local photo was never
      confirmed synced to the cloud, it wins: keep showing it and
      re-upload it once (heal), so from then on cloud == local and the
-     swap can never be visible again. */
-  if (state.avatarPhoto && lsGet("tirada_avatar_synced", "") !== avatarPhotoHash(state.avatarPhoto)){
+     swap can never be visible again.
+     v26 completes the rule: the priority now holds from the first
+     frame (the boot seed is suppressed by the same predicate — see
+     the state sanitising block), so there is no early cloud render
+     left for this branch to swap away from. */
+  if (localPhotoWins()){
     state.avatarUrl = null;
-    lsSet("tirada_avatar_url", null);
+    /* The stored URL key is deliberately NOT cleared (v26): it is the
+       last cloud URL this device knew, and cloudSyncNow echoes it back
+       while the local photo wins, so a sync firing before the heal
+       lands cannot wipe the cloud copy's URL from the profile row.
+       The boot-time seed suppression makes the stale key harmless —
+       it is never displayed while the local photo wins. */
     healAvatarToCloud();
   } else {
     state.avatarUrl = row.avatar_url || null;
