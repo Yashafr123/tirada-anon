@@ -37,11 +37,11 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          echo "$KEYSTORE_B64" | base64 -d > /tmp/tirada.keystore
+          openssl enc -d -aes-256-cbc -pbkdf2 -in $GITHUB_WORKSPACE/app-flutter/keystore.enc -out /tmp/tirada.keystore -pass env:KEYSTORE_PASSWORD
           echo "keystore md5: $(md5sum /tmp/tirada.keystore | cut -d' ' -f1)"
           echo "secret lengths: store=${#KEYSTORE_PASSWORD} key=${#KEY_PASSWORD} alias=${#KEY_ALIAS} alias=[$KEY_ALIAS]"
-          keytool -list -keystore /tmp/tirada.keystore -storepass "$KEYSTORE_PASSWORD" 2>&1 | head -5 || true
-          keytool -importkeystore -srckeystore /tmp/tirada.keystore -srcstorepass "$KEYSTORE_PASSWORD" -srckeypass "$KEY_PASSWORD" -srcalias "$KEY_ALIAS" -destkeystore /tmp/verify.p12 -deststoretype PKCS12 -deststorepass "$KEYSTORE_PASSWORD" -destkeypass "$KEY_PASSWORD" 2>&1 | tail -2 && echo KEY_READ_OK || echo KEY_READ_FAILED
+          keytool -list -keystore /tmp/tirada.keystore -storepass "$KEYSTORE_PASSWORD" 2>&1 | head -5
+          keytool -importkeystore -srckeystore /tmp/tirada.keystore -srcstorepass "$KEYSTORE_PASSWORD" -srckeypass "$KEY_PASSWORD" -srcalias "$KEY_ALIAS" -destkeystore /tmp/verify.p12 -deststoretype PKCS12 -deststorepass "$KEYSTORE_PASSWORD" -destkeypass "$KEY_PASSWORD" >/dev/null 2>&1 && echo KEY_READ_OK || { echo KEY_READ_FAILED; exit 1; }
           python3 - << 'PY'
           import glob
           # --- build.gradle.kts: applicationId + version + release signing ---
