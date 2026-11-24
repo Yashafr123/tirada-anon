@@ -986,6 +986,14 @@ body::before{
 .ghost-round.me.mode-ghost{opacity:.55;border-style:dashed}
 .ghost-round.me.mode-dnd{border-color:var(--warm);box-shadow:0 0 16px rgba(255,176,58,.6),0 6px 16px rgba(0,0,0,.55)}
 .ghost-round.me.mode-offline{filter:grayscale(1);opacity:.45;box-shadow:0 4px 10px rgba(0,0,0,.4)}
+/* v35: ghosts ease in instead of flashing — the round scales up softly,
+   and a photo avatar stays invisible until the image has actually
+   loaded, then fades in (no empty-circle flash). Scale only: the
+   mode-ghost/mode-offline opacities above must survive the animation. */
+.ghost-round{animation:ghostIn .45s ease both}
+@keyframes ghostIn{from{transform:scale(.5)}to{transform:scale(1)}}
+.ghost-round .avphoto{opacity:0;transition:opacity .35s ease}
+.ghost-round .avphoto.av-in{opacity:1}
 /* friend ghost on the map: photo or ghost face on a dark disc, red rim */
 .ghost-round.friend{
   width:46px;height:46px;background:#17171b;

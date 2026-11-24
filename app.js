@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "34";
+var APP_BUILD = "35";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -1367,7 +1367,7 @@ function currentAvatarHtml(){
      cloud URL rendered first, the local pick replaced it seconds
      later when the profile landed. */
   var src = avatarDisplaySrc();
-  if (src) return '<img class="avphoto" src="' + src + '" alt="' + t("Аватарка призрака") + '">';
+  if (src) return '<img class="avphoto" src="' + src + '" alt="' + t("Аватарка призрака") + '" onload="this.classList.add(\'av-in\')">';
   return avatarFace(state.myAvatar);
 }
 
@@ -4076,7 +4076,7 @@ function escHtml(s){
   });
 }
 function friendAvatarHtml(p){
-  if (p && p.avatar_url) return '<img class="avphoto" src="' + escHtml(p.avatar_url) + '" alt="">';
+  if (p && p.avatar_url) return '<img class="avphoto" src="' + escHtml(p.avatar_url) + '" alt="" onload="this.classList.add(\'av-in\')">';
   var idx = 0;
   if (p && p.avatar){
     for (var i = 0; i < AVATARS.length; i++)
@@ -4831,8 +4831,28 @@ function urlB64ToUint8(b64){
   return out;
 }
 if (pushSupported()){
+  /* v35: never sit on a stale build. Ask the browser to re-check sw.js
+     on every boot, and when a NEW worker takes control mid-session,
+     reload once so the fresh code applies immediately instead of on
+     the next launch. Guards: no reload on the very first install
+     (no previous controller), and at most one reload per build
+     (sessionStorage), so a claim loop can never spin. */
+  var swHadController = !!navigator.serviceWorker.controller;
+  var swReloadDone = false;
+  if (navigator.serviceWorker.addEventListener){
+    navigator.serviceWorker.addEventListener("controllerchange", function(){
+      if (!swHadController || swReloadDone) return;
+      try {
+        if (sessionStorage.getItem("tirada_sw_reloaded") === APP_BUILD) return;
+        sessionStorage.setItem("tirada_sw_reloaded", APP_BUILD);
+      } catch (e) {}
+      swReloadDone = true;
+      location.reload();
+    });
+  }
   navigator.serviceWorker.register("sw.js").then(function(reg){
     pushReg = reg; refreshPushUI();
+    if (reg.update) { try { reg.update(); } catch (e) {} }
   }, function(err){ console.warn("TiradA SW:", err && err.message); });
 }
 function refreshPushUI(){
