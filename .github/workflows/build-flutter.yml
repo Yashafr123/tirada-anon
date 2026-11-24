@@ -77,12 +77,14 @@ jobs:
           p = 'android/app/src/main/AndroidManifest.xml'
           s = open(p).read()
           s = s.replace('android:label="tirada_anon"', 'android:label="TiradA anon"')
-          perms = ('<uses-permission android:name="android.permission.INTERNET" />\n    '
-                   '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    '
-                   '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    '
-                   '<uses-permission android:name="android.permission.CAMERA" />\n    ')
-                   '<uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />\n    '
-                   '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    '
+          perms = '\n    '.join([
+              '<uses-permission android:name="android.permission.INTERNET" />',
+              '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />',
+              '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />',
+              '<uses-permission android:name="android.permission.CAMERA" />',
+              '<uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />',
+              '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+          ]) + '\n    '
           s = s.replace('<application', perms + '<application', 1)
           open(p, 'w').write(s)
           # --- launch background: plain black, no white flash ---
