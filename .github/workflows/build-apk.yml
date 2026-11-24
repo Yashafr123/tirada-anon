@@ -30,9 +30,25 @@ jobs:
         working-directory: native-app
         run: |
           npm install
-          npm install --save-dev @capacitor/assets
           npx cap add android
-          npx @capacitor/assets generate --android || true
+
+      - name: App icon (Yasha's emblem) and plain black splash
+        working-directory: native-app/android/app/src/main/res
+        run: |
+          ICON=$GITHUB_WORKSPACE/native-app/assets/icon.png
+          convert "$ICON" -resize 48x48   mipmap-mdpi/ic_launcher.png
+          convert "$ICON" -resize 72x72   mipmap-hdpi/ic_launcher.png
+          convert "$ICON" -resize 96x96   mipmap-xhdpi/ic_launcher.png
+          convert "$ICON" -resize 144x144 mipmap-xxhdpi/ic_launcher.png
+          convert "$ICON" -resize 192x192 mipmap-xxxhdpi/ic_launcher.png
+          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp mipmap-$d/ic_launcher.png mipmap-$d/ic_launcher_round.png
+          done
+          rm -f mipmap-anydpi-v26/ic_launcher.xml mipmap-anydpi-v26/ic_launcher_round.xml drawable-v24/ic_launcher_foreground.xml
+          convert -size 480x800 xc:#050505 drawable/splash.png
+          for d in drawable-port-*; do convert -size 480x800 xc:#050505 $d/splash.png; done
+          for d in drawable-land-*; do convert -size 800x480 xc:#050505 $d/splash.png; done
+          echo icons and splash set
 
       - name: Permissions + version (location for the map, camera for photo tasks)
         working-directory: native-app
