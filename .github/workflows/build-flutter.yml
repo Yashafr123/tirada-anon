@@ -33,8 +33,15 @@ jobs:
         working-directory: work
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           echo "$KEYSTORE_B64" | base64 -d > /tmp/tirada.keystore
+          echo "keystore md5: $(md5sum /tmp/tirada.keystore | cut -d' ' -f1)"
+          echo "secret lengths: store=${#KEYSTORE_PASSWORD} key=${#KEY_PASSWORD} alias=${#KEY_ALIAS} alias=[$KEY_ALIAS]"
+          keytool -list -keystore /tmp/tirada.keystore -storepass "$KEYSTORE_PASSWORD" 2>&1 | head -5 || true
+          keytool -importkeystore -srckeystore /tmp/tirada.keystore -srcstorepass "$KEYSTORE_PASSWORD" -srckeypass "$KEY_PASSWORD" -srcalias "$KEY_ALIAS" -destkeystore /tmp/verify.p12 -deststoretype PKCS12 -deststorepass "$KEYSTORE_PASSWORD" -destkeypass "$KEY_PASSWORD" 2>&1 | tail -2 && echo KEY_READ_OK || echo KEY_READ_FAILED
           python3 - << 'PY'
           import glob
           # --- build.gradle.kts: applicationId + version + release signing ---
