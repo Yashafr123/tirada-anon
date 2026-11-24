@@ -1,7 +1,7 @@
 name: tirada_anon
 description: TiradA anon — ghost city quest. Native app.
 publish_to: 'none'
-version: 2.0.3+7
+version: 2.0.4+8
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -12,6 +12,7 @@ dependencies:
   supabase_flutter: ^2.8.4
   maplibre_gl: ^0.27.1
   shared_preferences: ^2.3.3
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_launcher_icons: ^0.14.3
