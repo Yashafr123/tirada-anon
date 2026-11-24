@@ -51,8 +51,8 @@ jobs:
           p = 'android/app/build.gradle.kts'
           s = open(p).read()
           s = s.replace('applicationId = "app.tirada.tirada_anon"', 'applicationId = "app.tirada.anon"')
-          s = s.replace('versionCode = 1', 'versionCode = 5')
-          s = s.replace('versionName = "1.0"', 'versionName = "2.0.1"')
+          s = s.replace('versionCode = 1', 'versionCode = 6')
+          s = s.replace('versionName = "1.0"', 'versionName = "2.0.2"')
           s += '''
 
           android {
