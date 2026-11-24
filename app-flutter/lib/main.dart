@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.6.
+// TiradA anon — native app (Flutter), v2.0.8.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -18,6 +18,7 @@ import 'package:flutter/services.dart'
     show rootBundle, HapticFeedback;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
@@ -242,6 +243,93 @@ String? get myUidOrNull => supa.auth.currentUser?.id;
 
 /* Last real location seen by the map — shared with the «Я в деле» sheet. */
 final ValueNotifier<LatLng?> myLocationNotifier = ValueNotifier<LatLng?>(null);
+
+/* Real geolocation (v2.0.8). Before this, the only position source was
+   MapLibre's requestMyLocationLatLng() — which silently returns null
+   forever when the app never asked for the location permission, so the
+   owner was never prompted and never appeared on the map. This service
+   owns the whole flow: permission request → GPS-service check → one fix
+   → a live position stream that keeps myLocationNotifier fed for every
+   consumer (presence writer, distances, "near me" sort, map centering,
+   the native puck). Every step is guarded: location must never crash
+   the app, for guests either. */
+class LocationService {
+  static bool _starting = false;
+  static bool _deniedHintShown = false;
+  static bool _gpsOffHintShown = false;
+  static StreamSubscription<Position>? _sub;
+
+  /* Idempotent: safe to call from HomePage init and again when the Map
+     tab is first opened. Hints are shown at most once per session. */
+  static Future<void> ensureLocation([BuildContext? context]) async {
+    try {
+      var status = await Permission.location.status;
+      if (status.isDenied) {
+        status = await Permission.location.request();
+      }
+      if (status.isPermanentlyDenied) {
+        if (!_deniedHintShown && context != null && context.mounted) {
+          _deniedHintShown = true;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                'Геолокация выключена для приложения — без неё карта тебя не видит',
+              ),
+              action: SnackBarAction(
+                label: 'Настройки',
+                onPressed: () {
+                  openAppSettings();
+                },
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      if (!status.isGranted && !status.isLimited) {
+        return; // soft-denied: the system prompt already had its say
+      }
+      final serviceOn = await Geolocator.isLocationServiceEnabled();
+      if (!serviceOn) {
+        if (!_gpsOffHintShown && context != null && context.mounted) {
+          _gpsOffHintShown = true;
+          snack(
+            context,
+            'Включи геолокацию на телефоне — тогда карта покажет, где ты',
+          );
+        }
+        return;
+      }
+      if (_sub != null || _starting) return; // stream already (being) started
+      _starting = true;
+      try {
+        final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 10),
+          ),
+        );
+        myLocationNotifier.value = LatLng(pos.latitude, pos.longitude);
+      } catch (_) {}
+      try {
+        _sub = Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            distanceFilter: 25,
+          ),
+        ).listen(
+          (pos) {
+            myLocationNotifier.value = LatLng(pos.latitude, pos.longitude);
+          },
+          onError: (_) {},
+        );
+      } catch (_) {}
+      _starting = false;
+    } catch (_) {
+      _starting = false;
+    }
+  }
+}
 
 Future<void> openLink(String url) async {
   try {
@@ -2415,6 +2503,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _tab = 0; // 0 map · 1 places · 2 route · 3 profile
+  bool _mapTabOpened = false;
   List<Place> _places = [];
   List<City> _cities = [];
   City? _city;
@@ -2442,6 +2531,10 @@ class _HomePageState extends State<HomePage> {
     StepsTracker.start();
     PushService.init();
     PushService.foreground.addListener(_onForegroundPush);
+    // v2.0.8: ask for location up front and start the live GPS feed.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) LocationService.ensureLocation(context);
+    });
     _tickerTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       if (mounted) setState(() => _tickerIdx++);
     });
@@ -2992,7 +3085,15 @@ class _HomePageState extends State<HomePage> {
   Widget _navSlot(int idx, NavGlyph glyph, String label) {
     final active = _tab == idx;
     return Pressable(
-      onTap: () => setState(() => _tab = idx),
+      onTap: () {
+        setState(() => _tab = idx);
+        // First time the Map tab is opened: re-run the location flow
+        // (the permission may have been granted in Settings meanwhile).
+        if (idx == 0 && !_mapTabOpened) {
+          _mapTabOpened = true;
+          LocationService.ensureLocation(context);
+        }
+      },
       child: AnimatedContainer(
         duration: T.dMed,
         curve: T.cOut,
@@ -4339,9 +4440,13 @@ class _MapTabState extends State<MapTab> {
   String? _style;
   bool _styleReady = false;
   bool _centeredOnUser = false;
-  final Map<String, Place> _circlePlace = {};
+  final Map<String, Place> _symbolPlace = {};
   final Map<String, Friend> _symbolFriend = {};
+  final List<Symbol> _placeSymbols = [];
+  final List<Symbol> _friendSymbols = [];
   final Map<String, Uint8List> _markerCache = {};
+  final Map<String, Uint8List> _pinCache = {};
+  bool _pinsRegistered = false;
   Timer? _timer;
 
   @override
@@ -4372,23 +4477,100 @@ class _MapTabState extends State<MapTab> {
     }
   }
 
+  /* Place pins (v2.0.8): neutral gray discs with a type emblem, per the
+     owner's ask («серые точки, а на них эмблемы: бокал, чашка кофе,
+     дерево»). Hot places (vibe >= 70) keep the radar feel via a brand-red
+     halo ring around the same gray disc. One bitmap per (type, hot) is
+     painted once and registered with the map; places are then cheap
+     symbols. Only the selected city's places are drawn (widget.places
+     is already city-filtered), same as the old circles. */
+  Future<Uint8List> _placePin(String type, {required bool hot}) async {
+    final cacheKey = hot ? '$type|hot' : type;
+    final cached = _pinCache[cacheKey];
+    if (cached != null) return cached;
+    const double size = 120;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, size, size));
+    final center = const Offset(size / 2, size / 2);
+    if (hot) {
+      canvas.drawCircle(
+        center,
+        57,
+        Paint()..color = T.fire.withOpacity(0.16),
+      );
+      canvas.drawCircle(
+        center,
+        51,
+        Paint()
+          ..color = T.fire
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 6,
+      );
+    }
+    canvas.drawCircle(
+      center,
+      42,
+      Paint()..color = const Color(0xFF9AA1A9),
+    );
+    canvas.drawCircle(
+      center,
+      42,
+      Paint()
+        ..color = const Color(0xFF3A3F45)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 5,
+    );
+    final tp = TextPainter(
+      text: TextSpan(
+        text: kPinEmoji[type] ?? kPinEmoji['other'],
+        style: const TextStyle(fontSize: 50),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+    final pic = recorder.endRecording();
+    final img = await pic.toImage(size.toInt(), size.toInt());
+    final data = await img.toByteData(format: ui.ImageByteFormat.png);
+    final bytes = data!.buffer.asUint8List();
+    _pinCache[cacheKey] = bytes;
+    return bytes;
+  }
+
+  Future<void> _ensurePinImages() async {
+    final ctl = _ctl;
+    if (ctl == null || _pinsRegistered) return;
+    _pinsRegistered = true;
+    for (final type in kPinEmoji.keys) {
+      await ctl.addImage('pin-$type', await _placePin(type, hot: false));
+      await ctl.addImage('pin-$type-hot', await _placePin(type, hot: true));
+    }
+  }
+
   Future<void> _drawPlaces() async {
     final ctl = _ctl;
     if (ctl == null || !_styleReady) return;
-    await ctl.clearCircles();
-    _circlePlace.clear();
+    await _ensurePinImages();
+    // Remove only our own symbols — clearSymbols() would also wipe the
+    // friend avatars that _refreshFriends manages separately.
+    for (final s in _placeSymbols) {
+      try {
+        await ctl.removeSymbol(s);
+      } catch (_) {}
+    }
+    _placeSymbols.clear();
+    _symbolPlace.clear();
     for (final p in widget.places) {
-      final c = await ctl.addCircle(
-        CircleOptions(
+      final hot = vibeOf(p) >= 70;
+      final type = kPinEmoji.containsKey(p.type) ? p.type : 'other';
+      final sym = await ctl.addSymbol(
+        SymbolOptions(
           geometry: LatLng(p.lat, p.lng),
-          circleRadius: 7,
-          circleColor: '#${typeColor(p.type).value.toRadixString(16).padLeft(8, '0').substring(2)}',
-          circleStrokeWidth: 2,
-          circleStrokeColor: '#0B0B0D',
-          circleOpacity: 0.95,
+          iconImage: hot ? 'pin-$type-hot' : 'pin-$type',
+          iconSize: 0.45,
         ),
       );
-      _circlePlace[c.id] = p;
+      _symbolPlace[sym.id] = p;
+      _placeSymbols.add(sym);
     }
   }
 
@@ -4496,7 +4678,14 @@ class _MapTabState extends State<MapTab> {
           (l['lng'] as num).toDouble(),
         );
       }
-      await ctl.clearSymbols();
+      // Remove only the previous friend markers — clearSymbols() would
+      // also erase the place pins drawn by _drawPlaces (v2.0.8).
+      for (final s in _friendSymbols) {
+        try {
+          await ctl.removeSymbol(s);
+        } catch (_) {}
+      }
+      _friendSymbols.clear();
       _symbolFriend.clear();
       final added = <Symbol>[];
       for (final p in profs as List) {
@@ -4528,7 +4717,10 @@ class _MapTabState extends State<MapTab> {
         _symbolFriend[sym.id] = friend;
         added.add(sym);
       }
-      if (added.isNotEmpty) _fadeInSymbols(added);
+      if (added.isNotEmpty) {
+        _friendSymbols.addAll(added);
+        _fadeInSymbols(added);
+      }
     } catch (_) {}
   }
 
@@ -4571,8 +4763,9 @@ class _MapTabState extends State<MapTab> {
 
   void _onMapCreated(MapLibreMapController ctl) {
     _ctl = ctl;
-    ctl.onCircleTapped.add((c) {
-      final p = _circlePlace[c.id];
+    _pinsRegistered = false; // new controller → pin images must re-register
+    ctl.onSymbolTapped.add((s) {
+      final p = _symbolPlace[s.id];
       if (p != null && mounted) {
         showPlaceSheet(
           context,
@@ -4584,9 +4777,8 @@ class _MapTabState extends State<MapTab> {
           onCheckIn: widget.onCheckIn,
           onPhotoUploaded: widget.onPhotoUploaded,
         );
+        return;
       }
-    });
-    ctl.onSymbolTapped.add((s) {
       final f = _symbolFriend[s.id];
       if (f != null && mounted) _showFriend(f);
     });
@@ -4716,6 +4908,15 @@ class _MapTabState extends State<MapTab> {
 }
 
 /* ---------------- places tab ---------------- */
+
+/* Map pin emblems (v2.0.8): gray discs carry one glyph per place type.
+   Separate from kTypeEmoji (list/card glyphs) — the pin set follows the
+   owner's exact picks: бокал 🍷, чашка кофе ☕, дерево 🌳… */
+const kPinEmoji = <String, String>{
+  'restaurant': '🍽️', 'cafe': '☕', 'bar': '🍷', 'park': '🌳',
+  'beach': '🏖️', 'culture': '🎭', 'sport': '⚽', 'club': '🎵',
+  'view': '🌆', 'market': '🛍️', 'other': '📍',
+};
 
 const kTypeNames = <String, String>{
   'park': 'Парки', 'cafe': 'Кафе', 'bar': 'Бары', 'restaurant': 'Рестораны',
@@ -7707,7 +7908,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.7',
+            'TiradA anon · 2.0.8',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
