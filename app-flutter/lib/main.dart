@@ -7707,7 +7707,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.6',
+            'TiradA anon · 2.0.7',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
