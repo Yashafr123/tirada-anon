@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "38";
+var APP_BUILD = "39";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -4830,7 +4830,9 @@ function urlB64ToUint8(b64){
   for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
 }
-if (pushSupported()){
+if (pushSupported() && !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())){
+  /* v39: inside the native (Capacitor) app there is no service worker —
+     assets are local and pushes will arrive via FCM, not Web Push. */
   /* v35: never sit on a stale build. Ask the browser to re-check sw.js
      on every boot, and when a NEW worker takes control mid-session,
      reload once so the fresh code applies immediately instead of on
