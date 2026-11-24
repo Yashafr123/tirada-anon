@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "280827419915",
+    "project_id": "tirada-anon",
+    "storage_bucket": "tirada-anon.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:280827419915:android:e66a658e45edc3a47d560e",
+        "android_client_info": {
+          "package_name": "app.tirada.anon"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC5WNnF-vyhKqhowDi2s0ZfHOBEWf4ZmfM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
