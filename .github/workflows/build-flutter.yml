@@ -52,8 +52,8 @@ jobs:
           p = 'android/app/build.gradle.kts'
           s = open(p).read()
           s = s.replace('applicationId = "app.tirada.tirada_anon"', 'applicationId = "app.tirada.anon"')
-          s = s.replace('versionCode = 1', 'versionCode = 9')
-          s = s.replace('versionName = "1.0"', 'versionName = "2.0.5"')
+          s = s.replace('versionCode = 1', 'versionCode = 10')
+          s = s.replace('versionName = "1.0"', 'versionName = "2.0.6"')
           s += '''
 
           android {
@@ -81,6 +81,8 @@ jobs:
                    '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    '
                    '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    '
                    '<uses-permission android:name="android.permission.CAMERA" />\n    ')
+                   '<uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />\n    '
+                   '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    '
           s = s.replace('<application', perms + '<application', 1)
           open(p, 'w').write(s)
           # --- launch background: plain black, no white flash ---
@@ -90,6 +92,52 @@ jobs:
                   '    <item android:drawable="@android:color/black" />\n'
                   '</layer-list>\n')
           print('patched')
+          PY
+
+      - name: Wire Firebase (google-services.json + Gradle plugin)
+        working-directory: work
+        run: |
+          cp $GITHUB_WORKSPACE/app-flutter/google-services.json android/app/google-services.json
+          ls -la android/app/google-services.json
+          python3 - << 'PY'
+          import os, sys
+
+          def patch_plugins(path, insert_line, marker):
+              if not os.path.exists(path):
+                  return False
+              s = open(path).read()
+              if marker in s:
+                  print(path + ': google-services plugin already present')
+                  return True
+              idx = s.find('plugins {')
+              if idx < 0:
+                  return False
+              nl = s.find('\n', idx)
+              s = s[:nl + 1] + insert_line + '\n' + s[nl + 1:]
+              open(path, 'w').write(s)
+              print(path + ': plugin inserted')
+              return True
+
+          ok_settings = False
+          for cand, line in [
+              ('android/settings.gradle.kts', '    id("com.google.gms.google-services") version "4.4.2" apply false'),
+              ('android/settings.gradle', "    id 'com.google.gms.google-services' version '4.4.2' apply false"),
+          ]:
+              if os.path.exists(cand):
+                  ok_settings = patch_plugins(cand, line, 'com.google.gms.google-services')
+                  break
+          ok_app = False
+          for cand, line in [
+              ('android/app/build.gradle.kts', '    id("com.google.gms.google-services")'),
+              ('android/app/build.gradle', "    id 'com.google.gms.google-services'"),
+          ]:
+              if os.path.exists(cand):
+                  ok_app = patch_plugins(cand, line, 'com.google.gms.google-services')
+                  break
+          if not (ok_settings and ok_app):
+              print('ERROR: could not patch google-services plugin into gradle files')
+              sys.exit(1)
+          print('google-services gradle wiring OK')
           PY
 
       - name: Build the signed release APK
