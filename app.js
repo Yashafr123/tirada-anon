@@ -78,7 +78,7 @@ applyLang();
    "tirada_boot_errors", rendered readably by the «Диагностика
    запуска» block in the About sheet, so the next failure is readable
    from a screenshot instead of a DevTools session nobody can open. */
-var APP_BUILD = "31";
+var APP_BUILD = "33";
 function tracePush(kind, msg){
   try { if (typeof window.__tiradaTrace === "function"){ window.__tiradaTrace(kind, msg); return; } } catch(e){}
   try {
@@ -5426,12 +5426,12 @@ function renderStreakChip(){
   if (n > 0){ el.textContent = "🔥 " + n; el.title = t("Стрик") + ": " + n; }
 }
 
-/* ---- Sound: background music loop plus synthesized ambience.
-   v30: Jarvis's own track at FULL volume (Yasha: another track, loud,
-   already playing on entry). Browsers forbid audible autoplay before
-   a gesture, so boot TRIES to play at once; when refused, an entry
-   splash makes the very first tap start the music. Preferences
-   persist; the master switch silences EVERYTHING. ---- */
+/* ---- Sound: synthesized ambience only.
+   v33: background music REMOVED entirely (Yasha's decision,
+   2026-11-24). What remains is the ambience: wind in parks, a quiet
+   crowd hum in cafes, rain when it rains — under the one master
+   switch. The entry splash existed only to start the music, so it
+   never shows now. ---- */
 var soundOn = lsGet("tirada_sound_on", true) === true;
 var musicOn = lsGet("tirada_music_on", true) === true;
 var musicAudio = null, musicArmed = false;
@@ -5446,15 +5446,8 @@ function ensureMusic(){
   return musicAudio;
 }
 function applySoundState(){
-  var m = ensureMusic();
-  if (m){
-    try {
-      if (soundOn && musicOn && musicArmed){
-        if (!m.src) m.src = "assets/music.mp3?v=31";
-        var pr = m.play(); if (pr && pr.catch) pr.catch(function(){});
-      } else m.pause();
-    } catch (e) {}
-  }
+  /* v33: no music element anymore — the master switch governs
+     the ambience only. */
   applyAmbienceState();
 }
 function armSoundOnFirstGesture(){
@@ -5478,15 +5471,9 @@ function showEnterSplash(){
 function enterWithSound(){ musicArmed = true; hideEnterSplash(); applySoundState(); }
 function enterSilent(){ soundOn = false; renderSoundBox(); hideEnterSplash(); applySoundState(); }
 function tryAutoplayMusic(){
-  if (!soundOn || !musicOn){ hideEnterSplash(); return; }
-  var m = ensureMusic();
-  if (!m){ showEnterSplash(); return; }
-  try {
-    if (!m.src) m.src = "assets/music.mp3?v=31";
-    var pr = m.play();
-    if (pr && pr.then) pr.then(function(){ musicArmed = true; hideEnterSplash(); applyAmbienceState(); }, function(){ showEnterSplash(); });
-    else { musicArmed = true; hideEnterSplash(); }
-  } catch (e) { showEnterSplash(); }
+  /* v33: kept under its old name because boot calls it — it no
+     longer plays anything; the music entry splash never shows. */
+  hideEnterSplash();
 }
 function renderSoundBox(){
   var s1 = $("#sndToggle"), s2 = $("#musicToggle");
