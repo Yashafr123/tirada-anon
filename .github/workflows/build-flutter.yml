@@ -34,17 +34,8 @@ jobs:
         working-directory: work
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
-          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           echo "$KEYSTORE_B64" | base64 -d > /tmp/tirada.keystore
-          cat > android/key.properties << KEYS
-          storePassword=$STORE_PASSWORD
-          keyPassword=$KEY_PASSWORD
-          keyAlias=$KEY_ALIAS
-          storeFile=/tmp/tirada.keystore
-          KEYS
           python3 - << 'PY'
           import glob
           # --- build.gradle.kts: applicationId + version + release signing ---
@@ -55,18 +46,13 @@ jobs:
           s = s.replace('versionName = "1.0"', 'versionName = "2.0.0"')
           s += '''
 
-          val keystoreProperties = java.util.Properties()
-          val keystoreFile = rootProject.file("key.properties")
-          if (keystoreFile.exists()) {
-              keystoreProperties.load(java.io.FileInputStream(keystoreFile))
-          }
           android {
               signingConfigs {
                   create("release") {
-                      keyAlias = keystoreProperties["keyAlias"] as String
-                      keyPassword = keystoreProperties["keyPassword"] as String
-                      storeFile = file(keystoreProperties["storeFile"] as String)
-                      storePassword = keystoreProperties["storePassword"] as String
+                      storeFile = file("/tmp/tirada.keystore")
+                      storePassword = System.getenv("KEYSTORE_PASSWORD")
+                      keyAlias = System.getenv("KEY_ALIAS")
+                      keyPassword = System.getenv("KEY_PASSWORD")
                   }
               }
               buildTypes {
@@ -98,6 +84,10 @@ jobs:
 
       - name: Build the signed release APK
         working-directory: work
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
           flutter pub get
           dart run flutter_launcher_icons
