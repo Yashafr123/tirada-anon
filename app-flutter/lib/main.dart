@@ -35,6 +35,7 @@ Future<void> main() async {
 
 SupabaseClient get supa => Supabase.instance.client;
 String get myUid => supa.auth.currentUser!.id;
+String? get myUidOrNull => supa.auth.currentUser?.id;
 
 /* ---------------- models & helpers (mirrors the web app) ---------------- */
 
@@ -258,8 +259,10 @@ class AuthGate extends StatelessWidget {
       stream: supa.auth.onAuthStateChange,
       builder: (context, snap) {
         final session = snap.data?.session ?? supa.auth.currentSession;
-        if (session != null) return const HomePage();
-        return const LoginPage();
+        // Guest mode: the app opens straight into the map/places for
+        // everyone — an account is optional (friends, presence, sync).
+        // The key makes HomePage reload its state on sign-in/sign-out.
+        return HomePage(key: ValueKey(session?.user.id ?? 'guest'));
       },
     );
   }
@@ -275,8 +278,50 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _email = TextEditingController();
   final _pass = TextEditingController();
+  final _nick = TextEditingController();
   bool _busy = false;
   String? _error;
+
+  /* A signed-in user must have a profile row (the web app creates one at
+     sign-up; without it the name/friends/presence have nothing to bind to). */
+  Future<void> _ensureProfile() async {
+    final user = supa.auth.currentUser;
+    if (user == null) return;
+    try {
+      final existing = await supa
+          .from('profiles')
+          .select('id')
+          .eq('id', user.id)
+          .maybeSingle();
+      if (existing != null) return;
+      var nick = _nick.text.trim();
+      if (nick.isEmpty) {
+        nick = (user.email ?? 'ghost').split('@').first;
+      }
+      try {
+        await supa.from('profiles').insert({
+          'id': user.id,
+          'name': nick,
+          'avatar': '👻',
+          'mode': 'visible',
+          'city': 'karmiel',
+          'stats': normStats(null),
+          'favorites': <String>[],
+        });
+      } catch (_) {
+        // Nick taken (unique index on lower(name)) — retry with a suffix.
+        await supa.from('profiles').insert({
+          'id': user.id,
+          'name': '$nick${100 + (DateTime.now().millisecond % 900)}',
+          'avatar': '👻',
+          'mode': 'visible',
+          'city': 'karmiel',
+          'stats': normStats(null),
+          'favorites': <String>[],
+        });
+      }
+    } catch (_) {}
+  }
 
   Future<void> _go(bool signUp) async {
     setState(() {
@@ -294,6 +339,10 @@ class _LoginPageState extends State<LoginPage> {
           email: _email.text.trim(),
           password: _pass.text,
         );
+      }
+      await _ensureProfile();
+      if (mounted && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
       }
     } on AuthException catch (e) {
       setState(() => _error = e.message);
@@ -333,6 +382,13 @@ class _LoginPageState extends State<LoginPage> {
               ),
               const SizedBox(height: 36),
               TextField(
+                controller: _nick,
+                decoration: const InputDecoration(
+                  hintText: 'Ник (только для нового аккаунта)',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
                 controller: _email,
                 keyboardType: TextInputType.emailAddress,
                 decoration: const InputDecoration(hintText: 'Email'),
@@ -369,6 +425,20 @@ class _LoginPageState extends State<LoginPage> {
                 'Тот же аккаунт, что и на сайте tirada-anon.vercel.app',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: kMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 6),
+              TextButton(
+                onPressed: _busy
+                    ? null
+                    : () {
+                        if (Navigator.of(context).canPop()) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                child: const Text(
+                  'Смотреть без аккаунта',
+                  style: TextStyle(color: kMuted),
+                ),
               ),
             ],
           ),
@@ -433,13 +503,16 @@ class _HomePageState extends State<HomePage> {
       cities.sort((a, b) =>
           (a.id == 'karmiel' ? 0 : 1).compareTo(b.id == 'karmiel' ? 0 : 1));
       Map<String, dynamic>? profile;
-      try {
-        profile = await supa
-            .from('profiles')
-            .select()
-            .eq('id', myUid)
-            .maybeSingle();
-      } catch (_) {}
+      final uid = myUidOrNull;
+      if (uid != null) {
+        try {
+          profile = await supa
+              .from('profiles')
+              .select()
+              .eq('id', uid)
+              .maybeSingle();
+        } catch (_) {}
+      }
       if (!mounted) return;
       setState(() {
         _places = places;
@@ -472,18 +545,22 @@ class _HomePageState extends State<HomePage> {
         _favs.add(p.id);
       }
     });
+    final uid = myUidOrNull;
+    if (uid == null) return; // guest: favorites live only in memory
     try {
       await supa
           .from('profiles')
-          .update({'favorites': _favs.toList()}).eq('id', myUid);
+          .update({'favorites': _favs.toList()}).eq('id', uid);
     } catch (_) {}
   }
 
   Future<void> _saveStats() async {
+    final uid = myUidOrNull;
+    if (uid == null) return; // guest: stats live only in memory
     try {
       await supa
           .from('profiles')
-          .update({'stats': normStats(_stats)}).eq('id', myUid);
+          .update({'stats': normStats(_stats)}).eq('id', uid);
     } catch (_) {}
   }
 
@@ -777,8 +854,9 @@ class _MapTabState extends State<MapTab> {
   Future<void> _refreshFriends() async {
     final ctl = _ctl;
     if (ctl == null || !_styleReady) return;
+    final uid = myUidOrNull;
+    if (uid == null) return; // guest: no friends/presence without an account
     try {
-      final uid = myUid;
       final fr = await supa
           .from('friendships')
           .select('requester, addressee')
@@ -841,11 +919,13 @@ class _MapTabState extends State<MapTab> {
   Future<void> _presence() async {
     final ctl = _ctl;
     if (ctl == null) return;
+    final uid = myUidOrNull;
+    if (uid == null) return; // guest: nowhere to write presence
     try {
       final pos = await ctl.requestMyLocationLatLng();
       if (pos == null) return;
       await supa.from('profile_locations').upsert({
-        'user_id': myUid,
+        'user_id': uid,
         'lat': pos.latitude,
         'lng': pos.longitude,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
@@ -853,7 +933,7 @@ class _MapTabState extends State<MapTab> {
       await supa.from('profiles').update({
         'online': true,
         'last_seen': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', myUid);
+      }).eq('id', uid);
     } catch (_) {}
   }
 
@@ -1339,8 +1419,10 @@ class _ProfileTabState extends State<ProfileTab> {
   Future<void> _setMode(String mode) async {
     final p = {...?widget.profile, 'mode': mode};
     widget.onProfileChanged(p);
+    final uid = myUidOrNull;
+    if (uid == null) return;
     try {
-      await supa.from('profiles').update({'mode': mode}).eq('id', myUid);
+      await supa.from('profiles').update({'mode': mode}).eq('id', uid);
     } catch (_) {}
   }
 
@@ -1364,6 +1446,44 @@ class _ProfileTabState extends State<ProfileTab> {
 
   @override
   Widget build(BuildContext context) {
+    if (supa.auth.currentUser == null) {
+      // Guest view: browsing works without an account; sign-in is optional.
+      return SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(24),
+          children: [
+            const SizedBox(height: 24),
+            Image.asset('assets/icon.png', height: 130),
+            const SizedBox(height: 16),
+            const Text(
+              'Ты смотришь как гость 👻',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Карта, места и задания открыты без аккаунта. '
+              'Аккаунт нужен для друзей на карте, своего ника и синхронизации.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: kMuted, fontSize: 14),
+            ),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const LoginPage()),
+              ),
+              child: const Text('Войти / Создать аккаунт'),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Создатели: Yasha · @black_prince_18  •  Вард · @WardDeveloper  •  Сева · @Severarin',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: kMuted, fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
     final p = widget.profile;
     final name = (p?['name'] as String?) ?? 'Призрак';
     final avatarEmoji = (p?['avatar'] as String?) ?? '👤';
