@@ -643,6 +643,12 @@ class _HomePageState extends State<HomePage> {
               .maybeSingle();
         } catch (_) {}
       }
+      // Local database (on-phone): the guest's favorites and stats live in
+      // SharedPreferences and survive restarts; for a signed-in user the
+      // cloud profile wins and the local copy is refreshed from it.
+      final prefs = await SharedPreferences.getInstance();
+      final localFavs = prefs.getStringList('local_favs') ?? <String>[];
+      final localStatsRaw = prefs.getString('local_stats');
       if (!mounted) return;
       setState(() {
         _places = places;
@@ -652,13 +658,24 @@ class _HomePageState extends State<HomePage> {
           orElse: () => cities.first,
         );
         _profile = profile;
-        _stats = normStats(profile?['stats']);
-        final favs = profile?['favorites'];
-        if (favs is List) {
-          _favs.addAll(favs.map((e) => e.toString()));
+        if (profile != null) {
+          _stats = normStats(profile['stats']);
+          final favs = profile['favorites'];
+          if (favs is List) {
+            _favs.addAll(favs.map((e) => e.toString()));
+          }
+        } else {
+          // Guest (or offline): restore the on-phone copy.
+          if (localStatsRaw != null) {
+            try {
+              _stats = normStats(jsonDecode(localStatsRaw));
+            } catch (_) {}
+          }
+          _favs.addAll(localFavs);
         }
         _loading = false;
       });
+      if (profile != null) _persistLocal();
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -666,6 +683,15 @@ class _HomePageState extends State<HomePage> {
 
   List<Place> get _cityPlaces =>
       _city == null ? [] : _places.where((p) => p.city == _city!.id).toList();
+
+  /* Write favorites + stats to the on-phone database. */
+  Future<void> _persistLocal() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList('local_favs', _favs.toList());
+      await prefs.setString('local_stats', jsonEncode(normStats(_stats)));
+    } catch (_) {}
+  }
 
   Future<void> _toggleFav(Place p) async {
     setState(() {
@@ -675,8 +701,9 @@ class _HomePageState extends State<HomePage> {
         _favs.add(p.id);
       }
     });
+    _persistLocal(); // on-phone database first — works for guests too
     final uid = myUidOrNull;
-    if (uid == null) return; // guest: favorites live only in memory
+    if (uid == null) return;
     try {
       await supa
           .from('profiles')
@@ -685,8 +712,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _saveStats() async {
+    _persistLocal(); // on-phone database first — works for guests too
     final uid = myUidOrNull;
-    if (uid == null) return; // guest: stats live only in memory
+    if (uid == null) return;
     try {
       await supa
           .from('profiles')
