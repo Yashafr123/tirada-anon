@@ -1819,10 +1819,8 @@ body[data-sky="night"] .sky-layer::before{opacity:.85;animation:skyTwinkle 3.4s 
 @keyframes skyTwinkle{0%,100%{opacity:.55}50%{opacity:.95}}
 .sky-layer::after{content:"";position:absolute;border-radius:50%;opacity:0;transition:opacity 1.2s ease}
 body[data-sky="morning"] .sky-layer{background:linear-gradient(180deg, rgba(255,120,60,.09), transparent 55%)}
-body[data-sky="morning"] .sky-layer::after{
-  opacity:1;left:7%;bottom:11%;width:56px;height:56px;
-  background:radial-gradient(circle, #ff3b30 0%, rgba(255,59,48,.55) 45%, transparent 72%);
-}
+/* the morning red-sun disc (::after) was removed in v37 — Yasha: «что за
+   луна на фоне, убери». The ::after element itself stays unused. */
 body[data-sky="day"] .sky-layer{background:radial-gradient(90% 60% at 50% -10%, rgba(255,214,150,.10), transparent 60%)}
 body[data-sky="evening"] .sky-layer{background:linear-gradient(180deg, rgba(255,90,40,.11), rgba(229,9,20,.06) 55%, transparent)}
 @media (prefers-reduced-motion: reduce){
