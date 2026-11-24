@@ -19,7 +19,7 @@
    TIRADA_BUILD must equal APP_BUILD in app.js — a mismatch means the
    browser stitched two releases together from cache, and app.js then
    self-heals (unregister SW, clear caches, one reload). */
-window.TIRADA_BUILD = "31";
+window.TIRADA_BUILD = "33";
 window.__tiradaBootId = Date.now();
 (function(){
   function push(kind, msg){
@@ -48,8 +48,8 @@ window.__tiradaBootId = Date.now();
      ?v=N version query so a phone never runs a stale cached build, and
      N must equal TIRADA_BUILD above and APP_BUILD in app.js. INCREMENT
      N on EVERY release (keep all in sync). -->
-<link rel="stylesheet" href="maplibre-gl.css?v=31">
-<link rel="stylesheet" href="style.css?v=31">
+<link rel="stylesheet" href="maplibre-gl.css?v=33">
+<link rel="stylesheet" href="style.css?v=33">
 <link rel="icon" type="image/jpeg" href="tirada-logo.jpg">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -236,8 +236,7 @@ window.__tiradaBootId = Date.now();
         <div class="account-box sound-box" id="soundBox">
           <div class="mode-label" data-i18n="Звук">Звук</div>
           <button class="btn-alt push-btn" id="sndToggle">🔊 Звук: вкл</button>
-          <button class="btn-alt push-btn" id="musicToggle">🎵 Музыка: вкл</button>
-          <p class="account-text push-note" data-i18n="Музыка играет громко с самого захода. В парке — ветерок, в кафе — гул, в дождь — дождь.">Музыка играет громко с самого захода. В парке — ветерок, в кафе — гул, в дождь — дождь.</p>
+          <p class="account-text push-note" data-i18n="В парке — ветерок, в кафе — гул, в дождь — дождь.">В парке — ветерок, в кафе — гул, в дождь — дождь.</p>
           <button class="btn-alt push-btn" id="feedbackBtn" data-i18n="✉️ Сообщить / предложить">✉️ Сообщить / предложить</button>
         </div>
 
@@ -518,22 +517,13 @@ window.__tiradaBootId = Date.now();
 <div class="toast-stack" id="toastStack"></div>
 <div class="toast" id="toast" hidden></div>
 
-<div id="enterSplash" class="enter-splash" hidden>
-  <div class="enter-card">
-    <img class="enter-logo" src="tirada-logo.jpg" alt="TiradA anon">
-    <div class="enter-title">TiradA <span class="logo-anon">anon</span></div>
-    <div class="enter-sub" id="enterSub">Город уже шумит. Заходи — музыка играет.</div>
-    <button class="enter-btn" id="enterBtn" type="button">🔊 Зайти в город</button>
-    <button class="enter-silent" id="enterSilent" type="button">без звука</button>
-  </div>
-</div>
-<script src="maplibre-gl.js?v=31"></script>
-<script src="map-style.js?v=31"></script>
-<script src="vendor-supabase.js?v=31"></script>
-<script src="supabase.js?v=31"></script>
-<script src="i18n.js?v=31"></script>
-<script src="places-data.js?v=31"></script>
-<script src="app.js?v=31"></script>
+<script src="maplibre-gl.js?v=33"></script>
+<script src="map-style.js?v=33"></script>
+<script src="vendor-supabase.js?v=33"></script>
+<script src="supabase.js?v=33"></script>
+<script src="i18n.js?v=33"></script>
+<script src="places-data.js?v=33"></script>
+<script src="app.js?v=33"></script>
 <!-- ===== Feedback sheet (v28) ===== -->
 <div class="sheet-backdrop" id="feedbackSheet" hidden>
   <div class="sheet">
