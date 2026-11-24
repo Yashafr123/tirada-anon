@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.5.
+// TiradA anon — native app (Flutter), v2.0.6.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -8,15 +8,22 @@
 // local on-phone persistence, same assets and data contracts as v2.0.4.
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show HttpClient;
+import 'dart:io' show Directory, File, HttpClient;
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show rootBundle, HapticFeedback, Clipboard, ClipboardData;
+    show rootBundle, HapticFeedback;
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
+import 'package:pedometer/pedometer.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -208,9 +215,24 @@ void tickMedium() {
   if (hapticsOn) HapticFeedback.mediumImpact();
 }
 
+/* FCM background handler — must be a top-level function. No UI work here,
+   just the mandatory Firebase init for the background isolate. */
+@pragma('vm:entry-point')
+Future<void> _fcmBackgroundHandler(RemoteMessage message) async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {}
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Supabase.initialize(url: kSupaUrl, anonKey: kSupaAnon);
+  // Firebase is an enhancement, never a gate: a missing/broken
+  // google-services.json must not stop the app from starting.
+  try {
+    await Firebase.initializeApp();
+    FirebaseMessaging.onBackgroundMessage(_fcmBackgroundHandler);
+  } catch (_) {}
   runApp(const TiradaApp());
 }
 
@@ -309,9 +331,96 @@ Color typeColor(String t) {
 
 String priceText(Place p) {
   final pl = p.priceLevel;
-  if (pl == null) return '';
+  if (pl == null) {
+    // OSM rows carry no price: show the per-type estimate, marked with ≈.
+    final est = estPriceLevel(p);
+    if (est == 0) return 'Бесплатно';
+    return '≈${'₪' * est.clamp(1, 4)}';
+  }
   if (pl == 0) return 'Бесплатно';
   return '₪' * pl.clamp(1, 4);
+}
+
+/* Per-type price level estimate (0..3) for places without price data —
+   parks and viewpoints are free, clubs and restaurants cost the most. */
+int estPriceLevel(Place p) {
+  switch (p.type) {
+    case 'park':
+    case 'view':
+    case 'beach':
+    case 'sport':
+      return 0;
+    case 'culture':
+    case 'market':
+    case 'other':
+      return 1;
+    case 'cafe':
+    case 'bar':
+      return 2;
+    case 'restaurant':
+    case 'club':
+      return 3;
+    default:
+      return 1;
+  }
+}
+
+/* Effective price level: real data first, estimate as the fallback. */
+int effPriceLevel(Place p) => p.priceLevel ?? estPriceLevel(p);
+
+/* Human shekel range per price level (per person, rough city prices). */
+String priceRangeText(int level) {
+  switch (level.clamp(0, 4)) {
+    case 0:
+      return 'бесплатно';
+    case 1:
+      return '~30–60 ₪';
+    case 2:
+      return '~60–120 ₪';
+    case 3:
+      return '~120–200 ₪';
+    default:
+      return '200+ ₪';
+  }
+}
+
+/* Full price label for the place sheet: shekels + range, estimate marked. */
+String priceDetailText(Place p) {
+  final lvl = effPriceLevel(p);
+  if (lvl == 0) return 'Бесплатно';
+  final est = p.priceLevel == null ? '≈' : '';
+  return '$est${'₪' * lvl.clamp(1, 4)} · ${priceRangeText(lvl)} на человека';
+}
+
+/* Ghost label with the same numbering the profile uses:
+   1000 + stableHash(uid) % 9000. */
+String ghostLabelFor(String uid) => 'Призрак #${1000 + stableHash(uid) % 9000}';
+
+/* «Сколько людей отдыхает сейчас» — a deterministic estimate from the
+   place type, the hour and its vibe, seeded by the place id so it does
+   not flicker between rebuilds within the same hour. */
+int crowdOf(Place p) {
+  final h = DateTime.now().hour;
+  final seed = stableHash('${p.id}|crowd|$h') % 13;
+  var n = (vibeOf(p) - 18) * 0.85 + seed;
+  switch (p.type) {
+    case 'club':
+    case 'bar':
+      n *= 1.7;
+    case 'restaurant':
+    case 'cafe':
+      n *= 1.25;
+    case 'market':
+      n *= 1.1;
+    case 'park':
+    case 'beach':
+      n *= 0.8;
+    case 'view':
+    case 'culture':
+      n *= 0.55;
+  }
+  if (h >= 2 && h < 8) n *= 0.15; // deep night: almost everyone is home
+  return n.round().clamp(0, 260);
 }
 
 /* Deterministic small hash (FNV-1a) — stable across runs. */
@@ -367,6 +476,271 @@ double haversineKm(double lat1, double lng1, double lat2, double lng2) {
 }
 
 String fmtKm(double km) => km.toStringAsFixed(1).replaceAll('.', ',');
+
+void snack(BuildContext context, String text) {
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context)
+      .showSnackBar(SnackBar(content: Text(text)));
+}
+
+/* ---------------- v2.0.6 services: XP bus, sharing, steps, pushes -------- */
+
+/* Widgets deep in the tree (place sheet, deal sheet, tournament) cannot
+   reach HomePage's stats directly, so bonus XP is posted here and
+   HomePage drains the bus into stats.aiXp. */
+class AiXpBus {
+  static final ValueNotifier<int> pending = ValueNotifier<int>(0);
+  static void credit(int xp) {
+    if (xp != 0) pending.value += xp;
+  }
+}
+
+/* Share through the system sheet and earn XP: +5 per share, max 10 paid
+   shares a day (tracked in prefs so it survives restarts). */
+Future<void> shareWithXp(BuildContext context, String text) async {
+  try {
+    await Share.share(text);
+  } catch (_) {}
+  var granted = false;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final today = dayKey();
+    var cnt = prefs.getString('share_xp_day') == today
+        ? (prefs.getInt('share_xp_count') ?? 0)
+        : 0;
+    if (cnt < 10) {
+      await prefs.setString('share_xp_day', today);
+      await prefs.setInt('share_xp_count', cnt + 1);
+      granted = true;
+    }
+  } catch (_) {}
+  if (!context.mounted) return;
+  if (granted) {
+    AiXpBus.credit(5);
+    snack(context, '🔗 +5 XP за шаринг');
+  } else {
+    snack(context, 'Лимит шаринга на сегодня исчерпан');
+  }
+}
+
+/* Daily city quest: a deterministic 3-step quest generated from the real
+   places of the selected city, seeded by (city + local date). Steps are
+   completed by real actions — check-in, photo upload, favorite — which
+   call CityQuest.mark() from the HomePage handlers. State lives in prefs
+   (cityquest_day / cityquest_city / cityquest_steps / cityquest_done);
+   finishing all three pays a one-time +50 aiXp bonus. */
+class CityQuest {
+  static final ValueNotifier<int> revision = ValueNotifier<int>(0);
+
+  static Future<Map<String, dynamic>> ensure(
+      List<Place> places, City city) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('cityquest_steps');
+    if (prefs.getString('cityquest_day') == dayKey() &&
+        prefs.getString('cityquest_city') == city.id &&
+        raw != null) {
+      try {
+        return (jsonDecode(raw) as Map).cast<String, dynamic>();
+      } catch (_) {}
+    }
+    final rng = math.Random(stableHash('${city.id}|${dayKey()}'));
+    final pool = [...places]..shuffle(rng);
+    Place? pick(Set<String> used, {bool newType = true}) {
+      final usedTypes = <String>{
+        for (final q in pool)
+          if (used.contains(q.id)) q.type,
+      };
+      for (final q in pool) {
+        if (used.contains(q.id)) continue;
+        if (newType && usedTypes.contains(q.type)) continue;
+        return q;
+      }
+      for (final q in pool) {
+        if (!used.contains(q.id)) return q;
+      }
+      return null;
+    }
+
+    final used = <String>{};
+    final a = pick(used);
+    if (a != null) used.add(a.id);
+    final b = pick(used);
+    if (b != null) used.add(b.id);
+    final c = pick(used);
+    final steps = <Map<String, dynamic>>[
+      if (a != null)
+        {'kind': 'checkin', 'place': a.id, 'name': a.name, 'done': false},
+      if (b != null)
+        {'kind': 'photo', 'place': b.id, 'name': b.name, 'done': false},
+      if (c != null)
+        {'kind': 'fav', 'place': c.id, 'name': c.name, 'done': false},
+    ];
+    final quest = <String, dynamic>{'steps': steps, 'bonus': false};
+    await prefs.setString('cityquest_day', dayKey());
+    await prefs.setString('cityquest_city', city.id);
+    await prefs.setString('cityquest_steps', jsonEncode(quest));
+    await prefs.setBool('cityquest_done', false);
+    revision.value++;
+    return quest;
+  }
+
+  /* Mark the step matching (kind, place). Returns true exactly once —
+     when this call completes the whole quest and the bonus is due. */
+  static Future<bool> mark(
+      String kind, Place place, List<Place> places, City city) async {
+    try {
+      final quest = await ensure(places, city);
+      final steps = (quest['steps'] as List)
+          .map((e) => (e as Map).cast<String, dynamic>())
+          .toList();
+      var changed = false;
+      for (final st in steps) {
+        if (st['kind'] == kind && st['place'] == place.id && st['done'] != true) {
+          st['done'] = true;
+          changed = true;
+        }
+      }
+      if (!changed) return false;
+      quest['steps'] = steps;
+      final prefs = await SharedPreferences.getInstance();
+      final allDone = steps.every((st) => st['done'] == true);
+      var bonusDue = false;
+      if (allDone && quest['bonus'] != true) {
+        quest['bonus'] = true;
+        bonusDue = true;
+        await prefs.setBool('cityquest_done', true);
+      }
+      await prefs.setString('cityquest_steps', jsonEncode(quest));
+      revision.value++;
+      return bonusDue;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+/* Steps → XP. The pedometer reports a cumulative counter since boot, so
+   we remember the counter value at the start of the day (steps_base) and
+   pay +5 aiXp per full 1000 steps, capped at +50 XP a day (10 milestones,
+   steps_credited). Everything fails silently: no sensor, no permission —
+   the card just says so. */
+class StepsTracker {
+  static final ValueNotifier<int> today = ValueNotifier<int>(0);
+  static final ValueNotifier<int> xpToday = ValueNotifier<int>(0);
+  static final ValueNotifier<bool> available = ValueNotifier<bool>(true);
+  static void Function(int xp)? onCredit;
+  static bool _started = false;
+
+  static Future<void> start() async {
+    if (_started) return;
+    _started = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getString('steps_day') == dayKey()) {
+        xpToday.value = (prefs.getInt('steps_credited') ?? 0) * 5;
+      }
+      final perm = await Permission.activityRecognition.request();
+      if (!perm.isGranted) {
+        available.value = false;
+        return;
+      }
+      Pedometer.stepCountStream.listen(
+        _onEvent,
+        onError: (_) => available.value = false,
+      );
+    } catch (_) {
+      available.value = false;
+    }
+  }
+
+  static Future<void> _onEvent(StepCount e) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final todayKey = dayKey();
+      if (prefs.getString('steps_day') != todayKey) {
+        await prefs.setString('steps_day', todayKey);
+        await prefs.setInt('steps_base', e.steps);
+        await prefs.setInt('steps_credited', 0);
+      }
+      var base = prefs.getInt('steps_base') ?? e.steps;
+      if (e.steps < base) {
+        // Sensor counter reset (reboot): re-base instead of going negative.
+        base = e.steps;
+        await prefs.setInt('steps_base', base);
+      }
+      final steps = e.steps - base;
+      today.value = steps;
+      final milestones = math.min(steps ~/ 1000, 10);
+      final credited = prefs.getInt('steps_credited') ?? 0;
+      xpToday.value = milestones * 5;
+      if (milestones > credited) {
+        await prefs.setInt('steps_credited', milestones);
+        onCredit?.call((milestones - credited) * 5);
+      }
+    } catch (_) {}
+  }
+}
+
+/* FCM pushes: permission, device token registration into device_tokens,
+   foreground messages surfaced to HomePage through [foreground]. */
+class PushService {
+  static final ValueNotifier<RemoteMessage?> foreground =
+      ValueNotifier<RemoteMessage?>(null);
+  static bool _inited = false;
+
+  static Future<void> init() async {
+    if (_inited) return;
+    _inited = true;
+    try {
+      final m = FirebaseMessaging.instance;
+      await m.requestPermission();
+      FirebaseMessaging.onMessage.listen((msg) => foreground.value = msg);
+      m.onTokenRefresh.listen(_saveToken);
+      await registerCurrent();
+    } catch (_) {}
+  }
+
+  static Future<void> registerCurrent() async {
+    try {
+      final t = await FirebaseMessaging.instance.getToken();
+      if (t != null) await _saveToken(t);
+    } catch (_) {}
+  }
+
+  static Future<void> _saveToken(String token) async {
+    final uid = myUidOrNull;
+    if (uid == null) return; // guests have no row to attach a token to
+    try {
+      await supa.from('device_tokens').upsert({
+        'user_id': uid,
+        'token': token,
+        'platform': 'android',
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+    } catch (_) {}
+  }
+}
+
+/* Pick an image and re-encode it as JPEG. Decoding + re-encoding strips
+   EXIF (GPS coordinates included) — the same privacy trick as the web
+   app's canvas re-encode. Returns null when the user cancels. */
+Future<Uint8List?> pickAndProcessImage(ImageSource source) async {
+  try {
+    final x = await ImagePicker().pickImage(
+      source: source,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 92,
+    );
+    if (x == null) return null;
+    final bytes = await x.readAsBytes();
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return bytes;
+    return Uint8List.fromList(img.encodeJpg(decoded, quality: 88));
+  } catch (_) {
+    return null;
+  }
+}
 
 /* XP — the exact formula of the web app (xpOfStats + LEVELS). */
 const kLevels = <(int, String)>[
@@ -2062,6 +2436,12 @@ class _HomePageState extends State<HomePage> {
     SharedPreferences.getInstance().then((p) {
       hapticsOn = p.getBool('haptics_on') ?? true;
     });
+    // v2.0.6 services: bonus-XP bus, steps→XP, FCM pushes.
+    AiXpBus.pending.addListener(_drainAiXp);
+    StepsTracker.onCredit = (xp) => AiXpBus.credit(xp);
+    StepsTracker.start();
+    PushService.init();
+    PushService.foreground.addListener(_onForegroundPush);
     _tickerTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       if (mounted) setState(() => _tickerIdx++);
     });
@@ -2070,7 +2450,37 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _tickerTimer?.cancel();
+    AiXpBus.pending.removeListener(_drainAiXp);
+    PushService.foreground.removeListener(_onForegroundPush);
     super.dispose();
+  }
+
+  /* Bonus XP posted by deep widgets (sharing, steps, city quest) lands
+     in stats here, where stats actually live. */
+  void _drainAiXp() {
+    final v = AiXpBus.pending.value;
+    if (v <= 0 || !mounted) return;
+    AiXpBus.pending.value = 0;
+    _addAiXp(v);
+  }
+
+  /* Foreground push → in-app banner, unless the user muted that type in
+     Profile → «Уведомления» (prefs notif_<type>, default on). */
+  Future<void> _onForegroundPush() async {
+    final msg = PushService.foreground.value;
+    if (msg == null || !mounted) return;
+    try {
+      final type = (msg.data['type'] as String?) ?? '';
+      const known = {'quest', 'friends', 'votes', 'photos', 'streak', 'rain', 'steps'};
+      if (known.contains(type)) {
+        final prefs = await SharedPreferences.getInstance();
+        if (!(prefs.getBool('notif_$type') ?? true)) return;
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    final title = msg.notification?.title ?? 'TiradA anon';
+    final body = msg.notification?.body ?? '';
+    snack(context, body.isEmpty ? '🔔 $title' : '🔔 $title — $body');
   }
 
   Future<void> _load() async {
@@ -2128,7 +2538,10 @@ class _HomePageState extends State<HomePage> {
         }
         _loading = false;
       });
-      if (profile != null) _persistLocal();
+      if (profile != null) {
+        _persistLocal();
+        PushService.registerCurrent(); // FCM token → device_tokens
+      }
       if (_city != null) _fetchTemp(_city!);
       _loadFriends();
     } catch (_) {
@@ -2150,6 +2563,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _toggleFav(Place p) async {
     HapticFeedback.selectionClick();
+    final adding = !_favs.contains(p.id);
     setState(() {
       if (_favs.contains(p.id)) {
         _favs.remove(p.id);
@@ -2157,6 +2571,7 @@ class _HomePageState extends State<HomePage> {
         _favs.add(p.id);
       }
     });
+    if (adding) _cityQuestMark('fav', p);
     _persistLocal(); // on-phone database first — works for guests too
     final uid = myUidOrNull;
     if (uid == null) return;
@@ -2260,6 +2675,25 @@ class _HomePageState extends State<HomePage> {
   /* «Я здесь» check-in: the place joins stats.places; the first check-in
      of a day also counts that night (lastDealDay semantics, conservative:
      streak is left to its own logic). */
+  /* City-quest tracker: real actions complete the daily city quest;
+     finishing it pays the +50 XP bonus once (CityQuest.mark guards). */
+  Future<void> _cityQuestMark(String kind, Place p) async {
+    final city = _city;
+    if (city == null) return;
+    final bonusDue = await CityQuest.mark(kind, p, _cityPlaces, city);
+    if (bonusDue && mounted) {
+      _addAiXp(50);
+      fireConfetti(context);
+      snack(context, '🏙️ Квест города выполнен · +50 XP');
+    }
+  }
+
+  /* Photo published from the place sheet: stats + city quest step. */
+  void _onPhotoUploaded(Place p) {
+    _bumpStat('photos', 1);
+    _cityQuestMark('photo', p);
+  }
+
   void _checkIn(Place p) {
     final places = (normStats(_stats)['places'] as List)
         .map((e) => e.toString())
@@ -2279,6 +2713,7 @@ class _HomePageState extends State<HomePage> {
       setState(() {});
       _saveStats();
     }
+    _cityQuestMark('checkin', p);
   }
 
   Future<void> _setHaptics(bool on) async {
@@ -2305,6 +2740,8 @@ class _HomePageState extends State<HomePage> {
           stats: _stats,
           onTaskDone: () => _bumpStat('tasks', 1),
           onAiXp: _addAiXp,
+          cityPlaces: _cityPlaces,
+          city: _city,
         ),
       ),
     );
@@ -2676,6 +3113,7 @@ class _HomePageState extends State<HomePage> {
                     favs: _favs,
                     onToggleFav: _toggleFav,
                     onCheckIn: _checkIn,
+                    onPhotoUploaded: _onPhotoUploaded,
                   ),
                   PlacesTab(
                     places: _cityPlaces,
@@ -2684,6 +3122,7 @@ class _HomePageState extends State<HomePage> {
                     onToggleFav: _toggleFav,
                     onOpenTasks: _openTasks,
                     onCheckIn: _checkIn,
+                    onPhotoUploaded: _onPhotoUploaded,
                   ),
                   RouteTab(
                     places: _cityPlaces,
@@ -3105,15 +3544,10 @@ class _DealSheetState extends State<DealSheet> {
                   PressButton(
                     text: 'Позвать голосовать 👻',
                     primary: false,
-                    onPressed: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Ссылка-приглашение: https://tirada-anon.vercel.app — отправь её друзьям',
-                          ),
-                        ),
-                      );
-                    },
+                    onPressed: () => shareWithXp(
+                      context,
+                      'Голосование за движ в TiradA anon 👻 Присоединяйся: https://tirada-anon.vercel.app',
+                    ),
                   ),
                 ],
               ),
@@ -3135,6 +3569,7 @@ void showPlaceSheet(
   required List<Place> cityPlaces,
   required City? city,
   void Function(Place)? onCheckIn,
+  void Function(Place)? onPhotoUploaded,
 }) {
   showModalBottomSheet<void>(
     context: context,
@@ -3147,6 +3582,7 @@ void showPlaceSheet(
       cityPlaces: cityPlaces,
       city: city,
       onCheckIn: onCheckIn,
+      onPhotoUploaded: onPhotoUploaded,
     ),
   );
 }
@@ -3158,6 +3594,7 @@ class PlaceSheet extends StatefulWidget {
   final List<Place> cityPlaces;
   final City? city;
   final void Function(Place)? onCheckIn;
+  final void Function(Place)? onPhotoUploaded;
   const PlaceSheet({
     super.key,
     required this.place,
@@ -3166,6 +3603,7 @@ class PlaceSheet extends StatefulWidget {
     required this.cityPlaces,
     required this.city,
     this.onCheckIn,
+    this.onPhotoUploaded,
   });
 
   @override
@@ -3177,12 +3615,26 @@ class _PlaceSheetState extends State<PlaceSheet> {
   bool _here = false;
   List<Map<String, dynamic>> _photos = [];
   Map<String, int> _fires = {};
+  final Set<String> _myFires = {};
+  List<Map<String, dynamic>> _reviews = [];
+  int _crowdFriends = 0;
+  bool _uploading = false;
+  int _myRating = 5;
+  final TextEditingController _reviewCtl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _place = widget.place;
     _loadPhotos();
+    _loadReviews();
+    _loadCrowd();
+  }
+
+  @override
+  void dispose() {
+    _reviewCtl.dispose();
+    super.dispose();
   }
 
   /* Read-only ghost gallery — same query shape as the web app:
@@ -3205,15 +3657,17 @@ class _PlaceSheetState extends State<PlaceSheet> {
             (r as Map).cast<String, dynamic>(),
       ];
       final fires = <String, int>{};
+      final mine = <String>{};
       if (visible.isNotEmpty) {
         try {
           final rr = await supa
               .from('photo_reactions')
-              .select('photo_id')
+              .select('photo_id, user_id')
               .inFilter('photo_id', visible.map((e) => e['id']).toList());
           for (final r in rr as List) {
             final id = r['photo_id'].toString();
             fires[id] = (fires[id] ?? 0) + 1;
+            if (uid != null && r['user_id'] == uid) mine.add(id);
           }
         } catch (_) {}
       }
@@ -3221,6 +3675,9 @@ class _PlaceSheetState extends State<PlaceSheet> {
       setState(() {
         _photos = visible;
         _fires = fires;
+        _myFires
+          ..clear()
+          ..addAll(mine);
       });
     } catch (_) {
       // Gallery is best-effort (RLS may hide it from guests) — stay silent.
@@ -3233,8 +3690,209 @@ class _PlaceSheetState extends State<PlaceSheet> {
       _here = false;
       _photos = [];
       _fires = {};
+      _myFires.clear();
+      _reviews = [];
+      _crowdFriends = 0;
     });
     _loadPhotos();
+    _loadReviews();
+    _loadCrowd();
+  }
+
+  /* Ghost reviews (place_reviews): latest first; average over the
+     fetched window. Fails silently — reviews are an enhancement. */
+  Future<void> _loadReviews() async {
+    try {
+      final rows = await supa
+          .from('place_reviews')
+          .select('id, place_id, user_id, ghost, rating, text, created_at')
+          .eq('place_id', _place.id)
+          .order('created_at', ascending: false)
+          .limit(50);
+      if (!mounted) return;
+      setState(() {
+        _reviews = [
+          for (final r in rows as List) (r as Map).cast<String, dynamic>(),
+        ];
+      });
+    } catch (_) {}
+  }
+
+  /* Friends physically at this place right now: live rows in
+     profile_locations within ~80 m (excluding me). Best-effort. */
+  Future<void> _loadCrowd() async {
+    try {
+      final uid = myUidOrNull;
+      final rows = await supa
+          .from('profile_locations')
+          .select('user_id, lat, lng')
+          .limit(300);
+      var n = 0;
+      for (final r in rows as List) {
+        if (r['user_id'] == uid) continue;
+        final lat = (r['lat'] as num?)?.toDouble();
+        final lng = (r['lng'] as num?)?.toDouble();
+        if (lat == null || lng == null) continue;
+        if (haversineKm(lat, lng, _place.lat, _place.lng) < 0.08) n++;
+      }
+      if (mounted) setState(() => _crowdFriends = n);
+    } catch (_) {}
+  }
+
+  /* 🔥 on a gallery photo: one reaction per user, tap toggles. */
+  Future<void> _toggleFire(Map<String, dynamic> ph) async {
+    final uid = myUidOrNull;
+    if (uid == null) {
+      snack(context, 'Войди, чтобы ставить 🔥');
+      return;
+    }
+    final id = ph['id'].toString();
+    final mine = _myFires.contains(id);
+    tickSelect();
+    setState(() {
+      if (mine) {
+        _myFires.remove(id);
+        _fires[id] = math.max(0, (_fires[id] ?? 1) - 1);
+      } else {
+        _myFires.add(id);
+        _fires[id] = (_fires[id] ?? 0) + 1;
+      }
+    });
+    try {
+      if (mine) {
+        await supa
+            .from('photo_reactions')
+            .delete()
+            .eq('photo_id', ph['id'])
+            .eq('user_id', uid);
+      } else {
+        await supa.from('photo_reactions').insert({
+          'photo_id': ph['id'],
+          'user_id': uid,
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _submitReview() async {
+    final uid = myUidOrNull;
+    if (uid == null) return;
+    try {
+      await supa.from('place_reviews').insert({
+        'place_id': _place.id,
+        'user_id': uid,
+        'ghost': ghostLabelFor(uid),
+        'rating': _myRating,
+        'text': _reviewCtl.text.trim(),
+      });
+      _reviewCtl.clear();
+      if (!mounted) return;
+      snack(context, 'Отзыв опубликован 👻');
+      _loadReviews();
+    } catch (_) {
+      if (mounted) snack(context, 'Отзыв не отправился — попробуй ещё раз');
+    }
+  }
+
+  /* Publish a photo to this place: pick → EXIF-stripped re-encode →
+     consent sheet (Всем / Только друзьям / Не показывать) → upload to
+     the place-photos bucket → place_photos row → stats via HomePage. */
+  Future<void> _addPhoto() async {
+    final uid = myUidOrNull;
+    if (uid == null) {
+      snack(context, 'Войди, чтобы добавлять фото');
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const LoginPage()),
+      );
+      return;
+    }
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SheetShell(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Text('📷', style: TextStyle(fontSize: 20)),
+              title: Text('Камера', style: T.body(15, w: FontWeight.w600)),
+              onTap: () => Navigator.of(context).pop(ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Text('🖼️', style: TextStyle(fontSize: 20)),
+              title: Text('Галерея', style: T.body(15, w: FontWeight.w600)),
+              onTap: () => Navigator.of(context).pop(ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+    final bytes = await pickAndProcessImage(source);
+    if (bytes == null || !mounted) return;
+    final vis = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SheetShell(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(T.s20, T.s4, T.s20, T.s16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Кто увидит фото?', style: T.head(16)),
+              const SizedBox(height: T.s12),
+              FireButton(
+                text: '🌍 Всем',
+                small: true,
+                onPressed: () => Navigator.of(context).pop('public'),
+              ),
+              const SizedBox(height: T.s8),
+              GhostButton(
+                text: '👻 Только друзьям',
+                small: true,
+                onPressed: () => Navigator.of(context).pop('friends'),
+              ),
+              const SizedBox(height: T.s8),
+              GhostButton(
+                text: 'Не показывать',
+                small: true,
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (vis == null || !mounted) return; // «Не показывать» = cancel
+    setState(() => _uploading = true);
+    try {
+      final path =
+          '${_place.id}/$uid-${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await supa.storage.from('place-photos').uploadBinary(
+            path,
+            bytes,
+            fileOptions: const FileOptions(
+              contentType: 'image/jpeg',
+              upsert: true,
+            ),
+          );
+      final url = supa.storage.from('place-photos').getPublicUrl(path);
+      await supa.from('place_photos').insert({
+        'place_id': _place.id,
+        'user_id': uid,
+        'url': url,
+        'visibility': vis,
+      });
+      widget.onPhotoUploaded?.call(_place);
+      if (!mounted) return;
+      fireConfetti(context);
+      snack(context, 'Фото опубликовано 📸 · +25 XP за фото');
+      _loadPhotos();
+    } catch (_) {
+      if (mounted) snack(context, 'Фото не загрузилось — попробуй ещё раз');
+    }
+    if (mounted) setState(() => _uploading = false);
   }
 
   Widget _stars(double rating) {
@@ -3257,15 +3915,6 @@ class _PlaceSheetState extends State<PlaceSheet> {
     final p = _place;
     final v = vibeOf(p);
     final fav = widget.favs.contains(p.id);
-    final origin = myLocationNotifier.value;
-    final dist = widget.city == null
-        ? null
-        : haversineKm(
-            origin?.latitude ?? widget.city!.lat,
-            origin?.longitude ?? widget.city!.lng,
-            p.lat,
-            p.lng,
-          );
     final similar = widget.cityPlaces
         .where((e) => e.type == p.type && e.id != p.id)
         .toList()
@@ -3322,35 +3971,70 @@ class _PlaceSheetState extends State<PlaceSheet> {
             ),
             const SizedBox(height: T.s8),
             Center(child: VibeGauge(vibe: v)),
-            if (p.rating != null) ...[
-              const SizedBox(height: T.s4),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
+            const SizedBox(height: T.s4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (p.rating != null) ...[
                   _stars(p.rating!),
                   const SizedBox(width: T.s8),
                   Text(
                     '${p.rating!.toStringAsFixed(1)}${p.reviews != null ? ' · ${p.reviews} отзывов' : ''}',
                     style: T.body(13, color: T.muted),
                   ),
-                  if (priceText(p).isNotEmpty) ...[
-                    const SizedBox(width: T.s12),
-                    Text(priceText(p), style: T.num(13.5, color: T.gold)),
-                  ],
-                ],
-              ),
-            ],
-            if (p.address.isNotEmpty || dist != null) ...[
-              const SizedBox(height: T.s8),
-              Text(
-                [
-                  if (p.address.isNotEmpty) '📍 ${p.address}',
-                  if (dist != null) '· ${fmtKm(dist)} км от тебя',
-                ].join(' '),
-                textAlign: TextAlign.center,
-                style: T.body(12.5, color: T.muted),
-              ),
-            ],
+                ] else
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 9, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: T.online.withOpacity(0.16),
+                      borderRadius: BorderRadius.circular(T.rPill),
+                      border: Border.all(color: T.online.withOpacity(0.5)),
+                    ),
+                    child: Text(
+                      '✨ новое место',
+                      style: T.body(11.5, color: T.online, w: FontWeight.w700),
+                    ),
+                  ),
+                const SizedBox(width: T.s12),
+                Text(
+                  priceDetailText(p),
+                  style: T.num(12.5, color: T.gold),
+                ),
+              ],
+            ),
+            // Address + live distance (hidden gracefully until the map
+            // has a real position) + how many people are here now.
+            ValueListenableBuilder<LatLng?>(
+              valueListenable: myLocationNotifier,
+              builder: (_, origin, __) {
+                final dist = origin == null
+                    ? null
+                    : haversineKm(
+                        origin.latitude, origin.longitude, p.lat, p.lng);
+                if (p.address.isEmpty && dist == null) {
+                  return const SizedBox.shrink();
+                }
+                return Padding(
+                  padding: const EdgeInsets.only(top: T.s8),
+                  child: Text(
+                    [
+                      if (p.address.isNotEmpty) '📍 ${p.address}',
+                      if (dist != null) '· ${fmtKm(dist)} км от тебя',
+                    ].join(' '),
+                    textAlign: TextAlign.center,
+                    style: T.body(12.5, color: T.muted),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '👥 Сейчас отдыхают: ~${crowdOf(p)}'
+              '${_crowdFriends > 0 ? ' · друзья рядом: $_crowdFriends' : ''}',
+              textAlign: TextAlign.center,
+              style: T.body(12.5, color: T.salmon, w: FontWeight.w600),
+            ),
             const SizedBox(height: T.s16),
             Row(
               children: [
@@ -3381,22 +4065,19 @@ class _PlaceSheetState extends State<PlaceSheet> {
                   child: GhostButton(
                     text: 'Поделиться',
                     small: true,
-                    onPressed: () async {
-                      await Clipboard.setData(
-                        ClipboardData(
-                          text: '${p.name} — движ ${vibeOf(p)}% в TiradA anon 🔥',
-                        ),
-                      );
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Скопировано — отправь друзьям'),
-                        ),
-                      );
-                    },
+                    onPressed: () => shareWithXp(
+                      context,
+                      '${p.name} — движ ${vibeOf(p)}% в TiradA anon 🔥',
+                    ),
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: T.s12),
+            GhostButton(
+              text: _uploading ? 'Загрузка…' : '📸 Добавить фото',
+              small: true,
+              onPressed: _uploading ? () {} : _addPhoto,
             ),
             if (_photos.isNotEmpty) ...[
               const SizedBox(height: T.s20),
@@ -3409,7 +4090,10 @@ class _PlaceSheetState extends State<PlaceSheet> {
                   itemBuilder: (_, i) {
                     final ph = _photos[i];
                     final fires = _fires[ph['id'].toString()] ?? 0;
-                    return Container(
+                    final mine = _myFires.contains(ph['id'].toString());
+                    return GestureDetector(
+                      onTap: () => _toggleFire(ph),
+                      child: Container(
                       width: 92,
                       margin: const EdgeInsets.only(right: T.s8),
                       child: Stack(
@@ -3436,7 +4120,9 @@ class _PlaceSheetState extends State<PlaceSheet> {
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 6, vertical: 2),
                                 decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.65),
+                                  color: mine
+                                      ? T.fire.withOpacity(0.88)
+                                      : Colors.black.withOpacity(0.65),
                                   borderRadius: BorderRadius.circular(999),
                                 ),
                                 child: Text(
@@ -3451,11 +4137,126 @@ class _PlaceSheetState extends State<PlaceSheet> {
                             ),
                         ],
                       ),
+                      ),
                     );
                   },
                 ),
               ),
+              const SizedBox(height: T.s4),
+              Text(
+                'тап по фото — поставить 🔥',
+                style: T.body(11, color: T.faint),
+              ),
             ],
+            // ---- ghost reviews ----
+            const SizedBox(height: T.s20),
+            sectionLabel('💬 Отзывы призраков', color: T.salmon),
+            if (_reviews.isEmpty)
+              Text(
+                'Пока тихо — стань первым призраком с отзывом.',
+                style: T.body(12.5, color: T.muted),
+              )
+            else ...[
+              Builder(builder: (_) {
+                final avg = _reviews.fold<double>(
+                        0, (a, r) => a + ((r['rating'] as num?)?.toDouble() ?? 0)) /
+                    _reviews.length;
+                return Row(
+                  children: [
+                    _stars(avg),
+                    const SizedBox(width: T.s8),
+                    Text(
+                      '${avg.toStringAsFixed(1)} · ${_reviews.length} отзывов призраков',
+                      style: T.body(12.5, color: T.muted),
+                    ),
+                  ],
+                );
+              }),
+              const SizedBox(height: T.s8),
+              for (final r in _reviews.take(5))
+                Padding(
+                  padding: const EdgeInsets.only(bottom: T.s8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('👻', style: TextStyle(fontSize: 15)),
+                      const SizedBox(width: T.s8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(
+                                  (r['ghost'] as String?) ?? 'Призрак',
+                                  style: T.body(12.5, w: FontWeight.w700),
+                                ),
+                                const SizedBox(width: T.s8),
+                                Text(
+                                  '⭐' * ((r['rating'] as num?)?.toInt() ?? 0),
+                                  style: const TextStyle(fontSize: 10),
+                                ),
+                              ],
+                            ),
+                            if ((r['text'] as String? ?? '').isNotEmpty)
+                              Text(
+                                r['text'].toString(),
+                                style: T.body(13, color: T.muted),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            if (myUidOrNull != null) ...[
+              const SizedBox(height: T.s8),
+              Row(
+                children: [
+                  for (var i = 1; i <= 5; i++)
+                    GestureDetector(
+                      onTap: () => setState(() => _myRating = i),
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 2),
+                        child: Icon(
+                          Icons.star_rounded,
+                          size: 26,
+                          color: i <= _myRating
+                              ? T.gold
+                              : T.faint.withOpacity(0.5),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(width: T.s8),
+                  Expanded(
+                    child: TextField(
+                      controller: _reviewCtl,
+                      decoration: const InputDecoration(
+                        hintText: '✍️ Оставить отзыв…',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: T.s8),
+              GhostButton(
+                text: '✍️ Оставить отзыв',
+                small: true,
+                onPressed: _submitReview,
+              ),
+            ] else
+              Padding(
+                padding: const EdgeInsets.only(top: T.s8),
+                child: GhostButton(
+                  text: 'Войди, чтобы оставить отзыв',
+                  small: true,
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                        builder: (_) => const LoginPage()),
+                  ),
+                ),
+              ),
             if (similar.isNotEmpty) ...[
               const SizedBox(height: T.s20),
               sectionLabel('Похожие места', color: T.salmon),
@@ -3516,6 +4317,7 @@ class MapTab extends StatefulWidget {
   final Set<String> favs;
   final void Function(Place) onToggleFav;
   final void Function(Place)? onCheckIn;
+  final void Function(Place)? onPhotoUploaded;
   const MapTab({
     super.key,
     required this.places,
@@ -3525,6 +4327,7 @@ class MapTab extends StatefulWidget {
     required this.favs,
     required this.onToggleFav,
     this.onCheckIn,
+    this.onPhotoUploaded,
   });
 
   @override
@@ -3535,6 +4338,7 @@ class _MapTabState extends State<MapTab> {
   MapLibreMapController? _ctl;
   String? _style;
   bool _styleReady = false;
+  bool _centeredOnUser = false;
   final Map<String, Place> _circlePlace = {};
   final Map<String, Friend> _symbolFriend = {};
   final Map<String, Uint8List> _markerCache = {};
@@ -3778,6 +4582,7 @@ class _MapTabState extends State<MapTab> {
           cityPlaces: widget.places,
           city: widget.city,
           onCheckIn: widget.onCheckIn,
+          onPhotoUploaded: widget.onPhotoUploaded,
         );
       }
     });
@@ -3851,7 +4656,17 @@ class _MapTabState extends State<MapTab> {
         _styleReady = true;
         _drawPlaces();
         _refreshFriends();
-        _presence();
+        _presence().then((_) {
+          // First open: center on the user when we have a real position;
+          // otherwise the initial camera already sits on the city.
+          final pos = myLocationNotifier.value;
+          if (pos != null && !_centeredOnUser && mounted) {
+            _centeredOnUser = true;
+            _ctl?.animateCamera(
+              CameraUpdate.newLatLngZoom(pos, 14),
+            );
+          }
+        });
         _timer?.cancel();
         _timer = Timer.periodic(const Duration(seconds: 30), (_) {
           _refreshFriends();
@@ -3915,6 +4730,7 @@ class PlacesTab extends StatefulWidget {
   final void Function(Place) onToggleFav;
   final VoidCallback onOpenTasks;
   final void Function(Place)? onCheckIn;
+  final void Function(Place)? onPhotoUploaded;
   const PlacesTab({
     super.key,
     required this.places,
@@ -3923,6 +4739,7 @@ class PlacesTab extends StatefulWidget {
     required this.onToggleFav,
     required this.onOpenTasks,
     this.onCheckIn,
+    this.onPhotoUploaded,
   });
 
   @override
@@ -3938,6 +4755,7 @@ class _PlacesTabState extends State<PlacesTab> {
 
   static const _sortLabels = {
     'vibe': 'По движу',
+    'dist': '📍 Рядом со мной',
     'rating': 'По рейтингу',
     'price': 'По цене',
     'name': 'А–Я',
@@ -3972,6 +4790,7 @@ class _PlacesTabState extends State<PlacesTab> {
       cityPlaces: widget.places,
       city: widget.city,
       onCheckIn: widget.onCheckIn,
+      onPhotoUploaded: widget.onPhotoUploaded,
     );
   }
 
@@ -3986,11 +4805,21 @@ class _PlacesTabState extends State<PlacesTab> {
       return true;
     }).toList();
     switch (_sort) {
+      case 'dist':
+        final origin = myLocationNotifier.value;
+        if (origin == null) {
+          // No position yet: fall back to vibe instead of fake distances.
+          list.sort((a, b) => vibeOf(b).compareTo(vibeOf(a)));
+        } else {
+          list.sort((a, b) =>
+              haversineKm(origin.latitude, origin.longitude, a.lat, a.lng)
+                  .compareTo(haversineKm(
+                      origin.latitude, origin.longitude, b.lat, b.lng)));
+        }
       case 'rating':
         list.sort((a, b) => (b.rating ?? 0).compareTo(a.rating ?? 0));
       case 'price':
-        list.sort(
-            (a, b) => (a.priceLevel ?? 99).compareTo(b.priceLevel ?? 99));
+        list.sort((a, b) => effPriceLevel(a).compareTo(effPriceLevel(b)));
       case 'name':
         list.sort((a, b) => a.name.compareTo(b.name));
       default:
@@ -4292,16 +5121,29 @@ class _PlacesTabState extends State<PlacesTab> {
                                   style: T.body(15, w: FontWeight.w700),
                                 ),
                                 const SizedBox(height: 3),
-                                Text(
-                                  [
-                                    if (p.rating != null)
-                                      '⭐ ${p.rating!.toStringAsFixed(1)}',
-                                    if (priceText(p).isNotEmpty) priceText(p),
-                                    if (p.address.isNotEmpty) p.address,
-                                  ].join(' · '),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: T.body(12.5, color: T.muted),
+                                ValueListenableBuilder<LatLng?>(
+                                  valueListenable: myLocationNotifier,
+                                  builder: (_, origin, __) {
+                                    final d = origin == null
+                                        ? null
+                                        : haversineKm(origin.latitude,
+                                            origin.longitude, p.lat, p.lng);
+                                    return Text(
+                                      [
+                                        if (p.rating != null)
+                                          '⭐ ${p.rating!.toStringAsFixed(1)}'
+                                        else
+                                          '✨ новое',
+                                        if (priceText(p).isNotEmpty)
+                                          priceText(p),
+                                        if (d != null) '📍 ${fmtKm(d)} км',
+                                        if (p.address.isNotEmpty) p.address,
+                                      ].join(' · '),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: T.body(12.5, color: T.muted),
+                                    );
+                                  },
                                 ),
                               ],
                             ),
@@ -4850,15 +5692,450 @@ class DonePill extends StatelessWidget {
 
 /* ---------------- tasks page: AI day, daily task, week quest ---------------- */
 
+/* ---------------- v2.0.6: steps card, city quest, photo tournament ----- */
+
+/* «👟 Шаги сегодня» — live pedometer card (Profile + Tasks). */
+class StepsCard extends StatelessWidget {
+  const StepsCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: StepsTracker.available,
+      builder: (_, available, __) => ValueListenableBuilder<int>(
+        valueListenable: StepsTracker.today,
+        builder: (_, steps, __) => ValueListenableBuilder<int>(
+          valueListenable: StepsTracker.xpToday,
+          builder: (_, xp, __) => Container(
+            padding: const EdgeInsets.all(T.s16),
+            decoration: cardDecoration(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('👟 Шаги сегодня', style: T.head(15)),
+                    const Spacer(),
+                    Text(
+                      '$steps',
+                      style: T.num(19, color: T.ember),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: T.s12),
+                GradientProgress(value: (steps % 1000) / 1000),
+                const SizedBox(height: 9),
+                Text(
+                  !available
+                      ? 'Нет доступа к шагам — разреши физическую активность, и шаги начнут давать XP'
+                      : 'Каждые 1000 шагов = +5 XP (до +50 в день) · '
+                          'до следующего +5 XP: ${1000 - (steps % 1000)} шагов · сегодня +$xp XP',
+                  style: T.body(12, color: T.muted),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/* «🏙️ Квест города» — today's deterministic city quest with live
+   progress read from the CityQuest prefs state. */
+class CityQuestCard extends StatefulWidget {
+  final List<Place> places;
+  final City? city;
+  const CityQuestCard({super.key, required this.places, required this.city});
+
+  @override
+  State<CityQuestCard> createState() => _CityQuestCardState();
+}
+
+class _CityQuestCardState extends State<CityQuestCard> {
+  Map<String, dynamic>? _quest;
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+    CityQuest.revision.addListener(_reload);
+  }
+
+  @override
+  void dispose() {
+    CityQuest.revision.removeListener(_reload);
+    super.dispose();
+  }
+
+  Future<void> _reload() async {
+    final city = widget.city;
+    if (city == null || widget.places.isEmpty) return;
+    final q = await CityQuest.ensure(widget.places, city);
+    if (mounted) setState(() => _quest = q);
+  }
+
+  String _stepLabel(Map<String, dynamic> st) {
+    switch (st['kind']) {
+      case 'checkin':
+        return 'Зачекинься: ${st['name']}';
+      case 'photo':
+        return 'Сфотографируй: ${st['name']}';
+      case 'fav':
+        return 'Добавь в избранное: ${st['name']}';
+      default:
+        return '${st['name']}';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final q = _quest;
+    if (widget.city == null || q == null) return const SizedBox.shrink();
+    final steps = (q['steps'] as List? ?? [])
+        .map((e) => (e as Map).cast<String, dynamic>())
+        .toList();
+    if (steps.isEmpty) return const SizedBox.shrink();
+    final allDone = steps.every((st) => st['done'] == true);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(15),
+      decoration: cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '🏙️ Квест города — ${widget.city!.name}',
+                  style: T.head(15),
+                ),
+              ),
+              if (allDone) const DonePill(),
+            ],
+          ),
+          const SizedBox(height: T.s8),
+          for (final st in steps)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    st['done'] == true ? '✅ ' : '⬜ ',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  Expanded(
+                    child: Text(
+                      _stepLabel(st),
+                      style: T.body(
+                        14,
+                        color: st['done'] == true ? T.muted : T.text,
+                        w: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Text(
+            allDone
+                ? 'Квест выполнен · +50 XP уже твои 🎉'
+                : 'Все три шага за день — бонус +50 XP. Шаги засчитываются сами: чек-ин, фото и сердечко у нужных мест.',
+            style: T.body(12, color: T.muted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/* «🏆 Фото дня» — daily photo tournament for the selected city: today's
+   place_photos ranked by 🔥 from photo_reactions. Yesterday's winner, if
+   it is the current user, is credited +25 aiXp once (prefs flag). */
+class PhotoTournamentCard extends StatefulWidget {
+  final List<Place> places;
+  final void Function(int xp) onAiXp;
+  const PhotoTournamentCard({
+    super.key,
+    required this.places,
+    required this.onAiXp,
+  });
+
+  @override
+  State<PhotoTournamentCard> createState() => _PhotoTournamentCardState();
+}
+
+class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
+  List<Map<String, dynamic>> _photos = [];
+  Map<String, int> _fires = {};
+  final Set<String> _myFires = {};
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _creditYesterdayWinner();
+  }
+
+  String _placeName(String placeId) => widget.places
+      .where((e) => e.id == placeId)
+      .map((e) => e.name)
+      .firstOrNull ?? 'Место';
+
+  Future<List<Map<String, dynamic>>> _photosBetween(
+      DateTime from, DateTime to) async {
+    final ids = widget.places.map((e) => e.id).toList();
+    if (ids.isEmpty) return [];
+    final rows = await supa
+        .from('place_photos')
+        .select('id, place_id, user_id, url, visibility, reports, created_at')
+        .eq('hidden', false)
+        .lt('reports', 3)
+        .gte('created_at', from.toUtc().toIso8601String())
+        .lt('created_at', to.toUtc().toIso8601String())
+        .inFilter('place_id', ids)
+        .order('created_at', ascending: false)
+        .limit(60);
+    final uid = myUidOrNull;
+    return [
+      for (final r in rows as List)
+        if (r['visibility'] == 'public' || (uid != null && r['user_id'] == uid))
+          (r as Map).cast<String, dynamic>(),
+    ];
+  }
+
+  Future<Map<String, int>> _fireCounts(List<Map<String, dynamic>> photos,
+      {Set<String>? mineOut}) async {
+    final fires = <String, int>{};
+    if (photos.isEmpty) return fires;
+    try {
+      final rr = await supa
+          .from('photo_reactions')
+          .select('photo_id, user_id')
+          .inFilter('photo_id', photos.map((e) => e['id']).toList());
+      final uid = myUidOrNull;
+      for (final r in rr as List) {
+        final id = r['photo_id'].toString();
+        fires[id] = (fires[id] ?? 0) + 1;
+        if (mineOut != null && uid != null && r['user_id'] == uid) {
+          mineOut.add(id);
+        }
+      }
+    } catch (_) {}
+    return fires;
+  }
+
+  Future<void> _load() async {
+    try {
+      final now = DateTime.now();
+      final start = DateTime(now.year, now.month, now.day);
+      final photos = await _photosBetween(start, start.add(const Duration(days: 1)));
+      final mine = <String>{};
+      final fires = await _fireCounts(photos, mineOut: mine);
+      photos.sort((a, b) => (fires[b['id'].toString()] ?? 0)
+          .compareTo(fires[a['id'].toString()] ?? 0));
+      if (!mounted) return;
+      setState(() {
+        _photos = photos;
+        _fires = fires;
+        _myFires
+          ..clear()
+          ..addAll(mine);
+        _loaded = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _loaded = true);
+    }
+  }
+
+  Future<void> _creditYesterdayWinner() async {
+    final uid = myUidOrNull;
+    if (uid == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final yStart = today.subtract(const Duration(days: 1));
+      final flag =
+          'tour_winner_credited_${yStart.year}-${yStart.month}-${yStart.day}';
+      if (prefs.getBool(flag) == true) return;
+      final photos = await _photosBetween(yStart, today);
+      if (photos.isEmpty) return;
+      final fires = await _fireCounts(photos);
+      photos.sort((a, b) => (fires[b['id'].toString()] ?? 0)
+          .compareTo(fires[a['id'].toString()] ?? 0));
+      if (photos.first['user_id'] == uid) {
+        await prefs.setBool(flag, true);
+        widget.onAiXp(25);
+        if (mounted) {
+          snack(context, '🏆 Твоё фото выиграло вчерашний турнир · +25 XP');
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _toggleFire(Map<String, dynamic> ph) async {
+    final uid = myUidOrNull;
+    if (uid == null) {
+      snack(context, 'Войди, чтобы ставить 🔥');
+      return;
+    }
+    final id = ph['id'].toString();
+    final mine = _myFires.contains(id);
+    tickSelect();
+    setState(() {
+      if (mine) {
+        _myFires.remove(id);
+        _fires[id] = math.max(0, (_fires[id] ?? 1) - 1);
+      } else {
+        _myFires.add(id);
+        _fires[id] = (_fires[id] ?? 0) + 1;
+      }
+      _photos.sort((a, b) => (_fires[b['id'].toString()] ?? 0)
+          .compareTo(_fires[a['id'].toString()] ?? 0));
+    });
+    try {
+      if (mine) {
+        await supa
+            .from('photo_reactions')
+            .delete()
+            .eq('photo_id', ph['id'])
+            .eq('user_id', uid);
+      } else {
+        await supa.from('photo_reactions').insert({
+          'photo_id': ph['id'],
+          'user_id': uid,
+        });
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(15),
+      decoration: cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('🏆 Фото дня — турнир', style: T.head(15)),
+          const SizedBox(height: T.s4),
+          Text(
+            'Фото призраков города за сегодня. Больше 🔥 — выше место; лидер дня завтра получит +25 XP.',
+            style: T.body(12, color: T.muted),
+          ),
+          const SizedBox(height: T.s12),
+          if (!_loaded)
+            const ShimmerBox(height: 64)
+          else if (_photos.isEmpty)
+            Text(
+              'Сегодня пока нет фото — открой место и стань первым 📸',
+              style: T.body(13, color: T.muted),
+            )
+          else
+            for (var i = 0; i < _photos.take(10).length; i++)
+              Builder(builder: (_) {
+                final ph = _photos[i];
+                final id = ph['id'].toString();
+                final fires = _fires[id] ?? 0;
+                final mine = _myFires.contains(id);
+                final leader = i == 0;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: T.s8),
+                  padding: const EdgeInsets.all(T.s8),
+                  decoration: BoxDecoration(
+                    color: T.surfaceHi,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: leader ? T.gold : T.stroke,
+                      width: leader ? 1.4 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          ph['url'].toString(),
+                          width: 54,
+                          height: 54,
+                          fit: BoxFit.cover,
+                          cacheWidth: 140,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 54,
+                            height: 54,
+                            color: T.surface,
+                            child: const Center(child: Text('👻')),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: T.s12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${leader ? '👑 ' : ''}${_placeName(ph['place_id'].toString())}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: T.body(13.5, w: FontWeight.w700),
+                            ),
+                            Text(
+                              leader
+                                  ? '🏆 Фото дня · ${ghostLabelFor(ph['user_id'].toString())}'
+                                  : ghostLabelFor(ph['user_id'].toString()),
+                              style: T.body(11.5, color: T.muted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Pressable(
+                        onTap: () => _toggleFire(ph),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 11, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: mine
+                                ? T.fire.withOpacity(0.22)
+                                : T.surface,
+                            borderRadius: BorderRadius.circular(T.rPill),
+                            border: Border.all(
+                                color: mine ? T.fire : T.stroke),
+                          ),
+                          child: Text(
+                            '🔥 $fires',
+                            style: T.num(12.5,
+                                color: mine ? T.ember : T.text),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+        ],
+      ),
+    );
+  }
+}
+
 class TasksPage extends StatefulWidget {
   final Map<String, dynamic> stats;
   final VoidCallback onTaskDone;
   final void Function(int xp) onAiXp;
+  final List<Place> cityPlaces;
+  final City? city;
   const TasksPage({
     super.key,
     required this.stats,
     required this.onTaskDone,
     required this.onAiXp,
+    required this.cityPlaces,
+    required this.city,
   });
 
   @override
@@ -4876,6 +6153,7 @@ class _TasksPageState extends State<TasksPage> {
   @override
   void initState() {
     super.initState();
+    StepsTracker.start();
     _load();
   }
 
@@ -5025,6 +6303,13 @@ class _TasksPageState extends State<TasksPage> {
                   const SizedBox(height: 10),
                 ],
               ],
+              CityQuestCard(places: widget.cityPlaces, city: widget.city),
+              PhotoTournamentCard(
+                places: widget.cityPlaces,
+                onAiXp: widget.onAiXp,
+              ),
+              const StepsCard(),
+              const SizedBox(height: 10),
               sectionLabel('🎯 Задание дня', color: const Color(0xFFFF8A7A)),
               _taskCard(
                 Row(
@@ -5577,7 +6862,20 @@ class ProfileTab extends StatefulWidget {
 
 class _ProfileTabState extends State<ProfileTab> {
   int? _guestNumber;
+  String? _guestAvatarPath;
+  String? _guestEmoji;
+  final Map<String, bool> _notif = {};
   final GlobalKey _aboutKey = GlobalKey();
+
+  static const _notifKinds = <(String, String)>[
+    ('quest', '🏙️ Квесты и задания дня'),
+    ('friends', '👻 Друзья в деле и онлайн'),
+    ('votes', '🗳️ Голосования'),
+    ('photos', '📸 Фото и турнир дня'),
+    ('streak', '🔥 Серия под угрозой'),
+    ('rain', '🌧️ Дождь в городе'),
+    ('steps', '👟 Цели шагов'),
+  ];
 
   @override
   void initState() {
@@ -5593,8 +6891,148 @@ class _ProfileTabState extends State<ProfileTab> {
         n = 1000 + math.Random().nextInt(9000);
         await prefs.setInt('ghost_number', n);
       }
-      if (mounted) setState(() => _guestNumber = n);
+      if (!mounted) return;
+      setState(() {
+        _guestNumber = n;
+        // Guest avatar lives ONLY on this phone: a local file whose path
+        // is kept in prefs (guest_avatar_path) — nothing is uploaded.
+        _guestAvatarPath = prefs.getString('guest_avatar_path');
+        _guestEmoji = prefs.getString('guest_avatar_emoji');
+        for (final (key, _) in _notifKinds) {
+          _notif[key] = prefs.getBool('notif_$key') ?? true;
+        }
+      });
     } catch (_) {}
+  }
+
+  Future<void> _setNotif(String key, bool on) async {
+    setState(() => _notif[key] = on);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('notif_$key', on);
+    } catch (_) {}
+  }
+
+  /* Avatar editor: emoji grid + «Фото из галереи». Signed-in users
+     upload to the avatars bucket (<uid>/avatar.jpg) and set
+     profiles.avatar_url; guests keep the picked photo on-device. */
+  void _showAvatarSheet() {
+    final signedIn = supa.auth.currentUser != null;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SheetShell(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(T.s20, T.s4, T.s20, T.s16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Аватар призрака', style: T.head(16)),
+              const SizedBox(height: T.s12),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final e in [
+                    '👻', '😎', '🦊', '🐺', '🦉', '🐱',
+                    '🔥', '🌙', '⭐', '💀', '🎭', '🦄',
+                  ])
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        _setEmojiAvatar(e);
+                      },
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: T.surfaceHi,
+                          border: Border.all(color: T.stroke),
+                        ),
+                        child: Text(e, style: const TextStyle(fontSize: 24)),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: T.s16),
+              FireButton(
+                text: '📷 Фото из галереи',
+                small: true,
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _pickGalleryAvatar();
+                },
+              ),
+              if (!signedIn) ...[
+                const SizedBox(height: T.s8),
+                Text(
+                  'Гостю фото сохранится только на этом телефоне. Войди — и аватар будет жить в облаке.',
+                  textAlign: TextAlign.center,
+                  style: T.body(11.5, color: T.muted),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _setEmojiAvatar(String e) async {
+    final uid = myUidOrNull;
+    if (uid == null) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('guest_avatar_emoji', e);
+      } catch (_) {}
+      if (mounted) setState(() => _guestEmoji = e);
+      return;
+    }
+    widget.onProfileChanged({...?widget.profile, 'avatar': e, 'avatar_url': null});
+    try {
+      await supa
+          .from('profiles')
+          .update({'avatar': e, 'avatar_url': null}).eq('id', uid);
+    } catch (_) {}
+  }
+
+  Future<void> _pickGalleryAvatar() async {
+    final bytes = await pickAndProcessImage(ImageSource.gallery);
+    if (bytes == null) return;
+    final uid = myUidOrNull;
+    if (uid == null) {
+      // Guest: write the photo to a local file and remember its path.
+      try {
+        final f = File(
+            '${Directory.systemTemp.path}/tirada_guest_avatar.jpg');
+        await f.writeAsBytes(bytes);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('guest_avatar_path', f.path);
+        if (mounted) setState(() => _guestAvatarPath = f.path);
+      } catch (_) {}
+      return;
+    }
+    try {
+      final path = '$uid/avatar.jpg';
+      await supa.storage.from('avatars').uploadBinary(
+            path,
+            bytes,
+            fileOptions: const FileOptions(
+              contentType: 'image/jpeg',
+              upsert: true,
+            ),
+          );
+      final url =
+          '${supa.storage.from('avatars').getPublicUrl(path)}?t=${DateTime.now().millisecondsSinceEpoch}';
+      widget.onProfileChanged({...?widget.profile, 'avatar_url': url});
+      await supa.from('profiles').update({'avatar_url': url}).eq('id', uid);
+      if (mounted) snack(context, 'Аватар обновлён 📷');
+    } catch (_) {
+      if (mounted) snack(context, 'Аватар не загрузился — попробуй ещё раз');
+    }
   }
 
   Future<void> _setMode(String mode) async {
@@ -5717,7 +7155,8 @@ class _ProfileTabState extends State<ProfileTab> {
     final number = signedIn && uid != null
         ? 1000 + stableHash(uid) % 9000
         : (_guestNumber ?? 1000);
-    final avatarEmoji = (p?['avatar'] as String?) ?? '👻';
+    final avatarEmoji =
+        signedIn ? ((p?['avatar'] as String?) ?? '👻') : (_guestEmoji ?? '👻');
     final avatarUrl = signedIn ? (p?['avatar_url'] as String?) : null;
     final mode = (p?['mode'] as String?) ?? 'visible';
     final s = widget.stats;
@@ -5761,11 +7200,7 @@ class _ProfileTabState extends State<ProfileTab> {
             child: GestureDetector(
               onTap: () {
                 HapticFeedback.selectionClick();
-                if (!signedIn) {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(builder: (_) => const LoginPage()),
-                  );
-                }
+                _showAvatarSheet();
               },
               child: Container(
                 width: 112,
@@ -5785,11 +7220,17 @@ class _ProfileTabState extends State<ProfileTab> {
                           image: NetworkImage(avatarUrl),
                           fit: BoxFit.cover,
                         )
-                      : null,
+                      : (!signedIn && _guestAvatarPath != null
+                          ? DecorationImage(
+                              image: FileImage(File(_guestAvatarPath!)),
+                              fit: BoxFit.cover,
+                            )
+                          : null),
                   color: kSurface2,
                 ),
                 alignment: Alignment.center,
-                child: avatarUrl == null
+                child: avatarUrl == null &&
+                        (signedIn || _guestAvatarPath == null)
                     ? Text(avatarEmoji, style: const TextStyle(fontSize: 52))
                     : null,
               ),
@@ -6054,6 +7495,8 @@ class _ProfileTabState extends State<ProfileTab> {
             );
           }),
           const SizedBox(height: T.s16),
+          const StepsCard(),
+          const SizedBox(height: T.s16),
           Row(
             children: [
               Expanded(
@@ -6158,21 +7601,14 @@ class _ProfileTabState extends State<ProfileTab> {
                 ),
                 const SizedBox(height: T.s12),
                 GhostButton(
-                  text: '📋 Скопировать карточку',
+                  text: '🔗 Поделиться карточкой',
                   small: true,
-                  onPressed: () async {
-                    await Clipboard.setData(
-                      ClipboardData(
-                        text: '👻 $nick #$number — TiradA anon\n'
-                            'Уровень $lvNum · $lvName · $xp XP\n'
-                            'Город: ${widget.city?.name ?? ''} · живой радар движа 🔥',
-                      ),
-                    );
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Карточка скопирована')),
-                    );
-                  },
+                  onPressed: () => shareWithXp(
+                    context,
+                    '👻 $nick #$number — TiradA anon\n'
+                    'Уровень $lvNum · $lvName · $xp XP\n'
+                    'Город: ${widget.city?.name ?? ''} · живой радар движа 🔥',
+                  ),
                 ),
               ],
             ),
@@ -6235,9 +7671,43 @@ class _ProfileTabState extends State<ProfileTab> {
               ],
             ),
           ),
+          const SizedBox(height: T.s24),
+          sectionLabel('🔔 Уведомления', color: T.salmon),
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: T.s16, vertical: T.s4),
+            decoration: cardDecoration(),
+            child: Column(
+              children: [
+                for (var i = 0; i < _notifKinds.length; i++) ...[
+                  if (i > 0) hairline(opacity: 0.6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding:
+                              const EdgeInsets.symmetric(vertical: T.s8),
+                          child: Text(
+                            _notifKinds[i].$2,
+                            style: T.body(14, w: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                      Switch(
+                        value: _notif[_notifKinds[i].$1] ?? true,
+                        onChanged: (v) => _setNotif(_notifKinds[i].$1, v),
+                        activeColor: T.ember,
+                        activeTrackColor: T.fire.withOpacity(0.45),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.5',
+            'TiradA anon · 2.0.6',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
