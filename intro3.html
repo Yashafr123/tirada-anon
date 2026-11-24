@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TiradA anon — интро 3: ретро 8-бит</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body { background:#0a0a12; color:#e8e8ff; overflow:hidden;
+    font-family:"Courier New", ui-monospace, monospace;
+    -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
+  #stage { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; cursor:pointer; padding:20px; }
+
+  /* CRT scanlines + vignette */
+  #crt { position:fixed; inset:0; pointer-events:none; z-index:6;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 2px, transparent 2px 4px); }
+  #vig { position:fixed; inset:0; pointer-events:none; z-index:6;
+    background:radial-gradient(90% 90% at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
+
+  /* boot log */
+  #boot { width:min(84vw, 360px); font-size:13px; line-height:1.85; color:#8aff8a; text-shadow:0 0 6px rgba(80,255,80,.6); min-height:118px; }
+  #boot .dim { color:#4d7a4d; text-shadow:none; }
+  #boot .ok { color:#fff; }
+  #cursor { display:inline-block; width:9px; height:15px; background:#8aff8a; vertical-align:-2px; animation:blinkC .7s steps(1) infinite; }
+  @keyframes blinkC { 0%,55% { opacity:1; } 56%,100% { opacity:0; } }
+
+  /* pixel title block */
+  #titleBlock { display:none; text-align:center; margin-top:6px; }
+  #titleBlock.show { display:block; }
+  #pixSign { width:112px; height:112px; image-rendering:pixelated; border:4px solid #ff2a1e;
+    box-shadow:0 0 0 4px #0a0a12, 0 0 0 8px rgba(255,42,30,.45), 10px 10px 0 rgba(0,0,0,.6);
+    animation:stepBounce 1s steps(2) infinite; }
+  @keyframes stepBounce { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-6px); } }
+  #pixName { margin-top:20px; font-size:min(11vw, 46px); font-weight:700; letter-spacing:.1em; color:#fff;
+    text-shadow:4px 4px 0 #ff2a1e, 8px 8px 0 rgba(0,0,0,.55); }
+  #pixName b { color:#ff2a1e; text-shadow:4px 4px 0 #5c0a10, 8px 8px 0 rgba(0,0,0,.55); }
+  #pixSub { margin-top:10px; font-size:12px; letter-spacing:.5em; text-indent:.5em; color:#ffd23f; text-shadow:2px 2px 0 rgba(0,0,0,.6); }
+
+  /* block loading bar */
+  #blocks { margin-top:26px; font-size:20px; letter-spacing:3px; color:#ff2a1e; text-shadow:0 0 8px rgba(255,42,30,.7); min-height:28px; }
+  #pressStart { display:none; margin-top:24px; font-size:min(5.2vw, 19px); font-weight:700; letter-spacing:.24em; text-indent:.24em; color:#fff;
+    text-shadow:3px 3px 0 #ff2a1e; animation:blinkC .8s steps(1) infinite; }
+  #pressStart.show { display:block; }
+  #coin { margin-top:14px; font-size:11px; letter-spacing:.3em; text-indent:.3em; color:#9a9ab0; display:none; }
+  #coin.show { display:block; }
+  .ghostRow { margin-top:20px; font-size:22px; letter-spacing:14px; text-indent:14px; display:none; }
+  .ghostRow.show { display:block; animation:stepBounce .8s steps(2) infinite; }
+
+  #fadeout { position:fixed; inset:0; background:#000; opacity:0; pointer-events:none; transition:opacity .3s steps(6); z-index:8; }
+  #fadeout.on { opacity:1; }
+  #endcard { position:fixed; inset:0; background:#0a0a12; z-index:9; display:none; flex-direction:column; align-items:center; justify-content:center; gap:18px; text-align:center; padding:24px; }
+  #endcard.show { display:flex; }
+  #endcard .big { font-size:21px; font-weight:700; }
+  #endcard .small { color:#9a9ab0; font-size:13px; line-height:1.6; }
+  #replay { background:#ff2a1e; color:#fff; border:none; padding:13px 26px; font-size:15px; font-weight:700; letter-spacing:.1em; cursor:pointer; font-family:inherit; box-shadow:5px 5px 0 rgba(0,0,0,.6); }
+  #hint { position:absolute; top:calc(10px + env(safe-area-inset-top)); right:14px; z-index:5; font-size:10px; letter-spacing:.18em; color:rgba(255,255,255,.4); text-transform:uppercase; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="hint">нажми — пропустить</div>
+  <div id="boot"></div>
+
+  <div id="titleBlock">
+    <img id="pixSign" src="icon-512.png" alt="TiradA">
+    <div id="pixName">Tirad<b>A</b> anon</div>
+    <div id="pixSub">GHOST CITY QUEST</div>
+    <div class="ghostRow" id="ghostRow">👻 👻 👻</div>
+    <div id="blocks"></div>
+    <div id="pressStart">▶ PRESS START</div>
+    <div id="coin">INSERT COIN · 1 PLAYER</div>
+  </div>
+</div>
+<div id="crt"></div>
+<div id="vig"></div>
+<div id="fadeout"></div>
+<div id="endcard">
+  <div class="big">Дальше — само приложение 👻</div>
+  <div class="small">Вариант 3 — «ретро»: загрузка как на старой приставке,<br>пиксели, сканлайны и PRESS START.</div>
+  <button id="replay">↻ Ещё раз</button>
+</div>
+
+<script>
+  var boot = document.getElementById('boot');
+  var titleBlock = document.getElementById('titleBlock');
+  var blocks = document.getElementById('blocks');
+  var press = document.getElementById('pressStart');
+  var coin = document.getElementById('coin');
+  var ghostRow = document.getElementById('ghostRow');
+  var fade = document.getElementById('fadeout');
+  var endcard = document.getElementById('endcard');
+  var booted = false, started = false;
+
+  var lines = [
+    '<span class="dim">TIRADA SYSTEM v1.0</span>',
+    'LOADING MAP......... <span class="ok">OK</span>',
+    'LOADING GHOSTS...... <span class="ok">OK</span>',
+    'LOADING NIGHT CITY.. <span class="ok">OK</span>'
+  ];
+  var li = 0;
+  function nextLine(){
+    if (li < lines.length) {
+      boot.innerHTML = lines.slice(0, li + 1).join('<br>') + ' <span id="cursor"></span>';
+      li++;
+      setTimeout(nextLine, 340);
+    } else {
+      setTimeout(showTitle, 260);
+    }
+  }
+  setTimeout(nextLine, 300);
+
+  function showTitle(){
+    if (booted) return; booted = true;
+    boot.style.display = 'none';
+    titleBlock.classList.add('show');
+    ghostRow.classList.add('show');
+    var n = 0, total = 12;
+    var t = setInterval(function(){
+      n++;
+      blocks.textContent = '▮'.repeat(n) + '▯'.repeat(total - n);
+      if (n >= total) {
+        clearInterval(t);
+        press.classList.add('show');
+        coin.classList.add('show');
+      }
+    }, 110);
+  }
+
+  function start(){
+    if (!booted) { showTitle(); return; }
+    if (started) return; started = true;
+    fade.classList.add('on');
+    setTimeout(function(){ endcard.classList.add('show'); }, 340);
+  }
+  document.getElementById('stage').addEventListener('click', start);
+  document.getElementById('replay').addEventListener('click', function(){ location.reload(); });
+</script>
+</body>
+</html>
