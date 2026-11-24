@@ -10,7 +10,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show rootBundle, HapticFeedback;
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -175,6 +175,116 @@ int xpOfStats(Map<String, dynamic> raw) {
   return (i + 1, kLevels[i].$2, i + 1 < kLevels.length ? kLevels[i + 1].$1 : null);
 }
 
+/* ---------------- juicy style helpers ---------------- */
+
+/* The button you want to press: red gradient, neon glow, haptic tick. */
+Widget glowButton({
+  required String text,
+  required VoidCallback? onPressed,
+  bool small = false,
+}) {
+  return DecoratedBox(
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        colors: [Color(0xFFFF3B2F), Color(0xFFD90429), Color(0xFF8F0318)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+      borderRadius: BorderRadius.circular(small ? 12 : 18),
+      boxShadow: [
+        BoxShadow(
+          color: kRed.withOpacity(onPressed == null ? 0.12 : 0.5),
+          blurRadius: small ? 12 : 22,
+          spreadRadius: 1,
+          offset: const Offset(0, 6),
+        ),
+      ],
+    ),
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(small ? 12 : 18),
+        onTap: onPressed == null
+            ? null
+            : () {
+                HapticFeedback.lightImpact();
+                onPressed();
+              },
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            vertical: small ? 9 : 16,
+            horizontal: small ? 16 : 22,
+          ),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: small ? 14 : 17,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/* Outlined neon button — the second thing you want to press. */
+Widget neonOutlineButton({
+  required String text,
+  required VoidCallback? onPressed,
+}) {
+  return DecoratedBox(
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: kRed.withOpacity(0.85), width: 1.6),
+      boxShadow: [
+        BoxShadow(color: kRed.withOpacity(0.22), blurRadius: 14),
+      ],
+    ),
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onPressed == null
+            ? null
+            : () {
+                HapticFeedback.selectionClick();
+                onPressed();
+              },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 22),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: kText,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/* App icon wrapped in a pulsing red halo. */
+Widget glowIcon(double size) {
+  return Container(
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      boxShadow: [
+        BoxShadow(color: kRed.withOpacity(0.55), blurRadius: 46, spreadRadius: 6),
+        BoxShadow(color: kRedDark.withOpacity(0.35), blurRadius: 90, spreadRadius: 22),
+      ],
+    ),
+    child: Image.asset('assets/icon.png', height: size),
+  );
+}
+
 int dayIndex() => DateTime.now().millisecondsSinceEpoch ~/ 86400000;
 
 String dayKey() {
@@ -218,6 +328,20 @@ class TiradaApp extends StatelessWidget {
           selectedItemColor: kRed,
           unselectedItemColor: kMuted,
           type: BottomNavigationBarType.fixed,
+          selectedLabelStyle: TextStyle(fontWeight: FontWeight.w800),
+          elevation: 18,
+        ),
+        chipTheme: ChipThemeData(
+          backgroundColor: kSurface2,
+          selectedColor: kRedDark,
+          side: BorderSide(color: kRed.withOpacity(0.35)),
+          labelStyle: const TextStyle(color: kText),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          showCheckmark: false,
+          elevation: 4,
+          pressElevation: 8,
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
@@ -240,8 +364,11 @@ class TiradaApp extends StatelessWidget {
         ),
         cardTheme: CardThemeData(
           color: kSurface,
+          elevation: 7,
+          shadowColor: kRed.withOpacity(0.28),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: kRed.withOpacity(0.14)),
           ),
         ),
       ),
@@ -363,15 +490,21 @@ class _LoginPageState extends State<LoginPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const SizedBox(height: 24),
-              Image.asset('assets/icon.png', height: 150),
+              glowIcon(150),
               const SizedBox(height: 12),
-              const Text(
-                'TiradA anon',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 30,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.5,
+              ShaderMask(
+                shaderCallback: (r) => const LinearGradient(
+                  colors: [Color(0xFFFF6B5E), kRed, Color(0xFF8F0318)],
+                ).createShader(r),
+                child: const Text(
+                  'TiradA anon',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 32,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                    color: Colors.white,
+                  ),
                 ),
               ),
               const SizedBox(height: 6),
@@ -408,17 +541,14 @@ class _LoginPageState extends State<LoginPage> {
                 ),
               ],
               const SizedBox(height: 24),
-              FilledButton(
+              glowButton(
+                text: _busy ? 'Секунду…' : '🚀 Войти',
                 onPressed: _busy ? null : () => _go(false),
-                child: Text(_busy ? 'Секунду…' : 'Войти'),
               ),
-              const SizedBox(height: 10),
-              TextButton(
+              const SizedBox(height: 12),
+              neonOutlineButton(
+                text: '✨ Создать аккаунт',
                 onPressed: _busy ? null : () => _go(true),
-                child: const Text(
-                  'Создать аккаунт',
-                  style: TextStyle(color: kText),
-                ),
               ),
               const SizedBox(height: 8),
               const Text(
@@ -616,7 +746,10 @@ class _HomePageState extends State<HomePage> {
       ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _tab,
-        onTap: (i) => setState(() => _tab = i),
+        onTap: (i) {
+          HapticFeedback.selectionClick();
+          setState(() => _tab = i);
+        },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Карта'),
           BottomNavigationBarItem(icon: Icon(Icons.place), label: 'Места'),
@@ -1129,11 +1262,25 @@ class _PlacesTabState extends State<PlacesTab> {
               itemBuilder: (_, i) {
                 final p = list[i];
                 final fav = widget.favs.contains(p.id);
-                return ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: typeColor(p.type).withOpacity(0.18),
-                    child: Text(kTypeEmoji[p.type] ?? '📍'),
-                  ),
+                return Card(
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  child: ListTile(
+                    leading: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: typeColor(p.type).withOpacity(0.45),
+                            blurRadius: 12,
+                          ),
+                        ],
+                      ),
+                      child: CircleAvatar(
+                        backgroundColor: typeColor(p.type).withOpacity(0.2),
+                        child: Text(kTypeEmoji[p.type] ?? '📍'),
+                      ),
+                    ),
                   title: Text(p.name),
                   subtitle: Text(
                     [
@@ -1153,11 +1300,12 @@ class _PlacesTabState extends State<PlacesTab> {
                     ),
                     onPressed: () => widget.onToggleFav(p),
                   ),
-                  onTap: () => showPlaceSheet(
-                    context,
-                    p,
-                    isFav: fav,
-                    onToggleFav: widget.onToggleFav,
+                    onTap: () => showPlaceSheet(
+                      context,
+                      p,
+                      isFav: fav,
+                      onToggleFav: widget.onToggleFav,
+                    ),
                   ),
                 );
               },
@@ -1316,10 +1464,11 @@ class _TasksTabState extends State<TasksTab> {
                               label: Text('Выполнено ✓'),
                               backgroundColor: kSurface2,
                             )
-                          : FilledButton(
+                          : glowButton(
+                              text: 'Готово ✓',
+                              small: true,
                               onPressed: () =>
                                   _completeAi(t as Map<String, dynamic>),
-                              child: const Text('Готово'),
                             ),
                     ],
                   ),
@@ -1368,9 +1517,10 @@ class _TasksTabState extends State<TasksTab> {
                           label: Text('Выполнено ✓'),
                           backgroundColor: kSurface2,
                         )
-                      : FilledButton(
+                      : glowButton(
+                          text: 'Готово ✓',
+                          small: true,
                           onPressed: _completeDaily,
-                          child: const Text('Готово'),
                         ),
                 ],
               ),
@@ -1430,6 +1580,10 @@ class _ProfileTabState extends State<ProfileTab> {
         decoration: BoxDecoration(
           color: kSurface,
           borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kRed.withOpacity(0.22)),
+          boxShadow: [
+            BoxShadow(color: kRed.withOpacity(0.13), blurRadius: 10),
+          ],
         ),
         padding: const EdgeInsets.symmetric(vertical: 14),
         child: Column(
@@ -1453,7 +1607,7 @@ class _ProfileTabState extends State<ProfileTab> {
           padding: const EdgeInsets.all(24),
           children: [
             const SizedBox(height: 24),
-            Image.asset('assets/icon.png', height: 130),
+            glowIcon(130),
             const SizedBox(height: 16),
             const Text(
               'Ты смотришь как гость 👻',
@@ -1468,11 +1622,11 @@ class _ProfileTabState extends State<ProfileTab> {
               style: TextStyle(color: kMuted, fontSize: 14),
             ),
             const SizedBox(height: 24),
-            FilledButton(
+            glowButton(
+              text: '🚀 Войти / Создать аккаунт',
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: (_) => const LoginPage()),
               ),
-              child: const Text('Войти / Создать аккаунт'),
             ),
             const SizedBox(height: 24),
             const Text(
@@ -1642,17 +1796,9 @@ class _ProfileTabState extends State<ProfileTab> {
               subtitle: Text(fp.city, style: const TextStyle(color: kMuted)),
             ),
           const SizedBox(height: 18),
-          OutlinedButton(
+          neonOutlineButton(
+            text: 'Выйти',
             onPressed: () => supa.auth.signOut(),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: kRed,
-              side: const BorderSide(color: kRed),
-              padding: const EdgeInsets.symmetric(vertical: 13),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
-            ),
-            child: const Text('Выйти'),
           ),
           const SizedBox(height: 16),
           const Text(
