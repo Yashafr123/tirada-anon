@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.8.
+// TiradA anon — native app (Flutter), v2.0.9.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -328,6 +328,48 @@ class LocationService {
     } catch (_) {
       _starting = false;
     }
+  }
+}
+
+/* One shared map overlay for BOTH line features (v2.0.9): the evening /
+   ready route polyline and the single-place «Маршрут сюда» directions.
+   Whoever sets a new line replaces the previous one — the two can
+   never fight on the map. MapTab listens and (re)draws; HomePage
+   listens to showTick and switches to the Map tab. */
+class MapRouteLine {
+  final String kind; // 'route' · 'directions'
+  final String title;
+  final List<LatLng> points; // start first, then the stops in order
+  final List<Place> stops;
+  final Place? target; // directions only
+  final bool fromCityCenter; // start fell back to the city center
+  final double totalKm;
+  const MapRouteLine({
+    required this.kind,
+    required this.title,
+    required this.points,
+    required this.stops,
+    this.target,
+    this.fromCityCenter = false,
+    required this.totalKm,
+  });
+
+  int get walkMins => (totalKm / 5.0 * 60).round();
+  int get driveMins => (totalKm / 30.0 * 60).round();
+}
+
+class MapRouteBus {
+  static final ValueNotifier<MapRouteLine?> line =
+      ValueNotifier<MapRouteLine?>(null);
+  static final ValueNotifier<int> showTick = ValueNotifier<int>(0);
+
+  static void show(MapRouteLine l) {
+    line.value = l;
+    showTick.value++;
+  }
+
+  static void clear() {
+    line.value = null;
   }
 }
 
@@ -2531,6 +2573,8 @@ class _HomePageState extends State<HomePage> {
     StepsTracker.start();
     PushService.init();
     PushService.foreground.addListener(_onForegroundPush);
+    // v2.0.9: «Показать на карте» / «Маршрут сюда» ask for the Map tab.
+    MapRouteBus.showTick.addListener(_onShowMapRequest);
     // v2.0.8: ask for location up front and start the live GPS feed.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) LocationService.ensureLocation(context);
@@ -2545,11 +2589,18 @@ class _HomePageState extends State<HomePage> {
     _tickerTimer?.cancel();
     AiXpBus.pending.removeListener(_drainAiXp);
     PushService.foreground.removeListener(_onForegroundPush);
+    MapRouteBus.showTick.removeListener(_onShowMapRequest);
     super.dispose();
   }
 
   /* Bonus XP posted by deep widgets (sharing, steps, city quest) lands
      in stats here, where stats actually live. */
+  /* A route line was just published (Route tab or a place sheet):
+     bring the Map tab forward; MapTab itself draws the line. */
+  void _onShowMapRequest() {
+    if (mounted && _tab != 0) setState(() => _tab = 0);
+  }
+
   void _drainAiXp() {
     final v = AiXpBus.pending.value;
     if (v <= 0 || !mounted) return;
@@ -3227,6 +3278,8 @@ class _HomePageState extends State<HomePage> {
                   ),
                   RouteTab(
                     places: _cityPlaces,
+                    allPlaces: _places,
+                    cities: _cities,
                     city: _city,
                     onTaskDone: () => _bumpStat('tasks', 1),
                     onRouteBuilt: () => _bumpStat('routes', 1),
@@ -3738,6 +3791,56 @@ class _PlaceSheetState extends State<PlaceSheet> {
     super.dispose();
   }
 
+  /* 🧭 «Маршрут сюда»: publish a directions line to the Map tab via
+     MapRouteBus (HomePage switches tabs, MapTab draws). Start is the
+     live position; while location is off it falls back to the city
+     center and re-runs the location flow, which shows the usual hint. */
+  void _directionsHere() {
+    final p = _place;
+    final origin = myLocationNotifier.value;
+    if (origin == null) LocationService.ensureLocation(context);
+    final city = widget.city;
+    final start = origin ??
+        (city != null
+            ? LatLng(city.lat, city.lng)
+            : LatLng(p.lat, p.lng));
+    final dist =
+        haversineKm(start.latitude, start.longitude, p.lat, p.lng);
+    MapRouteBus.show(MapRouteLine(
+      kind: 'directions',
+      title: p.name,
+      points: [start, LatLng(p.lat, p.lng)],
+      stops: [p],
+      target: p,
+      fromCityCenter: origin == null,
+      totalKm: dist,
+    ));
+    Navigator.of(context).pop();
+  }
+
+  /* External navigator: Waze deep link first, Google Maps directions
+     as the fallback; a snackbar when neither can open. */
+  Future<void> _openNavigator() async {
+    final p = _place;
+    var ok = false;
+    try {
+      ok = await launchUrl(
+        Uri.parse('waze://?ll=${p.lat},${p.lng}&navigate=yes'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {}
+    if (!ok) {
+      try {
+        ok = await launchUrl(
+          Uri.parse(
+              'https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}'),
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (_) {}
+    }
+    if (!ok && mounted) snack(context, 'Не удалось открыть навигатор 😕');
+  }
+
   /* Read-only ghost gallery — same query shape as the web app:
      place_photos (hidden=false, reports<3, newest first), visibility
      filtered on the client, 🔥 counts from photo_reactions. */
@@ -4180,6 +4283,26 @@ class _PlaceSheetState extends State<PlaceSheet> {
               small: true,
               onPressed: _uploading ? () {} : _addPhoto,
             ),
+            const SizedBox(height: T.s12),
+            Row(
+              children: [
+                Expanded(
+                  child: FireButton(
+                    text: '🧭 Маршрут сюда',
+                    small: true,
+                    onPressed: _directionsHere,
+                  ),
+                ),
+                const SizedBox(width: T.s12),
+                Expanded(
+                  child: GhostButton(
+                    text: 'В навигатор',
+                    small: true,
+                    onPressed: _openNavigator,
+                  ),
+                ),
+              ],
+            ),
             if (_photos.isNotEmpty) ...[
               const SizedBox(height: T.s20),
               sectionLabel('📸 Фото призраков здесь', color: T.salmon),
@@ -4448,10 +4571,18 @@ class _MapTabState extends State<MapTab> {
   final Map<String, Uint8List> _pinCache = {};
   bool _pinsRegistered = false;
   Timer? _timer;
+  // Route / directions overlay (v2.0.9): one line + its markers, owned
+  // separately from place pins and friend avatars so redraws of those
+  // never wipe it.
+  Line? _routeLineObj;
+  final List<Symbol> _routeSymbols = [];
+  final Map<String, Uint8List> _routePinCache = {};
+  final Set<String> _routeImagesOnMap = {};
 
   @override
   void initState() {
     super.initState();
+    MapRouteBus.line.addListener(_onRouteLineChanged);
     rootBundle.loadString('assets/map-style.json').then((s) {
       if (mounted) setState(() => _style = s);
     });
@@ -4459,6 +4590,7 @@ class _MapTabState extends State<MapTab> {
 
   @override
   void dispose() {
+    MapRouteBus.line.removeListener(_onRouteLineChanged);
     _timer?.cancel();
     super.dispose();
   }
@@ -4572,6 +4704,266 @@ class _MapTabState extends State<MapTab> {
       _symbolPlace[sym.id] = p;
       _placeSymbols.add(sym);
     }
+  }
+
+  /* ---------------- route / directions overlay (v2.0.9) ----------- */
+
+  void _onRouteLineChanged() {
+    _drawRouteLine();
+  }
+
+  String _distText(double km) =>
+      km < 1 ? '${(km * 1000).round()} м' : '${fmtKm(km)} км';
+
+  Future<Uint8List> _routePinBitmap(String key, void Function(Canvas, Offset) paint) async {
+    final cached = _routePinCache[key];
+    if (cached != null) return cached;
+    const double size = 140;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, size, size));
+    paint(canvas, const Offset(size / 2, size / 2));
+    final pic = recorder.endRecording();
+    final img = await pic.toImage(size.toInt(), size.toInt());
+    final data = await img.toByteData(format: ui.ImageByteFormat.png);
+    final bytes = data!.buffer.asUint8List();
+    _routePinCache[key] = bytes;
+    return bytes;
+  }
+
+  Future<Uint8List> _routeNumPin(int n) => _routePinBitmap('num$n', (canvas, center) {
+        canvas.drawCircle(
+          center,
+          46,
+          Paint()
+            ..shader = ui.Gradient.linear(
+              const Offset(0, 0),
+              const Offset(140, 140),
+              [T.fire, T.ember],
+            ),
+        );
+        canvas.drawCircle(
+          center,
+          46,
+          Paint()
+            ..color = Colors.white.withOpacity(0.9)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 4,
+        );
+        final tp = TextPainter(
+          text: TextSpan(
+            text: '$n',
+            style: const TextStyle(
+              fontSize: 58,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+      });
+
+  Future<Uint8List> _routeStartPin() => _routePinBitmap('start', (canvas, center) {
+        canvas.drawCircle(center, 58, Paint()..color = Colors.white.withOpacity(0.16));
+        canvas.drawCircle(center, 30, Paint()..color = Colors.white);
+        canvas.drawCircle(
+          center,
+          30,
+          Paint()
+            ..color = T.fire
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 7,
+        );
+        canvas.drawCircle(center, 10, Paint()..color = T.fire);
+      });
+
+  Future<Uint8List> _routeTargetPin() => _routePinBitmap('target', (canvas, center) {
+        canvas.drawCircle(center, 66, Paint()..color = T.fire.withOpacity(0.15));
+        canvas.drawCircle(
+          center,
+          50,
+          Paint()
+            ..color = T.fire
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 10,
+        );
+        canvas.drawCircle(center, 15, Paint()..color = T.fire);
+      });
+
+  Future<void> _ensureRouteImages(int stopCount) async {
+    final ctl = _ctl;
+    if (ctl == null) return;
+    Future<void> reg(String name, Future<Uint8List> bytes) async {
+      if (_routeImagesOnMap.contains(name)) return;
+      _routeImagesOnMap.add(name);
+      try {
+        await ctl.addImage(name, await bytes);
+      } catch (_) {}
+    }
+
+    await reg('route-start', _routeStartPin());
+    await reg('route-target', _routeTargetPin());
+    for (var i = 1; i <= stopCount; i++) {
+      await reg('route-num-$i', _routeNumPin(i));
+    }
+  }
+
+  /* Draws (or clears) the single shared overlay line from
+     MapRouteBus: evening/ready route polyline with numbered stops,
+     or a directions line to one place with a target ring. Setting a
+     new line replaces the old one — they never coexist. */
+  Future<void> _drawRouteLine() async {
+    final ctl = _ctl;
+    if (ctl == null || !_styleReady) return;
+    if (_routeLineObj != null) {
+      try {
+        await ctl.removeLine(_routeLineObj!);
+      } catch (_) {}
+      _routeLineObj = null;
+    }
+    for (final s in _routeSymbols) {
+      try {
+        await ctl.removeSymbol(s);
+      } catch (_) {}
+    }
+    _routeSymbols.clear();
+    final data = MapRouteBus.line.value;
+    if (data == null || data.points.length < 2) return;
+    await _ensureRouteImages(data.stops.length);
+    try {
+      _routeLineObj = await ctl.addLine(
+        LineOptions(
+          geometry: data.points,
+          lineColor: '#E11D1D',
+          lineWidth: 4.5,
+          lineOpacity: 0.92,
+        ),
+      );
+    } catch (_) {}
+    try {
+      final s = await ctl.addSymbol(
+        SymbolOptions(
+          geometry: data.points.first,
+          iconImage: 'route-start',
+          iconSize: 0.4,
+        ),
+      );
+      _routeSymbols.add(s);
+    } catch (_) {}
+    if (data.kind == 'directions' && data.target != null) {
+      try {
+        final s = await ctl.addSymbol(
+          SymbolOptions(
+            geometry: LatLng(data.target!.lat, data.target!.lng),
+            iconImage: 'route-target',
+            iconSize: 0.55,
+          ),
+        );
+        _routeSymbols.add(s);
+      } catch (_) {}
+    } else {
+      for (var i = 0; i < data.stops.length; i++) {
+        final p = data.stops[i];
+        try {
+          final s = await ctl.addSymbol(
+            SymbolOptions(
+              geometry: LatLng(p.lat, p.lng),
+              iconImage: 'route-num-${i + 1}',
+              iconSize: 0.42,
+            ),
+          );
+          _routeSymbols.add(s);
+        } catch (_) {}
+      }
+    }
+    // Fit the whole line on screen.
+    try {
+      var minLat = 90.0, maxLat = -90.0, minLng = 180.0, maxLng = -180.0;
+      for (final pt in data.points) {
+        minLat = math.min(minLat, pt.latitude);
+        maxLat = math.max(maxLat, pt.latitude);
+        minLng = math.min(minLng, pt.longitude);
+        maxLng = math.max(maxLng, pt.longitude);
+      }
+      await ctl.animateCamera(
+        CameraUpdate.newLatLngBounds(
+          LatLngBounds(
+            southwest: LatLng(minLat, minLng),
+            northeast: LatLng(maxLat, maxLng),
+          ),
+          left: 70,
+          top: 90,
+          right: 70,
+          bottom: 140,
+        ),
+      );
+    } catch (_) {}
+  }
+
+  /* Info chip for the overlay line: route summary, or — for
+     directions — distance + walking time (driving too, when it
+     differs enough to matter). ✕ clears the line. */
+  Widget _routeChip() {
+    return ValueListenableBuilder<MapRouteLine?>(
+      valueListenable: MapRouteBus.line,
+      builder: (_, data, __) {
+        if (data == null) return const SizedBox.shrink();
+        final String text;
+        if (data.kind == 'directions' && data.target != null) {
+          text = '🧭 ${data.target!.name} · ${_distText(data.totalKm)} · '
+              '≈ ${data.walkMins} мин пешком'
+              '${data.walkMins - data.driveMins >= 10 ? ' · 🚗 ≈ ${data.driveMins} мин' : ''}'
+              '${data.fromCityCenter ? ' · от центра города' : ''}';
+        } else {
+          text = '🗺️ ${data.title} · ${data.stops.length} точки · '
+              '${_distText(data.totalKm)}';
+        }
+        return Positioned(
+          top: T.s12,
+          left: T.s12,
+          right: T.s12,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(T.s16, T.s8, T.s8, T.s8),
+              decoration: BoxDecoration(
+                color: T.surface.withOpacity(0.92),
+                borderRadius: BorderRadius.circular(T.rPill),
+                border: Border.all(color: T.fire.withOpacity(0.55)),
+                boxShadow: T.cardDepth,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      text,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: T.body(12.5, w: FontWeight.w700),
+                    ),
+                  ),
+                  const SizedBox(width: T.s8),
+                  GestureDetector(
+                    onTap: () => MapRouteBus.clear(),
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: T.surfaceHi,
+                        border: Border.all(color: T.stroke),
+                      ),
+                      child: Text('✕', style: T.body(12, color: T.muted)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<Uint8List> _friendMarker(Friend f) async {
@@ -4764,6 +5156,9 @@ class _MapTabState extends State<MapTab> {
   void _onMapCreated(MapLibreMapController ctl) {
     _ctl = ctl;
     _pinsRegistered = false; // new controller → pin images must re-register
+    _routeImagesOnMap.clear(); // …and so must the route-marker images
+    _routeLineObj = null;
+    _routeSymbols.clear();
     ctl.onSymbolTapped.add((s) {
       final p = _symbolPlace[s.id];
       if (p != null && mounted) {
@@ -4837,6 +5232,7 @@ class _MapTabState extends State<MapTab> {
     final hot = widget.places.where((p) => vibeOf(p) >= 70).length;
     return Stack(
       children: [
+        _routeChip(),
         MapLibreMap(
           styleString: _style!,
           initialCameraPosition: CameraPosition(
@@ -4847,6 +5243,7 @@ class _MapTabState extends State<MapTab> {
       onStyleLoadedCallback: () {
         _styleReady = true;
         _drawPlaces();
+        _drawRouteLine();
         _refreshFriends();
         _presence().then((_) {
           // First open: center on the user when we have a real position;
@@ -5388,14 +5785,52 @@ class _PlacesTabState extends State<PlacesTab> {
 
 /* ---------------- route tab ---------------- */
 
+/* A ready-made route, generated deterministically at runtime from the
+   real places DB (no data files): an anchor place plus a walkable
+   chain of complementary types. Name is a {ru, he, en} map, picked by
+   aiText() — the same pattern the AI daily drop uses. */
+class ReadyRoute {
+  final String id;
+  final City city;
+  final Map<String, dynamic> name;
+  final List<Place> stops;
+  const ReadyRoute({
+    required this.id,
+    required this.city,
+    required this.name,
+    required this.stops,
+  });
+}
+
+/* City names for generated route titles (he/en); anything missing
+   falls back to the Russian name from cities.json. */
+const kCityI18n = <String, (String, String)>{
+  'telaviv': ('תל אביב', 'Tel Aviv'),
+  'jerusalem': ('ירושלים', 'Jerusalem'),
+  'haifa': ('חיפה', 'Haifa'),
+  'karmiel': ('כרמיאל', 'Karmiel'),
+  'beersheva': ('באר שבע', 'Beersheba'),
+  'eilat': ('אילת', 'Eilat'),
+  'netanya': ('נתניה', 'Netanya'),
+  'ashdod': ('אשדוד', 'Ashdod'),
+  'ashkelon': ('אשקלון', 'Ashkelon'),
+  'rishon': ('ראשון לציון', 'Rishon LeZion'),
+  'petahtikva': ('פתח תקווה', 'Petah Tikva'),
+  'holon': ('חולון', 'Holon'),
+};
+
 class RouteTab extends StatefulWidget {
   final List<Place> places;
+  final List<Place> allPlaces;
+  final List<City> cities;
   final City? city;
   final VoidCallback onTaskDone;
   final VoidCallback onRouteBuilt;
   const RouteTab({
     super.key,
     required this.places,
+    required this.allPlaces,
+    required this.cities,
     required this.city,
     required this.onTaskDone,
     required this.onRouteBuilt,
@@ -5409,13 +5844,28 @@ class _RouteTabState extends State<RouteTab> {
   String _transport = 'car';
   int _seed = 0;
   List<dynamic> _routeTasks = [];
+
+  /* The active route — built evening route, an opened ready route or
+     an opened saved one. Persisted whole in prefs (active_route_v1),
+     so a half-walked route survives an app restart. */
+  List<Place> _stops = [];
+  LatLng? _start;
+  bool _startIsCenter = false;
+  String _kind = 'evening'; // evening · ready · saved
+  String _routeKey = '';
+  String _routeTitle = 'Маршрут на вечер';
+  String _routeCityId = '';
+  String _routeCityName = '';
   final Set<int> _done = {};
   bool _counted = false;
+
   List<Map<String, dynamic>> _savedRoutes = [];
-  Map<String, dynamic>? _viewSaved;
+  final Map<String, List<ReadyRoute>> _readyCache = {};
+  Set<String> _readyCounted = {};
 
   static const _speeds = {'walk': 5.0, 'bus': 18.0, 'car': 30.0};
   static const _icons = {'walk': '🚶', 'bus': '🚌', 'car': '🚗'};
+  static const _checkInRadiusKm = 0.15; // «Я здесь» opens within ~150 m
 
   @override
   void initState() {
@@ -5424,14 +5874,51 @@ class _RouteTabState extends State<RouteTab> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(RouteTab old) {
+    super.didUpdateWidget(old);
+    // The evening route belongs to the selected city; ready/saved
+    // routes the user opened on purpose stay untouched.
+    if (old.city?.id != widget.city?.id && _kind == 'evening') {
+      _buildEvening();
+      if (mounted) setState(() {});
+    }
+  }
+
+  Map<String, dynamic> _placeMap(Place p) => {
+        'id': p.id,
+        'city': p.city,
+        'name': p.name,
+        'type': p.type,
+        'lat': p.lat,
+        'lng': p.lng,
+        'rating': p.rating,
+        'reviews': p.reviews,
+        'priceLevel': p.priceLevel,
+        'address': p.address,
+      };
+
+  Place _placeFromMap(Map<String, dynamic> m) => Place(
+        id: (m['id'] ?? '').toString(),
+        city: (m['city'] ?? '').toString(),
+        name: (m['name'] ?? '').toString(),
+        type: (m['type'] ?? 'other').toString(),
+        lat: (m['lat'] as num?)?.toDouble() ?? 0,
+        lng: (m['lng'] as num?)?.toDouble() ?? 0,
+        rating: (m['rating'] as num?)?.toDouble(),
+        reviews: (m['reviews'] as num?)?.toInt(),
+        priceLevel: (m['priceLevel'] as num?)?.toInt(),
+        address: (m['address'] ?? '').toString(),
+      );
+
   Future<void> _load() async {
     try {
       final raw = await rootBundle.loadString('assets/tasks.json');
       final data = jsonDecode(raw) as Map<String, dynamic>;
       _routeTasks = (data['route'] as List?) ?? [];
+    } catch (_) {}
+    try {
       final prefs = await SharedPreferences.getInstance();
-      final saved = prefs.getInt('route_seed_${dayKey()}');
-      if (saved != null) _seed = saved;
       final tr = prefs.getString('route_transport_${dayKey()}');
       if (tr != null && _speeds.containsKey(tr)) _transport = tr;
       final sr = prefs.getString('saved_routes');
@@ -5440,43 +5927,378 @@ class _RouteTabState extends State<RouteTab> {
             .map((e) => (e as Map).cast<String, dynamic>())
             .toList();
       }
+      _readyCounted =
+          (prefs.getStringList('ready_routes_counted') ?? []).toSet();
+      final ar = prefs.getString('active_route_v1');
+      if (ar != null) _restoreActive(jsonDecode(ar));
     } catch (_) {}
+    if (_stops.isEmpty) _buildEvening();
     if (mounted) setState(() {});
   }
 
-  List<Place> get _route {
-    final saved = _viewSaved;
-    if (saved != null) {
-      return [
-        for (final e in (saved['places'] as List? ?? []))
-          Place(
-            id: e['id'].toString(),
-            city: (e['city'] ?? '').toString(),
-            name: e['name'].toString(),
-            type: e['type'].toString(),
-            lat: (e['lat'] as num).toDouble(),
-            lng: (e['lng'] as num).toDouble(),
-          ),
-      ];
+  void _restoreActive(dynamic raw) {
+    if (raw is! Map) return;
+    final m = raw.cast<String, dynamic>();
+    final stops = <Place>[];
+    for (final e in (m['stops'] as List? ?? [])) {
+      if (e is Map) stops.add(_placeFromMap(e.cast<String, dynamic>()));
     }
-    final pool = [...widget.places]
-      ..sort((a, b) => vibeOf(b).compareTo(vibeOf(a)));
-    final top = pool.take(12).toList();
-    if (top.length <= 3) return top;
-    final start = _seed % top.length;
+    if (stops.isEmpty) return;
+    final kind = (m['kind'] ?? 'evening').toString();
+    // An evening route from another selected city is stale — rebuild.
+    if (kind == 'evening' && m['cityId']?.toString() != widget.city?.id) {
+      return;
+    }
+    _kind = kind;
+    _routeKey = (m['key'] ?? '').toString();
+    _routeTitle = (m['title'] ?? 'Маршрут на вечер').toString();
+    _routeCityId = (m['cityId'] ?? '').toString();
+    _routeCityName = (m['cityName'] ?? '').toString();
+    _seed = (m['seed'] as num?)?.toInt() ?? _seed;
+    final slat = (m['startLat'] as num?)?.toDouble();
+    final slng = (m['startLng'] as num?)?.toDouble();
+    _start = (slat != null && slng != null) ? LatLng(slat, slng) : null;
+    _startIsCenter = m['startIsCenter'] == true;
+    _stops = stops;
+    _done
+      ..clear()
+      ..addAll((m['done'] as List? ?? [])
+          .map((e) => (e as num).toInt())
+          .where((i) => i >= 0 && i < stops.length));
+    _counted = m['counted'] == true;
+  }
+
+  Future<void> _persistActive() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'active_route_v1',
+        jsonEncode({
+          'kind': _kind,
+          'key': _routeKey,
+          'title': _routeTitle,
+          'cityId': _routeCityId,
+          'cityName': _routeCityName,
+          'seed': _seed,
+          'startLat': _start?.latitude,
+          'startLng': _start?.longitude,
+          'startIsCenter': _startIsCenter,
+          'stops': [for (final p in _stops) _placeMap(p)],
+          'done': _done.toList(),
+          'counted': _counted,
+        }),
+      );
+    } catch (_) {}
+  }
+
+  /* ---------------- evening builder (from real geolocation) -------- */
+
+  /* Nearest-neighbour chain: for each slot type-set take the unused
+     place of those types closest to the current point; a hot vibe
+     shaves up to ~1 km off the score, so a slightly farther but much
+     livelier place can win the slot. */
+  List<Place> _chain(
+      LatLng from, List<Place> candidates, List<Set<String>> slots) {
     final picks = <Place>[];
-    for (final off in [0, 4, 8]) {
-      final p = top[(start + off) % top.length];
-      if (!picks.contains(p)) picks.add(p);
-    }
-    var k = 1;
-    while (picks.length < 3 && k < top.length) {
-      final p = top[(start + k) % top.length];
-      if (!picks.contains(p)) picks.add(p);
-      k++;
+    var cur = from;
+    for (final types in slots) {
+      Place? best;
+      var bestScore = double.infinity;
+      for (final p in candidates) {
+        if (picks.contains(p) || !types.contains(p.type)) continue;
+        final d = haversineKm(cur.latitude, cur.longitude, p.lat, p.lng);
+        final score = d - vibeOf(p) / 100.0;
+        if (score < bestScore) {
+          bestScore = score;
+          best = p;
+        }
+      }
+      if (best == null) break;
+      picks.add(best);
+      cur = LatLng(best.lat, best.lng);
     }
     return picks;
   }
+
+  List<Place> _buildStops(LatLng start, {Set<String> exclude = const {}}) {
+    final pool = widget.places;
+    if (pool.isEmpty) return [];
+    // Evening arc: easy start → something green/open → the night peak.
+    const slots = [
+      {'cafe', 'restaurant', 'bar'},
+      {'view', 'park', 'culture', 'beach'},
+      {'bar', 'club', 'restaurant'},
+    ];
+    const allTypes = {
+      'cafe', 'restaurant', 'bar', 'view', 'park', 'culture',
+      'beach', 'club', 'market', 'sport', 'other',
+    };
+    // Radius is measured from the start point and widened until the
+    // three slots can be filled: 2.5 km → 5 km → the whole city.
+    for (final radius in [2.5, 5.0, double.infinity]) {
+      final inR = pool
+          .where((p) =>
+              !exclude.contains(p.id) &&
+              haversineKm(start.latitude, start.longitude, p.lat, p.lng) <=
+                  radius)
+          .toList();
+      final picks = _chain(start, inR, slots);
+      if (picks.length == 3) return picks;
+    }
+    if (exclude.isNotEmpty) {
+      final picks = _chain(start, pool, slots);
+      if (picks.length == 3) return picks;
+    }
+    // Exotic city where the type slots can't be filled at all:
+    // a plain nearest-neighbour chain over everything there is.
+    final anyPool = pool.where((p) => !exclude.contains(p.id)).toList();
+    return _chain(start, anyPool.isEmpty ? pool : anyPool,
+        [allTypes, allTypes, allTypes]);
+  }
+
+  void _buildEvening({Set<String> exclude = const {}}) {
+    final city = widget.city;
+    if (city == null) {
+      _stops = [];
+      return;
+    }
+    final origin = myLocationNotifier.value;
+    final start = origin ?? LatLng(city.lat, city.lng);
+    var stops = _buildStops(start, exclude: exclude);
+    if (stops.isEmpty && exclude.isNotEmpty) stops = _buildStops(start);
+    _kind = 'evening';
+    _stops = stops;
+    _start = start;
+    _startIsCenter = origin == null;
+    _routeCityId = city.id;
+    _routeCityName = city.name;
+    _routeTitle = 'Маршрут на вечер';
+    _routeKey =
+        'evening-${city.id}-${dayKey()}-$_seed-${stops.map((p) => p.id).join('.')}';
+    _done.clear();
+    _counted = false;
+    if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
+    _persistActive();
+  }
+
+  Future<void> _reshuffle() async {
+    HapticFeedback.mediumImpact();
+    _seed++;
+    _buildEvening(exclude: _stops.map((p) => p.id).toSet());
+    if (mounted) setState(() {});
+  }
+
+  /* ---------------- ready-made routes ---------------- */
+
+  double _rateOf(Place p) => p.rating ?? 3.8;
+
+  List<Place> _byRating(List<Place> pool) {
+    final list = [...pool];
+    list.sort((a, b) {
+      final r = _rateOf(b).compareTo(_rateOf(a));
+      if (r != 0) return r;
+      final rv = (b.reviews ?? 0).compareTo(a.reviews ?? 0);
+      if (rv != 0) return rv;
+      return stableHash(a.id).compareTo(stableHash(b.id));
+    });
+    return list;
+  }
+
+  /* Anchor + chain: each next stop is the top-rated unused place of
+     the slot types within 1.5 km of the previous stop (nearest of the
+     type when nothing is that close), so the route stays walkable. */
+  List<Place> _readyStops(
+      Place anchor, List<Place> pool, List<Set<String>> slots) {
+    final stops = [anchor];
+    var cur = anchor;
+    Place? stepPick(Set<String> types) {
+      final unused = pool
+          .where((p) => !stops.contains(p) && types.contains(p.type))
+          .toList();
+      if (unused.isEmpty) return null;
+      final near = unused
+          .where((p) => haversineKm(cur.lat, cur.lng, p.lat, p.lng) <= 1.5)
+          .toList();
+      if (near.isNotEmpty) return _byRating(near).first;
+      unused.sort((a, b) => haversineKm(cur.lat, cur.lng, a.lat, a.lng)
+          .compareTo(haversineKm(cur.lat, cur.lng, b.lat, b.lng)));
+      return unused.first;
+    }
+
+    for (final s in slots) {
+      final p = stepPick(s);
+      if (p != null) {
+        stops.add(p);
+        cur = p;
+      }
+    }
+    // Optional 4th stop: something open/green to land the route.
+    final p4 = stepPick(const {'view', 'park', 'culture', 'beach'});
+    if (p4 != null) stops.add(p4);
+    return stops;
+  }
+
+  List<ReadyRoute> _readyFor(City city) {
+    final cached = _readyCache[city.id];
+    if (cached != null) return cached;
+    final pool = widget.allPlaces.where((p) => p.city == city.id).toList();
+    final routes = <ReadyRoute>[];
+    if (pool.length >= 10) {
+      final he = kCityI18n[city.id]?.$1 ?? city.name;
+      final en = kCityI18n[city.id]?.$2 ?? city.name;
+      final anchorsA = _byRating(pool
+          .where((p) => p.type == 'restaurant' || p.type == 'bar')
+          .toList());
+      if (anchorsA.isNotEmpty) {
+        final stops = _readyStops(anchorsA.first, pool, const [
+          {'view', 'park', 'culture'},
+          {'club', 'bar', 'restaurant'},
+        ]);
+        if (stops.length >= 3) {
+          routes.add(ReadyRoute(
+            id: 'ready-${city.id}-evening',
+            city: city,
+            name: {
+              'ru': 'Вечер в ${city.name}',
+              'he': 'ערב ב$he',
+              'en': 'Evening in $en',
+            },
+            stops: stops,
+          ));
+        }
+      }
+      final anchorsB =
+          _byRating(pool.where((p) => p.type == 'cafe').toList());
+      if (anchorsB.isNotEmpty) {
+        final stops = _readyStops(anchorsB.first, pool, const [
+          {'park', 'view'},
+          {'restaurant', 'cafe'},
+        ]);
+        if (stops.length >= 3) {
+          routes.add(ReadyRoute(
+            id: 'ready-${city.id}-day',
+            city: city,
+            name: {
+              'ru': 'День в ${city.name}',
+              'he': 'יום ב$he',
+              'en': 'A day in $en',
+            },
+            stops: stops,
+          ));
+        }
+      }
+    }
+    _readyCache[city.id] = routes;
+    return routes;
+  }
+
+  /* Selected city first, then the anchor cities — every other city
+     gets its routes when it becomes the selected one. */
+  List<(City, List<ReadyRoute>)> _readyGroups() {
+    final groups = <(City, List<ReadyRoute>)>[];
+    final seen = <String>{};
+    void add(City? c) {
+      if (c == null || !seen.add(c.id)) return;
+      final r = _readyFor(c);
+      if (r.isNotEmpty) groups.add((c, r));
+    }
+
+    add(widget.city);
+    for (final id in ['karmiel', 'telaviv', 'jerusalem', 'haifa']) {
+      for (final c in widget.cities) {
+        if (c.id == id) add(c);
+      }
+    }
+    return groups;
+  }
+
+  void _activateReady(ReadyRoute r) {
+    HapticFeedback.mediumImpact();
+    final origin = myLocationNotifier.value;
+    _kind = 'ready';
+    _routeKey = r.id;
+    _routeTitle = aiText(r.name);
+    _routeCityId = r.city.id;
+    _routeCityName = r.city.name;
+    _stops = List.of(r.stops);
+    _start = origin ?? LatLng(r.city.lat, r.city.lng);
+    _startIsCenter = origin == null;
+    _done.clear();
+    _counted = _readyCounted.contains(r.id);
+    if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
+    _persistActive();
+    setState(() {});
+  }
+
+  /* ---------------- saved routes ---------------- */
+
+  String _savedKey(Map<String, dynamic> e) =>
+      'saved-${e['day']}-${(e['places'] as List? ?? []).map((x) => (x as Map)['id']).join('.')}';
+
+  void _activateSaved(Map<String, dynamic> e) {
+    final stops = <Place>[];
+    for (final x in (e['places'] as List? ?? [])) {
+      if (x is Map) stops.add(_placeFromMap(x.cast<String, dynamic>()));
+    }
+    if (stops.isEmpty) return;
+    HapticFeedback.selectionClick();
+    final origin = myLocationNotifier.value;
+    City? rc;
+    for (final c in widget.cities) {
+      if (c.id == stops.first.city) rc = c;
+    }
+    _kind = 'saved';
+    _routeKey = _savedKey(e);
+    _routeTitle = 'Сохранённый маршрут';
+    _routeCityId = stops.first.city;
+    _routeCityName = (e['cityName'] ?? '').toString();
+    _stops = stops;
+    _start = origin ??
+        (rc != null
+            ? LatLng(rc.lat, rc.lng)
+            : LatLng(stops.first.lat, stops.first.lng));
+    _startIsCenter = origin == null;
+    final tr = e['transport']?.toString();
+    if (tr != null && _speeds.containsKey(tr)) _transport = tr;
+    _done.clear();
+    _counted = e['counted'] == true;
+    if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
+    _persistActive();
+    setState(() {});
+  }
+
+  Future<void> _markSavedCounted() async {
+    for (final e in _savedRoutes) {
+      if (_savedKey(e) == _routeKey) e['counted'] = true;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('saved_routes', jsonEncode(_savedRoutes));
+    } catch (_) {}
+  }
+
+  Future<void> _saveRoute() async {
+    if (_stops.isEmpty) return;
+    final entry = <String, dynamic>{
+      'day': dayKey(),
+      'cityName': _routeCityName,
+      'transport': _transport,
+      'counted': _counted,
+      'places': [for (final p in _stops) _placeMap(p)],
+    };
+    setState(() => _savedRoutes = [entry, ..._savedRoutes].take(12).toList());
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('saved_routes', jsonEncode(_savedRoutes));
+    } catch (_) {}
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Маршрут сохранён 💾')),
+      );
+    }
+  }
+
+  /* ---------------- walking the route ---------------- */
 
   String _descFor(int i) {
     switch (i) {
@@ -5496,72 +6318,101 @@ class _RouteTabState extends State<RouteTab> {
     return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
   }
 
-  Future<void> _reshuffle() async {
-    HapticFeedback.mediumImpact();
-    setState(() {
-      _seed++;
-      _done.clear();
-      _counted = false;
-    });
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('route_seed_${dayKey()}', _seed);
-    } catch (_) {}
+  String _taskFor(int i) {
+    if (_routeTasks.isEmpty) {
+      return 'Сделай фото, которое расскажет про это место без слов.';
+    }
+    return _routeTasks[stableHash('$_routeKey|$i') % _routeTasks.length]
+        .toString();
   }
 
-  void _toggleDone(int i, List<Place> route) {
-    HapticFeedback.selectionClick();
-    final wasDone = _done.contains(i);
-    setState(() {
-      if (wasDone) {
-        _done.remove(i);
-      } else {
-        _done.add(i);
+  String _fmtDist(double km) =>
+      km < 1 ? '${(km * 1000).round()} м' : '${fmtKm(km)} км';
+
+  double get _totalKm {
+    var t = 0.0;
+    LatLng? prev = _start;
+    for (final p in _stops) {
+      if (prev != null) {
+        t += haversineKm(prev.latitude, prev.longitude, p.lat, p.lng);
       }
-    });
-    if (!wasDone) {
-      widget.onTaskDone();
-      if (_done.length >= route.length && route.isNotEmpty && !_counted) {
-        _counted = true;
-        widget.onRouteBuilt();
-        fireConfetti(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Маршрут пройден целиком · +40 XP 🎉')),
-        );
+      prev = LatLng(p.lat, p.lng);
+    }
+    return t;
+  }
+
+  double _chainKm(LatLng from, List<Place> stops) {
+    var t = 0.0;
+    var prev = from;
+    for (final p in stops) {
+      t += haversineKm(prev.latitude, prev.longitude, p.lat, p.lng);
+      prev = LatLng(p.lat, p.lng);
+    }
+    return t;
+  }
+
+  /* Check-in is proximity-gated when we can see the user: the stop
+     completes only within ~150 m of it. With no live position at all
+     there is nothing to verify against, so the tap still counts —
+     location-off users are nudged, not bricked. */
+  void _toggleDone(int i) {
+    if (_done.contains(i)) {
+      HapticFeedback.selectionClick();
+      setState(() => _done.remove(i));
+      _persistActive();
+      return;
+    }
+    final p = _stops[i];
+    final origin = myLocationNotifier.value;
+    if (origin != null) {
+      final d = haversineKm(origin.latitude, origin.longitude, p.lat, p.lng);
+      if (d > _checkInRadiusKm) {
+        snack(context,
+            'Подойди ближе к месту · до него ${_fmtDist(d)} — чек-ин откроется рядом');
+        return;
       }
     }
-  }
-
-  Future<void> _saveRoute() async {
-    final route = _route;
-    if (route.isEmpty) return;
-    final entry = <String, dynamic>{
-      'day': dayKey(),
-      'cityName': widget.city?.name ?? '',
-      'transport': _transport,
-      'places': [
-        for (final p in route)
-          {
-            'id': p.id,
-            'city': p.city,
-            'name': p.name,
-            'type': p.type,
-            'lat': p.lat,
-            'lng': p.lng,
-          },
-      ],
-    };
-    setState(() => _savedRoutes = [entry, ..._savedRoutes].take(12).toList());
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('saved_routes', jsonEncode(_savedRoutes));
-    } catch (_) {}
-    if (mounted) {
+    HapticFeedback.selectionClick();
+    setState(() => _done.add(i));
+    widget.onTaskDone();
+    if (_done.length >= _stops.length && _stops.isNotEmpty && !_counted) {
+      _counted = true;
+      if (_kind == 'ready') {
+        _readyCounted.add(_routeKey);
+        SharedPreferences.getInstance().then((prefs) => prefs.setStringList(
+            'ready_routes_counted', _readyCounted.toList()));
+      }
+      if (_kind == 'saved') _markSavedCounted();
+      widget.onRouteBuilt();
+      fireConfetti(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Маршрут сохранён 💾')),
+        const SnackBar(content: Text('Маршрут пройден целиком · +40 XP 🎉')),
       );
     }
+    _persistActive();
   }
+
+  void _showOnMap() {
+    if (_stops.isEmpty) {
+      snack(context, 'Сначала собери маршрут — пока показывать нечего');
+      return;
+    }
+    final start = _start ??
+        myLocationNotifier.value ??
+        (widget.city != null
+            ? LatLng(widget.city!.lat, widget.city!.lng)
+            : LatLng(_stops.first.lat, _stops.first.lng));
+    MapRouteBus.show(MapRouteLine(
+      kind: 'route',
+      title: _routeTitle,
+      points: [start, for (final p in _stops) LatLng(p.lat, p.lng)],
+      stops: List.of(_stops),
+      fromCityCenter: _startIsCenter,
+      totalKm: _totalKm,
+    ));
+  }
+
+  /* ---------------- UI ---------------- */
 
   Widget _transportPill(String id, String label) {
     final sel = _transport == id;
@@ -5594,12 +6445,9 @@ class _RouteTabState extends State<RouteTab> {
     );
   }
 
-  Widget _legRow(Place a, Place b) {
-    final km = haversineKm(a.lat, a.lng, b.lat, b.lng);
+  Widget _legRow(LatLng a, Place b, {String? fromLabel}) {
+    final km = haversineKm(a.latitude, a.longitude, b.lat, b.lng);
     final mins = (km / (_speeds[_transport] ?? 30) * 60).round();
-    final dist = km < 1
-        ? '${(km * 1000).round()} м'
-        : '${fmtKm(km)} км';
     return Row(
       children: [
         SizedBox(
@@ -5610,17 +6458,15 @@ class _RouteTabState extends State<RouteTab> {
         ),
         const SizedBox(width: 10),
         Text(
-          '${_icons[_transport]} $dist · ≈ $mins мин',
+          '${fromLabel != null ? '$fromLabel · ' : ''}${_icons[_transport]} ${_fmtDist(km)} · ≈ $mins мин',
           style: const TextStyle(color: kMuted, fontSize: 12.5),
         ),
       ],
     );
   }
 
-  Widget _stopCard(int i, Place p, List<Place> route) {
-    final task = _routeTasks.isEmpty
-        ? 'Сделай фото, которое расскажет про это место без слов.'
-        : _routeTasks[(_seed + i) % _routeTasks.length].toString();
+  Widget _stopCard(int i, Place p) {
+    final task = _taskFor(i);
     final done = _done.contains(i);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -5647,7 +6493,7 @@ class _RouteTabState extends State<RouteTab> {
                 ),
               ),
             ),
-            if (i < route.length - 1)
+            if (i < _stops.length - 1)
               Container(width: 3, height: 14, color: kRed.withOpacity(0.55)),
           ],
         ),
@@ -5661,7 +6507,7 @@ class _RouteTabState extends State<RouteTab> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${_timeFor(i)} · ${widget.city?.name ?? ''}',
+                  '${_timeFor(i)} · $_routeCityName',
                   style: const TextStyle(
                     color: kRed,
                     fontSize: 12,
@@ -5687,9 +6533,34 @@ class _RouteTabState extends State<RouteTab> {
                   '🎯 $task',
                   style: const TextStyle(fontSize: 13.5, height: 1.35),
                 ),
+                // Live distance to this stop + whether check-in is open.
+                ValueListenableBuilder<LatLng?>(
+                  valueListenable: myLocationNotifier,
+                  builder: (_, origin, __) {
+                    if (done || origin == null) {
+                      return const SizedBox.shrink();
+                    }
+                    final d = haversineKm(
+                        origin.latitude, origin.longitude, p.lat, p.lng);
+                    final near = d <= _checkInRadiusKm;
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 7),
+                      child: Text(
+                        near
+                            ? '📍 Ты рядом — можно чекиниться'
+                            : '📍 ${_fmtDist(d)} от тебя · чек-ин откроется у места',
+                        style: TextStyle(
+                          color: near ? kGreen : kMuted,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    );
+                  },
+                ),
                 const SizedBox(height: 10),
                 GestureDetector(
-                  onTap: () => _toggleDone(i, route),
+                  onTap: () => _toggleDone(i),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 12, vertical: 10),
@@ -5721,7 +6592,7 @@ class _RouteTabState extends State<RouteTab> {
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          'Задание выполнено',
+                          done ? 'Выполнено ✓' : 'Я здесь · задание выполнено',
                           style: TextStyle(
                             fontWeight: FontWeight.w700,
                             color: done ? kGreen : kText,
@@ -5739,26 +6610,88 @@ class _RouteTabState extends State<RouteTab> {
     );
   }
 
+  Widget _readyCard(ReadyRoute r) {
+    final active = _kind == 'ready' && _routeKey == r.id;
+    final counted = _readyCounted.contains(r.id);
+    final km = _chainKm(LatLng(r.city.lat, r.city.lng), r.stops);
+    return Pressable(
+      onTap: () => _activateReady(r),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: T.s8),
+        padding:
+            const EdgeInsets.symmetric(horizontal: T.s16, vertical: T.s12),
+        decoration: BoxDecoration(
+          color: T.surface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: active ? T.fire : T.stroke),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '🌙 ${aiText(r.name)}${counted ? ' · ✓ пройден' : ''}',
+              style: T.body(13.5, w: FontWeight.w800),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              r.stops.map((p) => p.name).join(' → '),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: T.body(12, color: T.muted),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              '${r.stops.length} точки · ≈ ${_fmtDist(km)} от центра',
+              style: T.body(11.5, color: T.salmon, w: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final route = _route;
+    final groups = _readyGroups();
     return GlowBackground(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
         children: [
-          Text.rich(
-            TextSpan(children: [
-              const TextSpan(text: 'Маршрут на '),
-              TextSpan(text: 'вечер', style: T.display(20, color: T.ember)),
-            ]),
-            style: T.display(20),
-          ),
+          if (_kind == 'evening')
+            Text.rich(
+              TextSpan(children: [
+                const TextSpan(text: 'Маршрут на '),
+                TextSpan(text: 'вечер', style: T.display(20, color: T.ember)),
+              ]),
+              style: T.display(20),
+            )
+          else
+            Text(_routeTitle, style: T.display(20)),
           const SizedBox(height: 6),
           Text(
-            'Три точки, три задания — ночь собрана по городу ${widget.city?.name ?? ''}. '
-            'Не нравится расклад — пересобери.',
+            _kind == 'evening'
+                ? 'Три точки, три задания — маршрут строится от тебя по городу $_routeCityName. '
+                    'Не нравится расклад — пересобери.'
+                : _kind == 'ready'
+                    ? 'Готовый маршрут по городу $_routeCityName: лучшие места, '
+                        'собранные в пешую цепочку. Иди по точкам и чекинься у каждой.'
+                    : 'Твой сохранённый маршрут по городу $_routeCityName.',
             style: const TextStyle(color: kMuted, fontSize: 13.5),
           ),
+          if (_stops.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              _startIsCenter
+                  ? '📍 Геолокация выключена — старт от центра города'
+                  : '📍 Старт — от тебя',
+              style: T.body(12.5, color: T.salmon, w: FontWeight.w600),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '🗺️ ${_stops.length} точки · всего ≈ ${_fmtDist(_totalKm)}${_counted ? ' · ✓ маршрут пройден' : ''}',
+              style: T.body(12.5, color: T.muted, w: FontWeight.w600),
+            ),
+          ],
           const SizedBox(height: 14),
           Row(
             children: [
@@ -5780,32 +6713,31 @@ class _RouteTabState extends State<RouteTab> {
             children: [
               Expanded(
                 child: GhostButton(
+                  text: '🗺️ Показать на карте',
+                  small: true,
+                  onPressed: _showOnMap,
+                ),
+              ),
+              const SizedBox(width: T.s8),
+              Expanded(
+                child: GhostButton(
                   text: '💾 Сохранить маршрут',
                   small: true,
                   onPressed: _saveRoute,
                 ),
               ),
-              if (_viewSaved != null) ...[
-                const SizedBox(width: T.s8),
-                Expanded(
-                  child: GhostButton(
-                    text: 'К обычному',
-                    small: true,
-                    onPressed: () => setState(() {
-                      _viewSaved = null;
-                      _done.clear();
-                      _counted = false;
-                    }),
-                  ),
-                ),
-              ],
             ],
           ),
-          if (_viewSaved != null) ...[
+          if (_kind != 'evening') ...[
             const SizedBox(height: T.s12),
-            Text(
-              '🗺️ Сохранённый маршрут · ${_viewSaved!['day']} · ${_viewSaved!['cityName']}',
-              style: T.body(12.5, color: T.ember, w: FontWeight.w700),
+            GhostButton(
+              text: '🌙 К маршруту на вечер',
+              small: true,
+              onPressed: () {
+                _seed++;
+                _buildEvening();
+                setState(() {});
+              },
             ),
           ],
           if (_savedRoutes.isNotEmpty) ...[
@@ -5813,15 +6745,7 @@ class _RouteTabState extends State<RouteTab> {
             sectionLabel('Мои маршруты', color: T.salmon),
             for (final e in _savedRoutes)
               Pressable(
-                onTap: () => setState(() {
-                  _viewSaved = _viewSaved == e ? null : e;
-                  _done.clear();
-                  _counted = false;
-                  final tr = e['transport']?.toString();
-                  if (tr != null && _speeds.containsKey(tr)) {
-                    _transport = tr;
-                  }
-                }),
+                onTap: () => _activateSaved(e),
                 child: Container(
                   margin: const EdgeInsets.only(bottom: T.s8),
                   padding: const EdgeInsets.symmetric(
@@ -5830,14 +6754,16 @@ class _RouteTabState extends State<RouteTab> {
                     color: T.surface,
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(
-                      color: _viewSaved == e ? T.fire : T.stroke,
+                      color: _kind == 'saved' && _routeKey == _savedKey(e)
+                          ? T.fire
+                          : T.stroke,
                     ),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${_icons[e['transport']] ?? '🚗'} ${e['cityName']} · ${e['day']}',
+                        '${_icons[e['transport']] ?? '🚗'} ${e['cityName']} · ${e['day']}${e['counted'] == true ? ' · ✓ пройден' : ''}',
                         style: T.body(13, w: FontWeight.w700),
                       ),
                       const SizedBox(height: 3),
@@ -5854,15 +6780,33 @@ class _RouteTabState extends State<RouteTab> {
                 ),
               ),
           ],
+          if (groups.isNotEmpty) ...[
+            const SizedBox(height: T.s20),
+            sectionLabel('Готовые маршруты', color: T.salmon),
+            for (final g in groups) ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: T.s8, top: T.s4),
+                child: Text(
+                  g.$1.name,
+                  style: T.body(12.5, color: T.muted, w: FontWeight.w700),
+                ),
+              ),
+              for (final r in g.$2) _readyCard(r),
+            ],
+          ],
           const SizedBox(height: 20),
-          if (route.isEmpty)
+          if (_stops.isEmpty)
             const Text(
               'В этом городе пока нет мест для маршрута.',
               style: TextStyle(color: kMuted),
             ),
-          for (var i = 0; i < route.length; i++) ...[
-            _stopCard(i, route[i], route),
-            if (i < route.length - 1) _legRow(route[i], route[i + 1]),
+          if (_stops.isNotEmpty && _start != null)
+            _legRow(_start!, _stops.first,
+                fromLabel: _startIsCenter ? '🏙️ от центра' : '📍 от тебя'),
+          for (var i = 0; i < _stops.length; i++) ...[
+            _stopCard(i, _stops[i]),
+            if (i < _stops.length - 1)
+              _legRow(LatLng(_stops[i].lat, _stops[i].lng), _stops[i + 1]),
           ],
         ],
       ),
@@ -7908,7 +8852,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.8',
+            'TiradA anon · 2.0.9',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
