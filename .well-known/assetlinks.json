@@ -1,8 +1,8 @@
 [{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "app.tirada.anon",
-    "sha256_cert_fingerprints": ["D8:3B:72:1E:70:2D:BA:41:DF:0A:31:67:13:3F:61:FD:F5:B2:87:84:FB:2F:DD:BC:FB:79:AA:C0:2B:89:13:70"]
-  }
-}]
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "app.tirada.anon",
+        "sha256_cert_fingerprints": ["44:EA:6D:A5:03:B0:5F:D7:09:EC:E0:B5:F4:BE:52:62:76:F3:74:87:C1:1F:1F:16:5A:15:26:22:96:62:C1:77"]
+      }
+    }]
