@@ -1,0 +1,78 @@
+name: Build native APK (Capacitor)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Assemble web bundle from the live site files
+        run: |
+          mkdir -p native-app/www
+          for f in index.html app.js style.css i18n.js places-data.js map-style.js vendor-supabase.js manifest.webmanifest icon-512.png icon-192.png apple-touch-icon.png tirada-logo.jpg diag.html; do
+            cp "$f" native-app/www/
+          done
+          ls native-app/www
+
+      - name: Install Capacitor and generate the Android project
+        working-directory: native-app
+        run: |
+          npm install
+          npm install --save-dev @capacitor/assets
+          npx cap add android
+          npx @capacitor/assets generate --android || true
+
+      - name: Permissions + version (location for the map, camera for photo tasks)
+        working-directory: native-app
+        run: |
+          python3 - << 'PY'
+          p = 'android/app/src/main/AndroidManifest.xml'
+          s = open(p).read()
+          perms = ('<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n    '
+                   '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    '
+                   '<uses-permission android:name="android.permission.CAMERA" />\n    ')
+          s = s.replace('<application', perms + '<application', 1)
+          open(p, 'w').write(s)
+          g = 'android/app/build.gradle'
+          s = open(g).read()
+          s = s.replace('versionCode 1', 'versionCode 4')
+          s = s.replace('versionName "1.0"', 'versionName "2.0.0"')
+          open(g, 'w').write(s)
+          print('manifest + version patched')
+          PY
+
+      - name: Build signed release APK (same key as the TWA builds)
+        working-directory: native-app/android
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > /tmp/tirada.keystore
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=/tmp/tirada.keystore \
+            -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+          cp app/build/outputs/apk/release/app-release.apk /tmp/TiradA-native.apk
+          ls -la /tmp/TiradA-native.apk
+
+      - name: Publish the APK to the standing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view app-latest >/dev/null 2>&1 || gh release create app-latest --title "TiradA anon — native app" --notes "Capacitor native build"
+          gh release upload app-latest /tmp/TiradA-native.apk --clobber
