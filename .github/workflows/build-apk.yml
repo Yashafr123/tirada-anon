@@ -33,22 +33,35 @@ jobs:
           npx cap add android
 
       - name: App icon (Yasha's emblem) and plain black splash
-        working-directory: native-app/android/app/src/main/res
+        working-directory: native-app
         run: |
-          ICON=$GITHUB_WORKSPACE/native-app/assets/icon.png
-          convert "$ICON" -resize 48x48   mipmap-mdpi/ic_launcher.png
-          convert "$ICON" -resize 72x72   mipmap-hdpi/ic_launcher.png
-          convert "$ICON" -resize 96x96   mipmap-xhdpi/ic_launcher.png
-          convert "$ICON" -resize 144x144 mipmap-xxhdpi/ic_launcher.png
-          convert "$ICON" -resize 192x192 mipmap-xxxhdpi/ic_launcher.png
-          for d in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            cp mipmap-$d/ic_launcher.png mipmap-$d/ic_launcher_round.png
-          done
-          rm -f mipmap-anydpi-v26/ic_launcher.xml mipmap-anydpi-v26/ic_launcher_round.xml drawable-v24/ic_launcher_foreground.xml
-          convert -size 480x800 xc:#050505 drawable/splash.png
-          for d in drawable-port-*; do convert -size 480x800 xc:#050505 $d/splash.png; done
-          for d in drawable-land-*; do convert -size 800x480 xc:#050505 $d/splash.png; done
-          echo icons and splash set
+          python3 -m pip install --quiet pillow
+          python3 - << 'PYEOF'
+          import os, shutil
+          from PIL import Image
+          res = 'android/app/src/main/res'
+          icon = Image.open('assets/icon.png').convert('RGB')
+          sizes = {'mdpi': 48, 'hdpi': 72, 'xhdpi': 96, 'xxhdpi': 144, 'xxxhdpi': 192}
+          for dens, px in sizes.items():
+              out = f'{res}/mipmap-{dens}/ic_launcher.png'
+              icon.resize((px, px), Image.LANCZOS).save(out)
+              shutil.copy(out, f'{res}/mipmap-{dens}/ic_launcher_round.png')
+          for f in ['mipmap-anydpi-v26/ic_launcher.xml',
+                    'mipmap-anydpi-v26/ic_launcher_round.xml',
+                    'drawable-v24/ic_launcher_foreground.xml']:
+              p = os.path.join(res, f)
+              if os.path.exists(p):
+                  os.remove(p)
+          black_p = Image.new('RGB', (480, 800), (5, 5, 5))
+          black_l = Image.new('RGB', (800, 480), (5, 5, 5))
+          black_p.save(f'{res}/drawable/splash.png')
+          for d in os.listdir(res):
+              if d.startswith('drawable-port-'):
+                  black_p.save(f'{res}/{d}/splash.png')
+              elif d.startswith('drawable-land-'):
+                  black_l.save(f'{res}/{d}/splash.png')
+          print('icons and splash set')
+          PYEOF
 
       - name: Permissions + version (location for the map, camera for photo tasks)
         working-directory: native-app
