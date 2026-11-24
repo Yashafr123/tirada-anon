@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   supabase_flutter: ^2.8.4
-  maplibre_gl: ^0.22.1
+  maplibre_gl: ^0.27.1
 
 dev_dependencies:
   flutter_launcher_icons: ^0.14.3
@@ -21,6 +21,7 @@ flutter:
     - assets/places.json
     - assets/cities.json
     - assets/map-style.json
+    - assets/tasks.json
     - assets/icon.png
 
 flutter_launcher_icons:
