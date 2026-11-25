@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.20.
+// TiradA anon — native app (Flutter), v2.0.21.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -1513,20 +1513,21 @@ const Map<String, (String, String, String)> kStr = {
   /* v2.0.17: Friends tab, pings (приветы) and stickers. */
   'nav_friends': ('Друзья', 'חברים', 'Friends'),
   'friends_search_hint': ('Поиск по нику…', 'חיפוש לפי כינוי…', 'Search by nickname…'),
-  'friends_none': ('Пока нет друзей', 'אין עדיין חברים', 'No friends yet'),
+  /* v2.0.21: one friends system — everyone registered is already
+     a friend; the request-era keys (requests/accept/add/sent) are
+     gone with the request UI. */
+  'friends_none': ('Пока никого нет', 'אין כאן אף אחד עדיין', 'Nobody here yet'),
   'friends_none_hint': (
-    'Найди друзей по нику выше — и кидай им приветы и стикеры с карты и отсюда.',
-    'מצא חברים לפי כינוי למעלה — ושלח להם היי וסטיקרים מהמפה ומכאן.',
-    'Find friends by nickname above — then send them his and stickers from the map and from here.'
+    'Как только кто-то зарегистрируется, он сразу появится здесь — все в приложении уже друзья.',
+    'ברגע שמישהו נרשם, הוא יופיע כאן מיד — כל מי שבאפליקציה כבר חבר.',
+    'As soon as someone registers, they show up here — everyone in the app is already a friend.'
   ),
-  'friends_requests_in': ('Заявки тебе', 'בקשות אליך', 'Requests for you'),
-  'friends_requests_out': ('Ты отправил', 'בקשות ששלחת', 'Sent by you'),
-  'friends_accept': ('Принять', 'אישור', 'Accept'),
-  'friends_decline': ('Отклонить', 'דחייה', 'Decline'),
+  'friends_all_note': (
+    'Все, кто в приложении, — уже твои друзья. Без заявок: просто жми на призрака и кидай привет или стикер.',
+    'כל מי שבאפליקציה כבר חבר שלך. בלי בקשות: פשוט לוחצים על רוח ושולחים היי או סטיקר.',
+    'Everyone in the app is already your friend. No requests: just tap a ghost and send a hi or a sticker.'
+  ),
   'friends_cancel': ('Отменить', 'ביטול', 'Cancel'),
-  'friends_add': ('Добавить', 'הוספה', 'Add'),
-  'friends_sent': ('Заявка отправлена', 'הבקשה נשלחה', 'Request sent'),
-  'friends_already': ('Вы друзья', 'אתם חברים', 'Friends'),
   'friends_not_found': ('Никого не нашлось', 'לא נמצא אף אחד', 'Nobody found'),
   'friends_error': (
     'Что-то пошло не так — попробуй ещё раз',
@@ -1534,9 +1535,9 @@ const Map<String, (String, String, String)> kStr = {
     'Something went wrong — try again'
   ),
   'friends_guest': (
-    'Войди в аккаунт — и здесь будут твои друзья, заявки и приветы.',
-    'היכנס לחשבון — והחברים, הבקשות וההיי שלך יופיעו כאן.',
-    'Sign in — and your friends, requests and his will show up here.'
+    'Войди в аккаунт — и здесь будут все твои друзья и приветы.',
+    'היכנס לחשבון — וכל החברים וההיי שלך יופיעו כאן.',
+    'Sign in — and all your friends and his will show up here.'
   ),
   'friends_list_title': ('Мои друзья', 'החברים שלי', 'My friends'),
   'ping_hi_btn': ('Привет', 'היי', 'Say hi'),
@@ -4917,8 +4918,8 @@ class _HomePageState extends State<HomePage> {
     });
     // v2.0.17: piggyback the ~30 s friends cadence (the same rhythm
     // MapTab refreshes friend markers at) — while the app is open,
-    // accepted friends and incoming pings stay fresh without a
-    // realtime subscription.
+    // the friends list (v2.0.21: all users) and incoming pings stay
+    // fresh without a realtime subscription.
     _friendsTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (myUidOrNull != null) {
         _loadFriends();
@@ -5143,7 +5144,12 @@ class _HomePageState extends State<HomePage> {
     _saveStats();
   }
 
-  /* Friends for the «Я в деле» sheet (profiles of accepted friendships). */
+  /* v2.0.21: ONE friends system (owner's word) — every registered
+     user is automatically everyone's friend, no requests and no
+     accepting. This list = ALL profiles except me, online first,
+     then by name; it feeds the Friends tab and the «Я в деле»
+     sheet. The friendships table still exists in the database but
+     the app no longer reads or gates on it. Fetch capped at 500. */
   Future<void> _loadFriends() async {
     final uid = myUidOrNull;
     if (uid == null) {
@@ -5151,39 +5157,20 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     try {
-      final fr = await supa
-          .from('friendships')
-          .select('requester, addressee')
-          .eq('status', 'accepted')
-          .or('requester.eq.$uid, addressee.eq.$uid');
-      final ids = <String>{};
-      for (final r in fr as List) {
-        final other = r['requester'] == uid ? r['addressee'] : r['requester'];
-        if (other is String) ids.add(other);
-      }
-      if (ids.isEmpty) {
-        if (mounted) setState(() => _friends = []);
-        return;
-      }
       final profs = await supa
           .from('profiles')
           .select('id, name, avatar, avatar_url, online, mode, city')
-          .inFilter('id', ids.toList());
+          .neq('id', uid)
+          .limit(500);
       if (!mounted) return;
-      setState(() {
-        _friends = [
-          for (final p in profs as List)
-            Friend(
-              id: p['id'] as String,
-              name: (p['name'] as String?) ?? tr('ghost'),
-              avatar: p['avatar'] as String?,
-              avatarUrl: p['avatar_url'] as String?,
-              mode: p['mode'] as String?,
-              cityId: p['city'] as String?,
-              online: p['online'] == true,
-            ),
-        ];
-      });
+      final list = <Friend>[
+        for (final p in profs as List)
+          friendFromProfile(Map<String, dynamic>.from(p as Map)),
+      ]..sort((a, b) {
+          if (a.online != b.online) return a.online ? -1 : 1;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        });
+      setState(() => _friends = list);
     } catch (_) {}
   }
 
@@ -6039,7 +6026,6 @@ class _HomePageState extends State<HomePage> {
                     friends: _friends,
                     pings: _pings,
                     onOpenFriend: (f) => showFriendSheet(context, f),
-                    onFriendsChanged: _loadFriends,
                     onPingsChanged: _loadPings,
                   ),
                   RouteTab(
@@ -6650,7 +6636,10 @@ class _PlaceSheetState extends State<PlaceSheet> {
 
   /* Read-only ghost gallery — same query shape as the web app:
      place_photos (hidden=false, reports<3, newest first), visibility
-     filtered on the client, 🔥 counts from photo_reactions. */
+     filtered on the client, 🔥 counts from photo_reactions.
+     v2.0.21: a 'friends'-visibility photo is visible to every
+     signed-in user — under the one-system rules everyone in the
+     app is a friend. (Same widening in the tournament feed.) */
   Future<void> _loadPhotos() async {
     try {
       final rows = await supa
@@ -6664,7 +6653,9 @@ class _PlaceSheetState extends State<PlaceSheet> {
       final uid = myUidOrNull;
       final visible = <Map<String, dynamic>>[
         for (final r in rows as List)
-          if (r['visibility'] == 'public' || (uid != null && r['user_id'] == uid))
+          if (r['visibility'] == 'public' ||
+              (uid != null &&
+                  (r['user_id'] == uid || r['visibility'] == 'friends')))
             (r as Map).cast<String, dynamic>(),
       ];
       final fires = <String, int>{};
@@ -8156,26 +8147,20 @@ class _MapTabState extends State<MapTab> {
     final uid = myUidOrNull;
     if (uid == null) return; // guest: no friends/presence without an account
     try {
-      final fr = await supa
-          .from('friendships')
-          .select('requester, addressee')
-          .eq('status', 'accepted')
-          .or('requester.eq.$uid, addressee.eq.$uid');
-      final ids = <String>{};
-      for (final r in fr as List) {
-        final other =
-            r['requester'] == uid ? r['addressee'] : r['requester'];
-        if (other is String) ids.add(other);
-      }
-      if (ids.isEmpty) return;
+      // v2.0.21: one friends system — the map shows EVERY registered
+      // user (except me), not just accepted friendships. Both fetches
+      // capped at 500; the visibility rules below are unchanged
+      // (mode 'offline' is never placed, ghost mode renders ghostly).
       final profs = await supa
           .from('profiles')
           .select('id, name, avatar, avatar_url, online, mode')
-          .inFilter('id', ids.toList());
+          .neq('id', uid)
+          .limit(500);
+      if ((profs as List).isEmpty) return;
       final locs = await supa
           .from('profile_locations')
           .select('user_id, lat, lng')
-          .inFilter('user_id', ids.toList());
+          .limit(500);
       final locMap = <String, (double, double)>{};
       for (final l in locs as List) {
         locMap[l['user_id'] as String] = (
@@ -11130,7 +11115,9 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
     final uid = myUidOrNull;
     return [
       for (final r in rows as List)
-        if (r['visibility'] == 'public' || (uid != null && r['user_id'] == uid))
+        if (r['visibility'] == 'public' ||
+              (uid != null &&
+                  (r['user_id'] == uid || r['visibility'] == 'friends')))
           (r as Map).cast<String, dynamic>(),
     ];
   }
@@ -12988,26 +12975,25 @@ class _NewPingsSheetState extends State<NewPingsSheet> {
 }
 
 /* ---------------- friends tab ----------------
-   The full friends system lives here since v2.0.17 (the Profile
-   tab keeps only a «Друзья» jump row): search by nickname,
-   incoming / outgoing requests, the accepted list with online and
-   «в деле» status, and the ping inbox («Приветы и стикеры»)
-   above the list. Accepted friends + pings are owned by HomePage
-   and flow in as props; this tab owns search, requests and the
-   saved-sticker set, and pokes HomePage through the callbacks
-   after every mutation. */
+   v2.0.21: ONE friends system (the Profile tab keeps only a
+   «Друзья» jump row) — every registered user is automatically
+   everyone's friend, so this tab is simply everyone: all
+   profiles, owned by HomePage and flowing in as the friends
+   prop, sorted online-first, a nickname filter over them, and
+   the ping inbox («Приветы и стикеры») above the list. No
+   requests, no accepting — the friendships table is no longer
+   read or written here. The tab owns the filter text and the
+   saved-sticker set. */
 class FriendsTab extends StatefulWidget {
   final List<Friend> friends;
   final List<Ping> pings;
   final void Function(Friend) onOpenFriend;
-  final VoidCallback onFriendsChanged;
   final VoidCallback onPingsChanged;
   const FriendsTab({
     super.key,
     required this.friends,
     required this.pings,
     required this.onOpenFriend,
-    required this.onFriendsChanged,
     required this.onPingsChanged,
   });
 
@@ -13017,19 +13003,12 @@ class FriendsTab extends StatefulWidget {
 
 class _FriendsTabState extends State<FriendsTab> {
   final TextEditingController _searchCtrl = TextEditingController();
-  List<Friend> _results = [];
-  /* otherId → 'friend' | 'out' | 'in' | 'none' */
-  final Map<String, String> _relation = {};
-  bool _searching = false;
-  bool _searched = false;
-  List<({String fid, Friend f})> _incoming = [];
-  List<({String fid, Friend f})> _outgoing = [];
+  String _query = '';
   final Set<String> _savedPaths = {};
 
   @override
   void initState() {
     super.initState();
-    _loadRequests();
     _loadSavedPaths();
   }
 
@@ -13039,55 +13018,15 @@ class _FriendsTabState extends State<FriendsTab> {
     super.dispose();
   }
 
-  Future<void> _loadRequests() async {
-    final uid = myUidOrNull;
-    if (uid == null) return;
-    try {
-      final rows = await supa
-          .from('friendships')
-          .select('id, requester, addressee')
-          .eq('status', 'pending')
-          .or('requester.eq.$uid, addressee.eq.$uid');
-      final list = rows as List;
-      final otherIds = <String>{};
-      for (final r in list) {
-        otherIds.add(
-            (r['requester'] == uid ? r['addressee'] : r['requester'])
-                .toString());
-      }
-      final byId = <String, Friend>{};
-      if (otherIds.isNotEmpty) {
-        final profs = await supa
-            .from('profiles')
-            .select('id, name, avatar, avatar_url, online, mode, city')
-            .inFilter('id', otherIds.toList());
-        for (final p in profs as List) {
-          final m = Map<String, dynamic>.from(p as Map);
-          byId[m['id'] as String] = friendFromProfile(m);
-        }
-      }
-      if (!mounted) return;
-      setState(() {
-        _incoming = [
-          for (final r in list)
-            if (r['addressee'] == uid && byId.containsKey(r['requester']))
-              (
-                fid: (r['id'] ?? '').toString(),
-                f: byId[r['requester']]!,
-              ),
-        ];
-        _outgoing = [
-          for (final r in list)
-            if (r['requester'] == uid && byId.containsKey(r['addressee']))
-              (
-                fid: (r['id'] ?? '').toString(),
-                f: byId[r['addressee']]!,
-              ),
-        ];
-      });
-    } catch (e) {
-      debugPrint('TiradA friend requests load failed: $e');
-    }
+  /* The nickname filter over the all-users list — local, the list
+     is already in memory (HomePage caps it at 500 profiles). */
+  List<Friend> get _shown {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return widget.friends;
+    return [
+      for (final f in widget.friends)
+        if (f.name.toLowerCase().contains(q)) f,
+    ];
   }
 
   Future<void> _loadSavedPaths() async {
@@ -13109,99 +13048,6 @@ class _FriendsTabState extends State<FriendsTab> {
     } catch (e) {
       debugPrint('TiradA saved stickers load failed: $e');
     }
-  }
-
-  Future<void> _search() async {
-    final uid = myUidOrNull;
-    final q = _searchCtrl.text.trim();
-    if (uid == null || q.length < 2 || _searching) return;
-    setState(() => _searching = true);
-    try {
-      final rows = await supa
-          .from('profiles')
-          .select('id, name, avatar, avatar_url, online, mode, city')
-          .ilike('name', '%$q%')
-          .limit(20);
-      final rel = await supa
-          .from('friendships')
-          .select('requester, addressee, status')
-          .or('requester.eq.$uid, addressee.eq.$uid');
-      _relation.clear();
-      for (final r in rel as List) {
-        final other =
-            (r['requester'] == uid ? r['addressee'] : r['requester'])
-                .toString();
-        _relation[other] = r['status'] == 'accepted'
-            ? 'friend'
-            : (r['requester'] == uid ? 'out' : 'in');
-      }
-      if (!mounted) return;
-      setState(() {
-        _results = [
-          for (final p in rows as List)
-            if ((p['id'] ?? '').toString() != uid)
-              friendFromProfile(Map<String, dynamic>.from(p as Map)),
-        ];
-        _searching = false;
-        _searched = true;
-      });
-    } catch (e) {
-      debugPrint('TiradA friend search failed: $e');
-      if (mounted) {
-        setState(() => _searching = false);
-        snack(context, tr('friends_error'));
-      }
-    }
-  }
-
-  Future<void> _sendRequest(Friend f) async {
-    final uid = myUidOrNull;
-    if (uid == null) return;
-    try {
-      await supa.from('friendships').insert({
-        'requester': uid,
-        'addressee': f.id,
-        'status': 'pending',
-      });
-    } catch (e) {
-      debugPrint('TiradA friend request insert failed: $e');
-      if (mounted) snack(context, tr('friends_error'));
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _relation[f.id] = 'out');
-    snack(context, tr('friends_sent'));
-    _loadRequests();
-  }
-
-  Future<void> _accept(String fid, Friend f) async {
-    try {
-      await supa
-          .from('friendships')
-          .update({'status': 'accepted'}).eq('id', fid);
-    } catch (e) {
-      debugPrint('TiradA friend accept failed: $e');
-      if (mounted) snack(context, tr('friends_error'));
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _relation[f.id] = 'friend');
-    _loadRequests();
-    widget.onFriendsChanged();
-  }
-
-  Future<void> _dropRequest(String fid, Friend f) async {
-    try {
-      await supa.from('friendships').delete().eq('id', fid);
-    } catch (e) {
-      debugPrint('TiradA friend request delete failed: $e');
-      if (mounted) snack(context, tr('friends_error'));
-      return;
-    }
-    if (!mounted) return;
-    setState(() => _relation[f.id] = 'none');
-    _loadRequests();
-    widget.onFriendsChanged();
   }
 
   Future<void> _savePingSticker(Ping p) async {
@@ -13237,7 +13083,7 @@ class _FriendsTabState extends State<FriendsTab> {
   Widget _avatar(Friend f, {double radius = 22}) =>
       friendAvatar(f, radius: radius);
 
-  Widget _personRow(Friend f, {Widget? trailing, VoidCallback? onTap}) {
+  Widget _personRow(Friend f, {VoidCallback? onTap}) {
     return Container(
       margin: const EdgeInsets.only(bottom: T.s8),
       decoration: BoxDecoration(
@@ -13256,57 +13102,8 @@ class _FriendsTabState extends State<FriendsTab> {
           f.online ? tr('online_now') : tr('seen_recently'),
           style: T.body(12, color: f.online ? T.online : T.faint),
         ),
-        trailing: trailing,
       ),
     );
-  }
-
-  Widget _smallBtn(String label, VoidCallback? onTap,
-      {bool primary = false}) {
-    return Pressable(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          gradient: primary ? T.fireGrad : null,
-          color: primary ? null : T.surfaceHi,
-          borderRadius: BorderRadius.circular(999),
-          border: primary ? null : Border.all(color: T.stroke),
-        ),
-        child: Text(
-          label,
-          style: T.body(
-            12,
-            color: primary ? Colors.white : T.muted,
-            w: FontWeight.w700,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _searchTrailing(Friend f) {
-    switch (_relation[f.id] ?? 'none') {
-      case 'friend':
-        return _smallBtn(tr('friends_already'), null);
-      case 'out':
-        return _smallBtn(tr('friends_sent'), null);
-      case 'in':
-        final req = _incoming.where((r) => r.f.id == f.id).firstOrNull;
-        if (req == null) return _smallBtn(tr('friends_add'), () => _sendRequest(f));
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _smallBtn(tr('friends_accept'), () => _accept(req.fid, f),
-                primary: true),
-            const SizedBox(width: 6),
-            _smallBtn(tr('friends_decline'), () => _dropRequest(req.fid, f)),
-          ],
-        );
-      default:
-        return _smallBtn(tr('friends_add'), () => _sendRequest(f),
-            primary: true);
-    }
   }
 
   /* v2.0.19: the row rendering lives in the shared PingCard (the
@@ -13356,101 +13153,32 @@ class _FriendsTabState extends State<FriendsTab> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(T.s16, T.s12, T.s16, T.s24),
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchCtrl,
-                  style: T.body(15),
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: (_) => _search(),
-                  decoration: InputDecoration(
-                    hintText: tr('friends_search_hint'),
-                    hintStyle: T.body(14, color: T.faint),
-                    filled: true,
-                    fillColor: T.surface,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 12),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: T.stroke),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: T.stroke),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: T.fire),
-                    ),
-                  ),
-                ),
+          TextField(
+            controller: _searchCtrl,
+            style: T.body(15),
+            textInputAction: TextInputAction.search,
+            onChanged: (v) => setState(() => _query = v),
+            decoration: InputDecoration(
+              hintText: tr('friends_search_hint'),
+              hintStyle: T.body(14, color: T.faint),
+              filled: true,
+              fillColor: T.surface,
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: T.stroke),
               ),
-              const SizedBox(width: T.s8),
-              Pressable(
-                onTap: _searching ? null : _search,
-                child: Container(
-                  width: 46,
-                  height: 46,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    gradient: T.fireGrad,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: _searching
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Icon(Icons.search,
-                          size: 21, color: Colors.white),
-                ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: T.stroke),
               ),
-            ],
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: const BorderSide(color: T.fire),
+              ),
+            ),
           ),
-          if (_searched) ...[
-            const SizedBox(height: T.s12),
-            if (_results.isEmpty)
-              Text(
-                tr('friends_not_found'),
-                style: T.body(13, color: T.muted),
-              )
-            else
-              for (final f in _results)
-                _personRow(f, trailing: _searchTrailing(f)),
-          ],
-          if (_incoming.isNotEmpty) ...[
-            const SizedBox(height: T.s16),
-            sectionLabel(tr('friends_requests_in'), glyph: TIGlyph.users),
-            for (final r in _incoming)
-              _personRow(
-                r.f,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _smallBtn(tr('friends_accept'), () => _accept(r.fid, r.f),
-                        primary: true),
-                    const SizedBox(width: 6),
-                    _smallBtn(
-                        tr('friends_decline'), () => _dropRequest(r.fid, r.f)),
-                  ],
-                ),
-              ),
-          ],
-          if (_outgoing.isNotEmpty) ...[
-            const SizedBox(height: T.s16),
-            sectionLabel(tr('friends_requests_out'), glyph: TIGlyph.paperPlane),
-            for (final r in _outgoing)
-              _personRow(
-                r.f,
-                trailing: _smallBtn(
-                    tr('friends_cancel'), () => _dropRequest(r.fid, r.f)),
-              ),
-          ],
           const SizedBox(height: T.s16),
           sectionLabel(tr('ping_inbox_title'), glyph: TIGlyph.chat),
           if (widget.pings.isEmpty)
@@ -13462,14 +13190,24 @@ class _FriendsTabState extends State<FriendsTab> {
             for (final p in widget.pings) _pingRow(p),
           const SizedBox(height: T.s16),
           sectionLabel(tr('friends_list_title'), glyph: TIGlyph.users),
+          Text(
+            tr('friends_all_note'),
+            style: T.body(12.5, color: T.muted),
+          ),
+          const SizedBox(height: T.s8),
           if (widget.friends.isEmpty)
             EmptyState(
               glyph: TIGlyph.users,
               title: tr('friends_none'),
               hint: tr('friends_none_hint'),
             )
+          else if (_shown.isEmpty)
+            Text(
+              tr('friends_not_found'),
+              style: T.body(13, color: T.muted),
+            )
           else
-            for (final f in widget.friends)
+            for (final f in _shown)
               _personRow(f, onTap: () => widget.onOpenFriend(f)),
         ],
       ),
@@ -13927,7 +13665,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.20',
+                  'TiradA anon · 2.0.21',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -14677,7 +14415,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.20',
+            'TiradA anon · 2.0.21',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
