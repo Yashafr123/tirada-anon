@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.12.
+// TiradA anon — native app (Flutter), v2.0.13.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -5039,27 +5039,39 @@ class _HomePageState extends State<HomePage> {
         // pill may grow/shrink inside slot bounds without moving any
         // sibling, and the middle slot's centre IS the panel centre,
         // so the FAB is exactly centred in every tab state.
+        //
+        // v2.0.13 ROOT-CAUSE FIX (panel filled the whole screen): the
+        // slots must NOT be wrapped in Center/Align. A Center sizes
+        // itself to constraints.maxHeight whenever that is finite and
+        // no heightFactor is set — and the Scaffold bottomNavigationBar
+        // slot hands this bar loose constraints with maxHeight = the
+        // FULL screen height. In v2.0.12 each slot was
+        // Expanded(child: Center(...)), so every Center stretched to
+        // full height, the Row and the Container followed, and the
+        // panel's background/border covered the entire screen with the
+        // nav row floating in the vertical middle (centred by those
+        // very Centers). The slot widgets themselves are
+        // Column(mainAxisSize.min) and shrink-wrap their height; the
+        // Expanded gives each a tight WIDTH, and the Column's default
+        // crossAxisAlignment.center centres icon+label horizontally
+        // inside the slot — no Center needed. Never re-add one here.
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
-              child:
-                  Center(child: _navSlot(0, TIGlyph.mapPin, tr('nav_map'))),
+              child: _navSlot(0, TIGlyph.mapPin, tr('nav_map')),
             ),
             Expanded(
-              child:
-                  Center(child: _navSlot(1, TIGlyph.flame, tr('nav_places'))),
+              child: _navSlot(1, TIGlyph.flame, tr('nav_places')),
             ),
             Expanded(
-              child: Center(child: _DealFab(onTap: _openDeal)),
+              child: _DealFab(onTap: _openDeal),
             ),
             Expanded(
-              child: Center(
-                  child: _navSlot(2, TIGlyph.routePath, tr('nav_route'))),
+              child: _navSlot(2, TIGlyph.routePath, tr('nav_route')),
             ),
             Expanded(
-              child:
-                  Center(child: _navSlot(3, TIGlyph.ghost, tr('nav_profile'))),
+              child: _navSlot(3, TIGlyph.ghost, tr('nav_profile')),
             ),
           ],
         ),
@@ -5199,8 +5211,25 @@ class _DealFabState extends State<_DealFab> with SingleTickerProviderStateMixin 
             },
             child: Stack(
               alignment: Alignment.center,
+              clipBehavior: Clip.none,
               children: [
-                const RadarSweep(size: 86, opacity: 0.13),
+                // v2.0.13: the radar sweep is a Positioned OVERLAY
+                // centred on the badge ((86-58)/2 = 14 px overhang).
+                // As a plain Stack child it was the largest child and
+                // set the stack's layout size to 86 px, making the FAB
+                // column — and with it the whole nav panel — ~104 px
+                // tall. As a Positioned child it paints around the
+                // badge without taking any layout space, so the FAB
+                // column is just badge 58 + label ≈ 75 px and the
+                // panel stays compact. IgnorePointer: pure decoration,
+                // taps belong to the badge/column.
+                const Positioned(
+                  left: -14,
+                  top: -14,
+                  child: IgnorePointer(
+                    child: RadarSweep(size: 86, opacity: 0.13),
+                  ),
+                ),
                 // v2.0.12: the FAB IS the spec's active badge — white
                 // filled flame on the glowing gradient circle (its own
                 // radar rings off; RadarSweep above provides them).
@@ -11091,7 +11120,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.12',
+                  'TiradA anon · 2.0.13',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -11803,7 +11832,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.12',
+            'TiradA anon · 2.0.13',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
