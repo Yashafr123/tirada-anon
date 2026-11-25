@@ -71,6 +71,15 @@ jobs:
                   }
               }
           }
+
+          android {
+              compileOptions {
+                  isCoreLibraryDesugaringEnabled = true
+              }
+          }
+          dependencies {
+              coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+          }
           '''
           open(p, 'w').write(s)
           # --- AndroidManifest: label + permissions ---
