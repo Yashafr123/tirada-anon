@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.17.
+// TiradA anon — native app (Flutter), v2.0.18.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -5692,12 +5692,26 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           const SizedBox(height: 3),
-          Text(
-            label,
-            style: T.body(
-              10.5,
-              color: active ? T.text : T.faint,
-              w: FontWeight.w700,
+          // v2.0.18: the label is laid out unconstrained
+          // horizontally (centred on the slot centre, softWrap
+          // off): with the centre gap the left slots are exactly
+          // 38 dp wide at 360 dp screen width, and a label like
+          // «Друзья» (~36–40 dp at 10.5) must never wrap to a
+          // second line or lose letters to the slot edge. It can
+          // only paint into the slack the geometry note in
+          // _bottomNav verifies (≥ 14 dp clear of the «Ты в деле»
+          // label, ≥ 12 dp clear of any neighbouring label).
+          UnconstrainedBox(
+            constrainedAxis: Axis.vertical,
+            child: Text(
+              label,
+              softWrap: false,
+              textAlign: TextAlign.center,
+              style: T.body(
+                10.5,
+                color: active ? T.text : T.faint,
+                w: FontWeight.w700,
+              ),
             ),
           ),
         ],
@@ -5723,23 +5737,47 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
-        // v2.0.17: FIVE tabs (Друзья added at index 2) and the
-        // «Ты в деле» FAB still sits EXACTLY on the panel's
-        // horizontal centre — the owner has rejected an off-centre
-        // FAB twice, so the geometry is structural, not hopeful:
-        // the bar is a Stack whose base layer is a 75 dp row (the
-        // pre-2.0.17 panel content height, set by the FAB column)
-        // split into two EXACTLY half-width groups — left: Карта ·
-        // Места · Друзья, right: Маршрут · Профиль — and the FAB is
-        // a Positioned.fill overlay centred on the stack. Half +
-        // half means the stack centre IS the panel centre in every
-        // tab state; the groups never resize (each slot is an
-        // Expanded Column of fixed structure), so switching tabs
-        // shifts nothing. The overlay does not steal slot taps:
-        // _DealFab's GestureDetector wraps ONLY its badge circle
-        // (see _DealFab), and the Center around it hit-tests
-        // nothing by itself. The slots beside the centre keep their
-        // full tap areas.
+        // v2.0.18: the 2.0.17 geometry (two half-width groups, FAB
+        // overlaid dead-centre) CROWDED the centre: the «Друзья»
+        // slot centre sat only ~27 dp from the panel centre, so
+        // the FAB badge and its RadarSweep painted over the
+        // «Друзья» icon and the «Друзья» / «Ты в деле» / «Маршрут»
+        // labels overlapped on the baseline (owner's screenshot:
+        // «исправь, что это за пиздец»). The fix reserves a REAL
+        // centre gap: the base row is now [Expanded left group:
+        // Карта · Места · Друзья] [fixed 92 dp empty gap]
+        // [Expanded right group: Маршрут · Профиль]. Both groups
+        // have flex 1, so each gets exactly (rowWidth − 92) / 2
+        // and the gap's centre IS the panel centre — structurally,
+        // in every tab state; the FAB overlay (Positioned.fill +
+        // Center) therefore still sits dead-centre, now over
+        // empty space. Arithmetic at a 360 dp-wide screen (panel
+        // content width 320 after the 12 dp margins and 8 dp
+        // padding): groups are 114 wide, left slots 38, right
+        // slots 57; slot centres from the content's left edge —
+        // Карта 19, Места 57, Друзья 95, Маршрут 234.5, Профиль
+        // 291.5, panel centre 160. The nearest centres (Друзья
+        // 65 dp, Маршрут 74.5 dp from centre) clear the FAB badge
+        // (radius 29) by 17 dp to the 38 dp icon zone, and the
+        // full RadarSweep (radius 43) by 3 dp to the zone / 4 dp
+        // to the visible 36 dp badge — the sweep never covers a
+        // neighbouring icon. Labels: «Ты в деле» (~62 dp at 10.5)
+        // lives inside the 92 dp gap (129..191 around the centre)
+        // and the nearest tab labels end ≥ 14 dp away from it, so
+        // all six labels share the baseline with no overlaps and
+        // no font reduction. Panel height (~90 dp), margins,
+        // colours and radius are unchanged from 2.0.17.
+        //
+        // v2.0.17: FIVE tabs (Друзья added at index 2); the bar is
+        // a Stack whose base layer is a 75 dp row (the pre-2.0.17
+        // panel content height, set by the FAB column). The slots
+        // never resize (each is an Expanded Column of fixed
+        // structure), so switching tabs shifts nothing. The
+        // overlay does not steal slot taps: _DealFab's
+        // GestureDetector wraps ONLY its badge circle (see
+        // _DealFab), and the Center around it hit-tests nothing by
+        // itself; the empty gap outside the circle is not a tap
+        // target. The slots keep their full tap areas.
         //
         // v2.0.13 ROOT-CAUSE FIX (panel filled the whole screen)
         // still applies to the ROW: slots must NOT be wrapped in
@@ -5782,6 +5820,10 @@ class _HomePageState extends State<HomePage> {
                       ],
                     ),
                   ),
+                  // v2.0.18: the reserved centre gap (see the
+                  // geometry note above) — empty space under the
+                  // centred FAB, not a tap target.
+                  const SizedBox(width: 92),
                   Expanded(
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -13554,7 +13596,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.17',
+                  'TiradA anon · 2.0.18',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -14304,7 +14346,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.17',
+            'TiradA anon · 2.0.18',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
