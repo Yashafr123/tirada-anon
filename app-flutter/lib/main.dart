@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.22.
+// TiradA anon — native app (Flutter), v2.0.23.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -6263,17 +6263,28 @@ class _DealSheetState extends State<DealSheet> {
                 ),
                 child: Row(
                   children: [
-                    CircleAvatar(
-                      radius: 20,
-                      backgroundColor: kSurface,
-                      backgroundImage:
-                          f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
-                      child: f.avatarUrl == null
-                          ? AvatarFace(f.avatar,
-                              glyphSize: 21,
-                              emojiSize: 19,
-                              ghostForDefault: true)
-                          : null,
+                    /* v2.0.23: tap an in-deal avatar → the zoom
+                       viewer (these rows have no tap of their own). */
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => showAvatarZoom(
+                        context,
+                        name: f.mode == 'ghost' ? tr('ghost') : f.name,
+                        avatar: f.avatar,
+                        avatarUrl: f.avatarUrl,
+                      ),
+                      child: CircleAvatar(
+                        radius: 20,
+                        backgroundColor: kSurface,
+                        backgroundImage:
+                            f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
+                        child: f.avatarUrl == null
+                            ? AvatarFace(f.avatar,
+                                glyphSize: 21,
+                                emojiSize: 19,
+                                ghostForDefault: true)
+                            : null,
+                      ),
                     ),
                     const SizedBox(width: 11),
                     Expanded(
@@ -12079,16 +12090,27 @@ class _BadgesPageState extends State<BadgesPage> {
               child: Center(child: Text('$rank', style: T.num(14, color: T.muted))),
             ),
           const SizedBox(width: T.s12),
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: T.surfaceHi,
-            backgroundImage: row['avatar_url'] != null
-                ? NetworkImage(row['avatar_url'].toString())
-                : null,
-            child: row['avatar_url'] == null
-                ? AvatarFace((row['avatar'] ?? '👻').toString(),
-                    glyphSize: 20, emojiSize: 18)
-                : null,
+          /* v2.0.23: tap a top-ghost avatar → the zoom viewer (the
+             row itself has no tap, so nothing competes). */
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => showAvatarZoom(
+              context,
+              name: (row['name'] ?? tr('ghost')).toString(),
+              avatar: row['avatar']?.toString(),
+              avatarUrl: row['avatar_url']?.toString(),
+            ),
+            child: CircleAvatar(
+              radius: 20,
+              backgroundColor: T.surfaceHi,
+              backgroundImage: row['avatar_url'] != null
+                  ? NetworkImage(row['avatar_url'].toString())
+                  : null,
+              child: row['avatar_url'] == null
+                  ? AvatarFace((row['avatar'] ?? '👻').toString(),
+                      glyphSize: 20, emojiSize: 18)
+                  : null,
+            ),
           ),
           const SizedBox(width: T.s12),
           Expanded(
@@ -12282,6 +12304,145 @@ Widget friendAvatar(Friend f, {double radius = 22}) {
   );
 }
 
+/* v2.0.23: the shared avatar viewer — the owner: «добавь просмотр
+   аватарок по ближе». One full-screen overlay used by every avatar
+   tap in the app: near-black backdrop, the face as a big circle,
+   the name underneath. A photo gets an InteractiveViewer (pinch
+   1–4×, pan); the TI glyph and the legacy emoji render through the
+   same AvatarFace pipeline, just large. Close: tap anywhere, the
+   ✕, or the system back. [photo] (an explicit provider — the
+   guest's on-device avatar file) wins over [avatarUrl]. */
+void showAvatarZoom(
+  BuildContext context, {
+  required String name,
+  String? avatar,
+  String? avatarUrl,
+  ImageProvider? photo,
+}) {
+  showGeneralDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'avatar',
+    barrierColor: Colors.black.withValues(alpha: 0.94),
+    transitionDuration: const Duration(milliseconds: 180),
+    transitionBuilder: (_, anim, __, child) =>
+        FadeTransition(opacity: anim, child: child),
+    pageBuilder: (_, __, ___) => AvatarZoomView(
+      name: name,
+      avatar: avatar,
+      avatarUrl: avatarUrl,
+      photo: photo,
+    ),
+  );
+}
+
+class AvatarZoomView extends StatelessWidget {
+  final String name;
+  final String? avatar, avatarUrl;
+  final ImageProvider? photo;
+  const AvatarZoomView({
+    super.key,
+    required this.name,
+    this.avatar,
+    this.avatarUrl,
+    this.photo,
+  });
+
+  /* The big face: a photo when there is one, falling back to the
+     AvatarFace rendering while it loads and if it fails — the same
+     glyph / emoji / ghost placeholder the small circles show. */
+  Widget _face(double side) {
+    final fallback = Container(
+      width: side,
+      height: side,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: T.surfaceHi,
+      ),
+      alignment: Alignment.center,
+      child: AvatarFace(
+        avatar,
+        glyphSize: side * 0.52,
+        emojiSize: side * 0.5,
+        ghostForDefault: true,
+      ),
+    );
+    final provider = photo ??
+        (avatarUrl != null && avatarUrl!.isNotEmpty
+            ? NetworkImage(avatarUrl!)
+            : null);
+    if (provider == null) return fallback;
+    return ClipOval(
+      child: Image(
+        image: provider,
+        width: side,
+        height: side,
+        fit: BoxFit.cover,
+        frameBuilder: (_, child, frame, __) =>
+            frame == null ? fallback : child,
+        errorBuilder: (_, __, ___) => fallback,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    final side = math.min(mq.size.width * 0.84, mq.size.height * 0.58);
+    return Material(
+      color: Colors.transparent,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => Navigator.of(context).pop(),
+        child: Stack(
+          children: [
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  InteractiveViewer(
+                    minScale: 1,
+                    maxScale: 4,
+                    child: _face(side),
+                  ),
+                  const SizedBox(height: T.s20),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: T.s24),
+                    child: Text(
+                      name,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: T.head(20),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              top: mq.padding.top + T.s8,
+              right: T.s12,
+              child: Pressable(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: T.surfaceHi,
+                  ),
+                  alignment: Alignment.center,
+                  child: const TiradIcon(TIGlyph.x, size: 18),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /* One ping as a card: sender (tap → their sheet, the reply path),
    the привет line or the sticker, and — for a custom sticker — the
    «Сохранить» affordance. Shared by the Friends tab inbox
@@ -12323,25 +12484,31 @@ class PingCard extends StatelessWidget {
         children: [
           Row(
             children: [
+              /* v2.0.23: the avatar opens the zoom viewer; the name
+                 keeps the old tap → the sender's sheet (reply path). */
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => showAvatarZoom(
+                  context,
+                  name: p.from.mode == 'ghost' ? tr('ghost') : p.from.name,
+                  avatar: p.from.avatar,
+                  avatarUrl: p.from.avatarUrl,
+                ),
+                child: friendAvatar(p.from, radius: 18),
+              ),
+              const SizedBox(width: T.s8),
               GestureDetector(
                 onTap: onOpenSender,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    friendAvatar(p.from, radius: 18),
-                    const SizedBox(width: T.s8),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          p.from.mode == 'ghost' ? tr('ghost') : p.from.name,
-                          style: T.body(14, w: FontWeight.w700),
-                        ),
-                        Text(
-                          relTime(p.createdAt),
-                          style: T.body(11.5, color: T.faint),
-                        ),
-                      ],
+                    Text(
+                      p.from.mode == 'ghost' ? tr('ghost') : p.from.name,
+                      style: T.body(14, w: FontWeight.w700),
+                    ),
+                    Text(
+                      relTime(p.createdAt),
+                      style: T.body(11.5, color: T.faint),
                     ),
                   ],
                 ),
@@ -12526,15 +12693,25 @@ class _FriendSheetState extends State<FriendSheet> {
           children: [
             Row(
               children: [
-                CircleAvatar(
-                  radius: 28,
-                  backgroundColor: T.surfaceHi,
-                  backgroundImage:
-                      f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
-                  child: f.avatarUrl == null
-                      ? AvatarFace(f.avatar,
-                          glyphSize: 28, emojiSize: 26, ghostForDefault: true)
-                      : null,
+                /* v2.0.23: tap the sheet's avatar → the zoom viewer. */
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => showAvatarZoom(
+                    context,
+                    name: f.mode == 'ghost' ? tr('ghost') : f.name,
+                    avatar: f.avatar,
+                    avatarUrl: f.avatarUrl,
+                  ),
+                  child: CircleAvatar(
+                    radius: 28,
+                    backgroundColor: T.surfaceHi,
+                    backgroundImage:
+                        f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
+                    child: f.avatarUrl == null
+                        ? AvatarFace(f.avatar,
+                            glyphSize: 28, emojiSize: 26, ghostForDefault: true)
+                        : null,
+                  ),
                 ),
                 const SizedBox(width: 14),
                 Column(
@@ -13096,7 +13273,20 @@ class _FriendsTabState extends State<FriendsTab> {
       ),
       child: ListTile(
         onTap: onTap,
-        leading: _avatar(f),
+        /* v2.0.23: the avatar intercepts its own tap → the zoom
+           viewer; the rest of the row still opens the friend sheet
+           (the inner GestureDetector wins the arena over the tile's
+           InkWell, the standard leading-button pattern). */
+        leading: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => showAvatarZoom(
+            context,
+            name: f.mode == 'ghost' ? tr('ghost') : f.name,
+            avatar: f.avatar,
+            avatarUrl: f.avatarUrl,
+          ),
+          child: _avatar(f),
+        ),
         title: Text(
           f.mode == 'ghost' ? tr('ghost') : f.name,
           style: T.body(15, w: FontWeight.w700),
@@ -13668,7 +13858,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.22',
+                  'TiradA anon · 2.0.23',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -13963,6 +14153,24 @@ class _ProfileTabState extends State<ProfileTab> {
               onTap: () {
                 HapticFeedback.selectionClick();
                 _showAvatarSheet();
+              },
+              /* v2.0.23: LONG-press my own big avatar → the zoom
+                 viewer. The plain tap keeps its job (the change-
+                 avatar sheet — the hint under the avatar says so),
+                 so the viewer takes the free gesture instead of
+                 hijacking the tap. The guest's on-device photo goes
+                 through the explicit FileImage provider. */
+              onLongPress: () {
+                HapticFeedback.selectionClick();
+                showAvatarZoom(
+                  context,
+                  name: nick,
+                  avatar: avatarEmoji,
+                  avatarUrl: avatarUrl,
+                  photo: (!signedIn && _guestAvatarPath != null)
+                      ? FileImage(File(_guestAvatarPath!))
+                      : null,
+                );
               },
               child: Container(
                 width: 112,
@@ -14418,7 +14626,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.22',
+            'TiradA anon · 2.0.23',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
