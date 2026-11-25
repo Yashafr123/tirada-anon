@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.15.
+// TiradA anon — native app (Flutter), v2.0.16.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -3950,6 +3950,76 @@ class ActiveIconBadge extends StatelessWidget {
   }
 }
 
+/* ---- Ghost-avatar values (v2.0.16) ----
+   profiles.avatar (and the guest prefs / GuestAvatarBus mirror)
+   historically stored an EMOJI string (default '👻'). The owner
+   rejected the stock-emoji picker: avatar choices are now TI
+   glyphs from his icon spec, stored as a token 'ti:<glyphName>'
+   (e.g. 'ti:ghost'). Rendering is backward compatible everywhere:
+   a token renders the vector glyph, any legacy emoji string
+   renders as text exactly as before — existing users' avatars do
+   not break. */
+TIGlyph? tiAvatarGlyph(String? value) {
+  if (value == null || !value.startsWith('ti:')) return null;
+  final name = value.substring(3);
+  for (final g in TIGlyph.values) {
+    if (g.name == name) return g;
+  }
+  return null;
+}
+
+String tiAvatarToken(TIGlyph g) => 'ti:${g.name}';
+
+/* The 12 choices in the «Аватар призрака» picker: the spec's own
+   list first (ghost, flame, star, skull, heart, bolt, mapPin,
+   routePath), then moon, eye, compass, musicNote. */
+const kAvatarGlyphs = <TIGlyph>[
+  TIGlyph.ghost, TIGlyph.flame, TIGlyph.star, TIGlyph.skull,
+  TIGlyph.heart, TIGlyph.bolt, TIGlyph.mapPin, TIGlyph.routePath,
+  TIGlyph.moon, TIGlyph.eye, TIGlyph.compass, TIGlyph.musicNote,
+];
+
+/* Renders a stored avatar value in a widget tree: 'ti:<name>' →
+   the TI glyph; anything else → the legacy emoji text. With
+   [ghostForDefault], the unset / '👻' / '👤' values render the TI
+   ghost glyph instead of emoji text (the treatment the friends
+   lists already used). */
+class AvatarFace extends StatelessWidget {
+  final String? value;
+  final double glyphSize;
+  final double emojiSize;
+  final Color glyphColor;
+  final bool glyphFilled;
+  final bool ghostForDefault;
+  const AvatarFace(
+    this.value, {
+    super.key,
+    this.glyphSize = 20,
+    this.emojiSize = 20,
+    this.glyphColor = T.iconGray,
+    this.glyphFilled = false,
+    this.ghostForDefault = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final g = tiAvatarGlyph(value);
+    if (g != null) {
+      return TiradIcon(g,
+          size: glyphSize, color: glyphColor, filled: glyphFilled);
+    }
+    final v = value;
+    if (ghostForDefault &&
+        (v == null || v.isEmpty || v == '👻' || v == '👤')) {
+      return TiradIcon(TIGlyph.ghost, size: glyphSize, color: glyphColor);
+    }
+    return Text(
+      (v == null || v.isEmpty) ? '👻' : v,
+      style: TextStyle(fontSize: emojiSize),
+    );
+  }
+}
+
 /* Shimmering skeleton block for loading states. */
 class ShimmerBox extends StatefulWidget {
   final double height;
@@ -4707,8 +4777,6 @@ class _HomePageState extends State<HomePage> {
   int? _temp;
   TIGlyph _wxGlyph = TIGlyph.sun;
   List<Friend> _friends = [];
-  int _tickerIdx = 0;
-  Timer? _tickerTimer;
   LatLng? _lastCitySyncPos; // last position the city auto-sync judged
 
   @override
@@ -4737,9 +4805,8 @@ class _HomePageState extends State<HomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) LocationService.ensureLocation(context);
     });
-    _tickerTimer = Timer.periodic(const Duration(seconds: 4), (_) {
-      if (mounted) setState(() => _tickerIdx++);
-    });
+    // v2.0.16: the 4 s ticker timer is gone with the ticker strip
+    // it fed (see build()) — nothing rotates any more.
   }
 
   /* A language switch rebuilds the whole shell (header, nav, tabs) —
@@ -4750,7 +4817,6 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
-    _tickerTimer?.cancel();
     appLang.removeListener(_onLangChanged);
     AiXpBus.pending.removeListener(_drainAiXp);
     PushService.foreground.removeListener(_onForegroundPush);
@@ -5226,7 +5292,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /* ---------- shell pieces: header / LIVE bar / ticker / nav ---------- */
+  /* ---------- shell pieces: header / nav (LIVE bar + ticker removed in v2.0.16) ---------- */
 
   /* The header's round profile button: the user's own face, kept in sync
      with the Profile tab. Signed-in → read straight from HomePage's live
@@ -5258,7 +5324,14 @@ class _HomePageState extends State<HomePage> {
                   : null),
         ),
         child: (photoUrl == null && photoPath == null)
-            ? Text(emoji, style: const TextStyle(fontSize: 18))
+            // v2.0.16: a 'ti:' avatar renders as the white filled
+            // glyph on this gradient circle; a legacy emoji renders
+            // as text, as before.
+            ? AvatarFace(emoji,
+                glyphSize: 20,
+                emojiSize: 18,
+                glyphColor: Colors.white,
+                glyphFilled: true)
             : null,
       );
     }
@@ -5369,84 +5442,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _liveBar() {
-    final places = _cityPlaces;
-    final hot = places.where((p) => vibeOf(p) >= 70).length;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
-      child: Row(
-        children: [
-          const PulseDot(),
-          const SizedBox(width: 8),
-          const Text(
-            'LIVE',
-            style: TextStyle(
-              color: kRed,
-              fontWeight: FontWeight.w900,
-              fontSize: 12,
-              letterSpacing: 1.5,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text.rich(
-              TextSpan(children: [
-                TextSpan(text: tr('live_in_city')),
-                TextSpan(
-                  text: trf('live_hot', {'n': hot}),
-                  style: const TextStyle(
-                    color: kOrange,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                TextSpan(text: trf('live_total', {'n': places.length})),
-              ]),
-              maxLines: 2,
-              style: const TextStyle(color: kText, fontSize: 13),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  List<String> _tickerMessages() {
-    final places = [..._cityPlaces]
-      ..sort((a, b) => vibeOf(b).compareTo(vibeOf(a)));
-    if (places.isEmpty || _city == null) return [tr('tick_radar_on')];
-    final hot = places.where((p) => vibeOf(p) >= 70).length;
-    return [
-      trf('tick_top', {'name': places.first.name}),
-      trf('tick_city', {'city': _city!.name, 'n': places.length, 'hot': hot}),
-      tr('tick_tap'),
-    ];
-  }
-
-  Widget _ticker() {
-    final msgs = _tickerMessages();
-    final msg = msgs[_tickerIdx % msgs.length];
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      decoration: BoxDecoration(
-        color: kRed.withOpacity(0.10),
-        border: Border(
-          top: BorderSide(color: kRed.withOpacity(0.25)),
-          bottom: BorderSide(color: kRed.withOpacity(0.25)),
-        ),
-      ),
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 450),
-        child: Text(
-          msg,
-          key: ValueKey(msg),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12.5, color: kText),
-        ),
-      ),
-    );
-  }
+  /* v2.0.16: _liveBar() (the LIVE strip) and _ticker() /
+     _tickerMessages() (the red city-summary strip) are DELETED —
+     the owner removed both panels so the map gets the space. The
+     hot-count data behind them (vibeOf / _cityPlaces) is untouched:
+     the «только жаркие» filters and the on-map pulse chip still use
+     it. The now-unused kStr keys (live_*, tick_*) stay in the table
+     harmlessly. */
 
   /* v2.0.12: nav items are TI glyphs — inactive: monoline gray;
      active: the spec's ActiveIconBadge (white filled glyph on the
@@ -5595,8 +5597,9 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           children: [
             _header(),
-            _liveBar(),
-            _ticker(),
+            // v2.0.16: the LIVE bar and the ticker strip under the
+            // header are REMOVED (owner: «убери вот эти две панели,
+            // карта станет больше») — the map gets the freed space.
             Expanded(
               // IndexedStack: tabs are built once and kept alive — the
               // MapLibre widget is never recreated on tab switches.
@@ -5854,13 +5857,10 @@ class _DealSheetState extends State<DealSheet> {
                       backgroundImage:
                           f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
                       child: f.avatarUrl == null
-                          ? (f.avatar != null &&
-                                  f.avatar != '👻' &&
-                                  f.avatar != '👤'
-                              ? Text(f.avatar!,
-                                  style: const TextStyle(fontSize: 19))
-                              : const TiradIcon(TIGlyph.ghost,
-                                  size: 21, color: T.iconGray))
+                          ? AvatarFace(f.avatar,
+                              glyphSize: 21,
+                              emojiSize: 19,
+                              ghostForDefault: true)
                           : null,
                     ),
                     const SizedBox(width: 11),
@@ -7101,7 +7101,13 @@ class _MapTabState extends State<MapTab> {
   bool _meImgReady = false;
   bool _meSyncing = false;
   bool _meAgain = false;
-  Timer? _zoomTimer; // long-press repeat for the side zoom panels
+  // Side-zoom swipe session (v2.0.16): pointer id that owns the
+  // active edge drag, the finger Y and the camera zoom/target
+  // captured when the drag started.
+  int? _zoomDragPointer;
+  double _zoomDragStartY = 0;
+  double _zoomDragStartZoom = 0;
+  LatLng? _zoomDragTarget;
 
   @override
   void initState() {
@@ -7118,7 +7124,7 @@ class _MapTabState extends State<MapTab> {
     MapRouteBus.line.removeListener(_onRouteLineChanged);
     myLocationNotifier.removeListener(_onMyLocation);
     _timer?.cancel();
-    _zoomTimer?.cancel();
+    _zoomDragPointer = null;
     super.dispose();
   }
 
@@ -7667,12 +7673,23 @@ class _MapTabState extends State<MapTab> {
       // v2.0.12: the ghost-mode and default fallbacks are the TI ghost
       // glyph (vector). A friend's CHOSEN avatar emoji stays text —
       // that is their identity data, not app iconography.
+      // v2.0.16: a chosen 'ti:<name>' avatar (the glyph picker)
+      // paints that glyph's vector centred in the disc instead.
       final chosen = f.avatar;
       final isDefault = chosen == null ||
           chosen.isEmpty ||
           chosen == '👤' ||
           chosen == '👻';
-      if (f.mode == 'ghost' || isDefault) {
+      final chosenGlyph = tiAvatarGlyph(chosen);
+      if (f.mode != 'ghost' && chosenGlyph != null) {
+        TIPaint.paint(
+          canvas,
+          chosenGlyph,
+          Rect.fromCenter(center: center, width: 96, height: 96),
+          T.iconGray,
+          strokeScale: 1.1,
+        );
+      } else if (f.mode == 'ghost' || isDefault) {
         TIPaint.paint(
           canvas,
           TIGlyph.ghost,
@@ -7919,6 +7936,36 @@ class _MapTabState extends State<MapTab> {
      saw was the native MapLibre location puck drawn above annotation
      symbols; the puck's rendering is now off (myLocationEnabled:
      false on the map), so this symbol is the only me-marker. */
+  /* The stored avatar VALUE behind the me-marker fallback
+     (v2.0.16): signed-in → profiles.avatar; guest → the
+     GuestAvatarBus mirror, else the guest prefs value. Null when
+     nothing is stored. */
+  Future<String?> _meAvatarValue() async {
+    try {
+      final uid = myUidOrNull;
+      if (uid != null) {
+        final rows = await supa
+            .from('profiles')
+            .select('avatar')
+            .eq('id', uid)
+            .limit(1);
+        for (final r in rows as List) {
+          final v = r['avatar'] as String?;
+          if (v != null && v.isNotEmpty) return v;
+        }
+        return null;
+      }
+    } catch (_) {}
+    final bus = GuestAvatarBus.emoji.value;
+    if (bus != null && bus.isNotEmpty) return bus;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getString('guest_avatar_emoji');
+      if (v != null && v.isNotEmpty) return v;
+    } catch (_) {}
+    return null;
+  }
+
   Future<Uint8List> _meMarkerBitmap() async {
     const cacheKey = 'me-marker-bitmap';
     final cached = _markerCache[cacheKey];
@@ -7952,9 +7999,13 @@ class _MapTabState extends State<MapTab> {
     } else {
       canvas.drawCircle(center, 68, Paint()..color = kSurface2);
       // v2.0.12: TI ghost glyph fallback (vector, no emoji).
+      // v2.0.16: if the user picked a glyph avatar ('ti:<name>'),
+      // paint THAT glyph; a legacy emoji keeps the previous
+      // behaviour (the branded ghost).
+      final myGlyph = tiAvatarGlyph(await _meAvatarValue());
       TIPaint.paint(
         canvas,
-        TIGlyph.ghost,
+        myGlyph ?? TIGlyph.ghost,
         Rect.fromCenter(center: center, width: 92, height: 92),
         T.iconGray,
         strokeScale: 1.1,
@@ -7968,75 +8019,69 @@ class _MapTabState extends State<MapTab> {
     return bytes;
   }
 
-  /* ---------------- side zoom panels (v2.0.10, rebuilt v2.0.14) ----
-     «Как в Бампе»: tap strips along both screen edges — upper half
-     zooms in, lower half zooms out, hold to keep zooming. Only faint
-     + / − glyphs at 28% so the zones stay discoverable.
-     v2.0.14 ROOT CAUSE (owner: «на карте нету приближения и
-     отдаления по бокам»): the zones were GestureDetectors over a
-     fully transparent Container, stacked over the MapLibre platform
-     view. A tap/long-press recogniser has to WIN the gesture arena
-     against the native view's own touch handling before it fires —
-     over an Android platform view that contest is exactly where
-     these recognisers starved: the strips rendered (the glyphs were
-     there) but taps never became zoom steps, unchanged since
-     v2.0.10. The rebuild listens to RAW pointer events with a
-     Listener (HitTestBehavior.opaque): a pointer-down is delivered
-     in the hit-test phase, before any arena exists, so the strip
-     claims its 48 dp first and the map never sees the touch. The
-     zone also paints a real (4% white) box instead of a transparent
-     one, so the hit region is an actual painted render object on
-     every renderer. Each step calls the same animateCamera path
-     that demonstrably works for map centring, plus a haptic tick. */
+  /* ---------------- side zoom: invisible swipe (v2.0.16) ----
+     History: v2.0.10 shipped tap strips (upper half zoom-in, lower
+     half zoom-out) as GestureDetectors; they starved in the gesture
+     arena over the MapLibre platform view and never fired.
+     v2.0.14 rebuilt them on a Listener (HitTestBehavior.opaque) —
+     pointer events arrive in the hit-test phase, before any arena,
+     so the strip claims its 48 dp first and the map never sees the
+     touch — with tap/long-press STEP zoom, a 4% white tint and
+     faint + / − glyphs. The owner rejected that («боковой зум
+     хуевый»): he wants a GESTURE, fully invisible.
+     v2.0.16: each edge strip is one invisible hit area. A vertical
+     drag on it drives the zoom CONTINUOUSLY: finger up → zoom in,
+     finger down → zoom out. On pointer-down the session captures
+     the finger Y and the camera's current zoom + target; on move,
+     targetZoom = startZoom + (startY − currentY) / _zoomSwipeK,
+     clamped to [3, 19], applied with moveCamera(newCameraPosition)
+     around the CAPTURED target — the map never recentres and there
+     is no animation lag or stepping, the zoom tracks the finger.
+     NOTHING is drawn: no glyphs, no tint, no painted box. The hit
+     region does not depend on painting: a Listener with
+     HitTestBehavior.opaque hit-tests by its own bounds (the child
+     is a bare SizedBox.expand with the same 48 dp × full-height
+     bounds the painted Container had), so the strips stay fully
+     functional while invisible. A drag that starts outside the
+     strips never reaches this Listener and pans the map normally;
+     a drag that starts inside is consumed here and never pans. */
 
-  void _zoomStep(bool zoomIn) {
+  // dp of vertical drag per 1.0 zoom level.
+  static const double _zoomSwipeK = 120;
+  static const double _zoomSwipeMin = 3;
+  static const double _zoomSwipeMax = 19;
+
+  void _zoomSwipeStart(PointerDownEvent e) {
+    if (_zoomDragPointer != null) return; // one session at a time
     final ctl = _ctl;
     if (ctl == null) return;
+    final cam = ctl.cameraPosition;
+    if (cam == null) return;
+    _zoomDragPointer = e.pointer;
+    _zoomDragStartY = e.position.dy;
+    _zoomDragStartZoom = cam.zoom;
+    _zoomDragTarget = cam.target;
+  }
+
+  void _zoomSwipeMove(PointerMoveEvent e) {
+    if (e.pointer != _zoomDragPointer) return;
+    final ctl = _ctl;
+    final target = _zoomDragTarget;
+    if (ctl == null || target == null) return;
+    final z = (_zoomDragStartZoom + (_zoomDragStartY - e.position.dy) / _zoomSwipeK)
+        .clamp(_zoomSwipeMin, _zoomSwipeMax)
+        .toDouble();
     try {
-      ctl.animateCamera(
-          zoomIn ? CameraUpdate.zoomIn() : CameraUpdate.zoomOut());
+      ctl.moveCamera(CameraUpdate.newCameraPosition(
+        CameraPosition(target: target, zoom: z),
+      ));
     } catch (_) {}
   }
 
-  void _startZoomRepeat(bool zoomIn) {
-    _zoomStep(zoomIn);
-    _zoomTimer?.cancel();
-    _zoomTimer = Timer.periodic(const Duration(milliseconds: 280), (_) {
-      _zoomStep(zoomIn);
-    });
-  }
-
-  void _stopZoomRepeat() {
-    _zoomTimer?.cancel();
-    _zoomTimer = null;
-  }
-
-  Widget _zoomZone(bool zoomIn) {
-    return Expanded(
-      child: Listener(
-        behavior: HitTestBehavior.opaque,
-        onPointerDown: (_) {
-          tick();
-          _startZoomRepeat(zoomIn);
-        },
-        onPointerUp: (_) => _stopZoomRepeat(),
-        onPointerCancel: (_) => _stopZoomRepeat(),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.04),
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            zoomIn ? '+' : '−',
-            style: TextStyle(
-              color: T.text.withOpacity(0.28),
-              fontSize: 24,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ),
-    );
+  void _zoomSwipeEnd(PointerEvent e) {
+    if (e.pointer != _zoomDragPointer) return;
+    _zoomDragPointer = null;
+    _zoomDragTarget = null;
   }
 
   Widget _zoomPanel({required bool leftSide}) {
@@ -8046,11 +8091,13 @@ class _MapTabState extends State<MapTab> {
       left: leftSide ? 0 : null,
       right: leftSide ? null : 0,
       width: 48,
-      child: Column(
-        children: [
-          _zoomZone(true),
-          _zoomZone(false),
-        ],
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: _zoomSwipeStart,
+        onPointerMove: _zoomSwipeMove,
+        onPointerUp: _zoomSwipeEnd,
+        onPointerCancel: _zoomSwipeEnd,
+        child: const SizedBox.expand(),
       ),
     );
   }
@@ -8140,13 +8187,8 @@ class _MapTabState extends State<MapTab> {
               backgroundImage:
                   f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
               child: f.avatarUrl == null
-                  ? (f.avatar != null &&
-                          f.avatar != '👻' &&
-                          f.avatar != '👤'
-                      ? Text(f.avatar!,
-                          style: const TextStyle(fontSize: 26))
-                      : const TiradIcon(TIGlyph.ghost,
-                          size: 28, color: T.iconGray))
+                  ? AvatarFace(f.avatar,
+                      glyphSize: 28, emojiSize: 26, ghostForDefault: true)
                   : null,
             ),
             const SizedBox(width: 14),
@@ -11671,8 +11713,8 @@ class _BadgesPageState extends State<BadgesPage> {
                 ? NetworkImage(row['avatar_url'].toString())
                 : null,
             child: row['avatar_url'] == null
-                ? Text((row['avatar'] ?? '👻').toString(),
-                    style: const TextStyle(fontSize: 18))
+                ? AvatarFace((row['avatar'] ?? '👻').toString(),
+                    glyphSize: 20, emojiSize: 18)
                 : null,
           ),
           const SizedBox(width: T.s12),
@@ -11853,11 +11895,20 @@ class _ProfileTabState extends State<ProfileTab> {
     });
   }
 
-  /* Avatar editor: emoji grid + «Фото из галереи». Signed-in users
+  /* Avatar editor: TI-glyph grid + «Фото из галереи». Signed-in users
      upload to the avatars bucket (<uid>/avatar.jpg) and set
-     profiles.avatar_url; guests keep the picked photo on-device. */
+     profiles.avatar_url; guests keep the picked photo on-device.
+     v2.0.16: the grid offers the 12 TI glyphs of the owner's icon
+     spec (stored as 'ti:<name>' tokens via _setEmojiAvatar, which
+     just persists the string) instead of stock emoji. The current
+     value is highlighted: a stored token selects its glyph
+     (ActiveIconBadge); a legacy emoji value selects nothing in the
+     grid — it stays the user's avatar until they pick a glyph or a
+     photo. */
   void _showAvatarSheet() {
     final signedIn = supa.auth.currentUser != null;
+    final current =
+        signedIn ? (widget.profile?['avatar'] as String?) : _guestEmoji;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -11874,26 +11925,25 @@ class _ProfileTabState extends State<ProfileTab> {
                 spacing: 10,
                 runSpacing: 10,
                 children: [
-                  for (final e in [
-                    '👻', '😎', '🦊', '🐺', '🦉', '🐱',
-                    '🔥', '🌙', '⭐', '💀', '🎭', '🦄',
-                  ])
+                  for (final g in kAvatarGlyphs)
                     GestureDetector(
                       onTap: () {
                         Navigator.of(context).pop();
-                        _setEmojiAvatar(e);
+                        _setEmojiAvatar(tiAvatarToken(g));
                       },
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: T.surfaceHi,
-                          border: Border.all(color: T.stroke),
-                        ),
-                        child: Text(e, style: const TextStyle(fontSize: 24)),
-                      ),
+                      child: tiAvatarToken(g) == current
+                          ? ActiveIconBadge(glyph: g, size: 48)
+                          : Container(
+                              width: 48,
+                              height: 48,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: T.surfaceHi,
+                                border: Border.all(color: T.stroke),
+                              ),
+                              child: TiradIcon(g, size: 26),
+                            ),
                     ),
                 ],
               ),
@@ -12135,7 +12185,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.15',
+                  'TiradA anon · 2.0.16',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -12460,7 +12510,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 alignment: Alignment.center,
                 child: avatarUrl == null &&
                         (signedIn || _guestAvatarPath == null)
-                    ? Text(avatarEmoji, style: const TextStyle(fontSize: 52))
+                    ? AvatarFace(avatarEmoji, glyphSize: 54, emojiSize: 52)
                     : null,
               ),
             ),
@@ -12885,7 +12935,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.15',
+            'TiradA anon · 2.0.16',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
