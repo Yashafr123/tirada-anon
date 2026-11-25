@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.10.
+// TiradA anon — native app (Flutter), v2.0.11.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -7080,11 +7080,20 @@ class _RouteTabState extends State<RouteTab> {
   String _routeKey = '';
   String _routeTitle = 'route_evening_title';
 
+  /* The active ready route's name as its raw {ru, he, en} map, when
+     the active route is a ready one. _titleText resolves it through
+     aiText() so a language switch re-reads it, and _persistActive
+     stores the map (not a one-language snapshot) so a restart also
+     restores it in whatever language is current. Null for the
+     built-in kinds, whose titles are kStr keys. */
+  Map<String, dynamic>? _routeTitleMap;
+
   /* _routeTitle holds either a localized ready-route name (aiText) or a
      kStr key for the built-in kinds; resolve it at display time so a
      language switch re-reads it. Legacy persisted titles (the Russian
      literals older builds stored) map onto the same keys. */
   String get _titleText {
+    if (_routeTitleMap != null) return aiText(_routeTitleMap);
     if (_routeTitle == 'route_evening_title' ||
         _routeTitle == 'Маршрут на вечер') {
       return tr('route_evening_title');
@@ -7194,6 +7203,8 @@ class _RouteTabState extends State<RouteTab> {
     _kind = kind;
     _routeKey = (m['key'] ?? '').toString();
     _routeTitle = (m['title'] ?? 'route_evening_title').toString();
+    final tm = m['titleMap'];
+    _routeTitleMap = tm is Map ? tm.cast<String, dynamic>() : null;
     _routeCityId = (m['cityId'] ?? '').toString();
     _routeCityName = (m['cityName'] ?? '').toString();
     _seed = (m['seed'] as num?)?.toInt() ?? _seed;
@@ -7219,6 +7230,7 @@ class _RouteTabState extends State<RouteTab> {
           'kind': _kind,
           'key': _routeKey,
           'title': _routeTitle,
+          'titleMap': _routeTitleMap,
           'cityId': _routeCityId,
           'cityName': _routeCityName,
           'seed': _seed,
@@ -7315,6 +7327,7 @@ class _RouteTabState extends State<RouteTab> {
     _routeCityId = city.id;
     _routeCityName = city.name;
     _routeTitle = 'route_evening_title';
+    _routeTitleMap = null;
     _routeKey =
         'evening-${city.id}-${dayKey()}-$_seed-${stops.map((p) => p.id).join('.')}';
     _done.clear();
@@ -7461,6 +7474,7 @@ class _RouteTabState extends State<RouteTab> {
     _kind = 'ready';
     _routeKey = r.id;
     _routeTitle = aiText(r.name);
+    _routeTitleMap = r.name;
     _routeCityId = r.city.id;
     _routeCityName = r.city.name;
     _stops = List.of(r.stops);
@@ -7494,6 +7508,7 @@ class _RouteTabState extends State<RouteTab> {
     _kind = 'saved';
     _routeKey = _savedKey(e);
     _routeTitle = 'route_saved_title';
+    _routeTitleMap = null;
     _routeCityId = stops.first.city;
     _routeCityName = (e['cityName'] ?? '').toString();
     _stops = stops;
@@ -7567,8 +7582,8 @@ class _RouteTabState extends State<RouteTab> {
     if (_routeTasks.isEmpty) {
       return tr('route_task_fallback');
     }
-    return _routeTasks[stableHash('$_routeKey|$i') % _routeTasks.length]
-        .toString();
+    return aiText(
+        _routeTasks[stableHash('$_routeKey|$i') % _routeTasks.length]);
   }
 
   String _fmtDist(double km) =>
@@ -8659,7 +8674,7 @@ class _TasksPageState extends State<TasksPage> {
   Widget build(BuildContext context) {
     final dailyTask = _daily.isEmpty
         ? null
-        : _daily[dayIndex() % _daily.length].toString();
+        : aiText(_daily[dayIndex() % _daily.length]);
     final weekQuest = _week.isEmpty
         ? null
         : (_week[(dayIndex() ~/ 7) % _week.length] as Map).cast<String, dynamic>();
@@ -8767,7 +8782,8 @@ class _TasksPageState extends State<TasksPage> {
                 ),
               ),
               if (weekQuest != null) ...[
-                sectionLabel(trf('week_quest_label', {'t': weekQuest['theme']}),
+                sectionLabel(
+                    trf('week_quest_label', {'t': aiText(weekQuest['theme'])}),
                     color: const Color(0xFFFF8A7A)),
                 for (final s in (weekQuest['steps'] as List? ?? []))
                   Padding(
@@ -8776,7 +8792,7 @@ class _TasksPageState extends State<TasksPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text('🔴 ', style: TextStyle(fontSize: 10)),
-                        Expanded(child: Text(s.toString())),
+                        Expanded(child: Text(aiText(s))),
                       ],
                     ),
                   ),
@@ -9619,7 +9635,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.10',
+                  'TiradA anon · 2.0.11',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -10285,7 +10301,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.10',
+            'TiradA anon · 2.0.11',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
