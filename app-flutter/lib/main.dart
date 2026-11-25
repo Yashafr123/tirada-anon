@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.21.
+// TiradA anon — native app (Flutter), v2.0.22.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -1511,21 +1511,24 @@ const Map<String, (String, String, String)> kStr = {
   'nav_route': ('Маршрут', 'מסלול', 'Route'),
   'nav_profile': ('Профиль', 'פרופיל', 'Profile'),
   /* v2.0.17: Friends tab, pings (приветы) and stickers. */
-  'nav_friends': ('Друзья', 'חברים', 'Friends'),
+  /* v2.0.22: the owner renamed the system «Друзья» → «Общее» —
+     the values below are the new wording; keys and code names keep
+     the old 'friends' identifiers (wording change only). */
+  'nav_friends': ('Общее', 'כללי', 'General'),
   'friends_search_hint': ('Поиск по нику…', 'חיפוש לפי כינוי…', 'Search by nickname…'),
   /* v2.0.21: one friends system — everyone registered is already
      a friend; the request-era keys (requests/accept/add/sent) are
      gone with the request UI. */
   'friends_none': ('Пока никого нет', 'אין כאן אף אחד עדיין', 'Nobody here yet'),
   'friends_none_hint': (
-    'Как только кто-то зарегистрируется, он сразу появится здесь — все в приложении уже друзья.',
-    'ברגע שמישהו נרשם, הוא יופיע כאן מיד — כל מי שבאפליקציה כבר חבר.',
-    'As soon as someone registers, they show up here — everyone in the app is already a friend.'
+    'Как только кто-то зарегистрируется, он сразу появится здесь — список общий для всех.',
+    'ברגע שמישהו נרשם, הוא יופיע כאן מיד — הרשימה משותפת לכולם.',
+    'As soon as someone registers, they show up here — the list is shared by everyone.'
   ),
   'friends_all_note': (
-    'Все, кто в приложении, — уже твои друзья. Без заявок: просто жми на призрака и кидай привет или стикер.',
-    'כל מי שבאפליקציה כבר חבר שלך. בלי בקשות: פשוט לוחצים על רוח ושולחים היי או סטיקר.',
-    'Everyone in the app is already your friend. No requests: just tap a ghost and send a hi or a sticker.'
+    'Здесь все, кто зарегистрировался в приложении. Просто жми на призрака и кидай привет или стикер.',
+    'כאן כל מי שנרשם לאפליקציה. פשוט לוחצים על רוח ושולחים היי או סטיקר.',
+    'Everyone registered in the app is here. Just tap a ghost and send a hi or a sticker.'
   ),
   'friends_cancel': ('Отменить', 'ביטול', 'Cancel'),
   'friends_not_found': ('Никого не нашлось', 'לא נמצא אף אחד', 'Nobody found'),
@@ -1535,11 +1538,11 @@ const Map<String, (String, String, String)> kStr = {
     'Something went wrong — try again'
   ),
   'friends_guest': (
-    'Войди в аккаунт — и здесь будут все твои друзья и приветы.',
-    'היכנס לחשבון — וכל החברים וההיי שלך יופיעו כאן.',
-    'Sign in — and all your friends and his will show up here.'
+    'Войди в аккаунт — и здесь будут все люди приложения и твои приветы.',
+    'היכנס לחשבון — וכל האנשים באפליקציה וההיי שלך יופיעו כאן.',
+    'Sign in — and everyone in the app and your his will show up here.'
   ),
-  'friends_list_title': ('Мои друзья', 'החברים שלי', 'My friends'),
+  'friends_list_title': ('Общее', 'כללי', 'General'),
   'ping_hi_btn': ('Привет', 'היי', 'Say hi'),
   'ping_sticker_btn': ('Стикер', 'סטיקר', 'Sticker'),
   'ping_sent_hi': ('Привет отправлен 👋', 'ההיי נשלח 👋', 'Hi sent 👋'),
@@ -1551,9 +1554,9 @@ const Map<String, (String, String, String)> kStr = {
   ),
   'ping_inbox_title': ('Приветы и стикеры', 'היי וסטיקרים', 'His & stickers'),
   'ping_inbox_empty': (
-    'Пока пусто — друзья ещё не кидали тебе приветов.',
-    'ריק בינתיים — חברים עוד לא שלחו לך היי.',
-    'Empty for now — friends have not sent you a hi yet.'
+    'Пока пусто — тебе ещё не кидали приветов.',
+    'ריק בינתיים — עוד לא שלחו לך היי.',
+    'Empty for now — nobody has sent you a hi yet.'
   ),
   'ping_hi_text': ('👋 Привет!', '👋 היי!', '👋 Hi!'),
   'ping_save': ('Сохранить', 'שמירה', 'Save'),
@@ -1648,19 +1651,19 @@ const Map<String, (String, String, String)> kStr = {
   ),
   'deal_online_now': ('Сейчас в сети: ', 'מחוברים עכשיו: ', 'Online now: '),
   'deal_friends_label': (
-    'Друзья сейчас в деле · {n}',
-    'חברים שבפנים עכשיו · {n}',
-    'Friends in right now · {n}'
+    'Люди сейчас в деле · {n}',
+    'אנשים שבפנים עכשיו · {n}',
+    'People in right now · {n}'
   ),
   'deal_guest_note': (
-    'Ты пока гость 👻 Войди в аккаунт — и здесь будут друзья, которые сейчас в деле.',
-    'אתה אורח בינתיים 👻 היכנס לחשבון — וכאן יופיעו חברים שנמצאים עכשיו בפנים.',
-    "You're a guest for now 👻 Sign in — and friends who are in will show up here."
+    'Ты пока гость 👻 Войди в аккаунт — и здесь будут все, кто сейчас в деле.',
+    'אתה אורח בינתיים 👻 היכנס לחשבון — וכאן יופיעו כל מי שנמצאים עכשיו בפנים.',
+    "You're a guest for now 👻 Sign in — and everyone who is in will show up here."
   ),
   'deal_none': (
-    'Пока никто из друзей не в деле. Будь первым 🔥',
-    'אף חבר עוד לא בפנים. תהיה הראשון 🔥',
-    'No friends are in yet. Be the first 🔥'
+    'Пока никто не в деле. Будь первым 🔥',
+    'אף אחד עוד לא בפנים. תהיה הראשון 🔥',
+    'Nobody is in yet. Be the first 🔥'
   ),
   'deal_in_city': ('в сети · {city}', 'מחובר · {city}', 'online · {city}'),
   'deal_in': ('в деле', 'בפנים', 'in'),
@@ -1723,7 +1726,7 @@ const Map<String, (String, String, String)> kStr = {
   'new_place': ('новое место', 'מקום חדש', 'new place'),
   'km_from_you': ('· {d} км от тебя', '· {d} ק״מ ממך', '· {d} km from you'),
   'crowd_now': ('Сейчас отдыхают: ~{n}', 'נחים עכשיו: ~{n}', 'Hanging out now: ~{n}'),
-  'crowd_friends': (' · друзья рядом: {n}', ' · חברים בקרבת מקום: {n}', ' · friends nearby: {n}'),
+  'crowd_friends': (' · люди рядом: {n}', ' · אנשים בקרבת מקום: {n}', ' · people nearby: {n}'),
   'you_here': ('✓ Ты здесь', '✓ אתה כאן', "✓ You're here"),
   'i_here': ('✓ Я здесь', '✓ אני כאן', "✓ I'm here"),
   'checkin_snack': (
@@ -2158,9 +2161,9 @@ const Map<String, (String, String, String)> kStr = {
   'mode_offline': ('Невидимка', 'בלתי נראה', 'Invisible'),
   'signin_create': ('Войти / Создать аккаунт', 'כניסה / יצירת חשבון', 'Sign in / Create account'),
   'account_why': (
-    'Аккаунт нужен для друзей на карте, своего ника и синхронизации. Всё остальное работает и так.',
-    'החשבון נדרש לחברים במפה, לכינוי שלך ולסנכרון. כל השאר עובד גם ככה.',
-    'An account is needed for friends on the map, your own nickname and sync. Everything else works anyway.'
+    'Аккаунт нужен для людей на карте, своего ника и синхронизации. Всё остальное работает и так.',
+    'החשבון נדרש לאנשים במפה, לכינוי שלך ולסנכרון. כל השאר עובד גם ככה.',
+    'An account is needed for people on the map, your own nickname and sync. Everything else works anyway.'
   ),
   'stat_nights': ('ночи в деле', 'לילות בפנים', 'nights in'),
   'stat_places_opened': ('мест открыто', 'מקומות נפתחו', 'places opened'),
@@ -2199,7 +2202,7 @@ const Map<String, (String, String, String)> kStr = {
   'haptics_label': ('Вибрация кнопок', 'רטט בכפתורים', 'Button vibration'),
   'notif_section': ('Уведомления', 'התראות', 'Notifications'),
   'notif_quest': ('Квесты и задания дня', 'קווסטים ומשימות היום', 'Quests and daily tasks'),
-  'notif_friends': ('Друзья в деле и онлайн', 'חברים בפנים ומחוברים', 'Friends in and online'),
+  'notif_friends': ('Люди в деле и онлайн', 'אנשים בפנים ומחוברים', 'People in and online'),
   'notif_votes': ('Голосования', 'הצבעות', 'Votes'),
   'notif_photos': ('Фото и турнир дня', 'תמונות וטורניר היום', 'Photos and the daily tournament'),
   'notif_streak': ('Серия под угрозой', 'רצף בסכנה', 'Streak at risk'),
@@ -13665,7 +13668,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.21',
+                  'TiradA anon · 2.0.22',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -14415,7 +14418,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.21',
+            'TiradA anon · 2.0.22',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
