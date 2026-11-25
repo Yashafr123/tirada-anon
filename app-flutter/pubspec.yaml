@@ -1,7 +1,7 @@
 name: tirada_anon
 description: TiradA anon — ghost city quest. Native app.
 publish_to: 'none'
-version: 2.0.22+26
+version: 2.0.23+27
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
