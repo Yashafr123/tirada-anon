@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.18.
+// TiradA anon — native app (Flutter), v2.0.19.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -1558,6 +1558,26 @@ const Map<String, (String, String, String)> kStr = {
   'ping_save': ('Сохранить', 'שמירה', 'Save'),
   'ping_saved': ('Сохранено', 'נשמר', 'Saved'),
   'ping_delete': ('Удалить', 'מחיקה', 'Delete'),
+  /* v2.0.19: the «you got mail» sheet header — a frame filled with
+     pluralized counted nouns (pingsSummary). */
+  'ping_got_both': (
+    'Тебе отправили: {hi} и {st}',
+    'נשלחו אליך: {hi} ו{st}',
+    'You got: {hi} and {st}'
+  ),
+  'ping_got_hi': ('Тебе отправили: {hi}', 'נשלחו אליך: {hi}', 'You got: {hi}'),
+  'ping_got_st': (
+    'Тебе отправили: {st}',
+    'נשלחו אליך: {st}',
+    'You got: {st}'
+  ),
+  'ping_n_hi_1': ('{n} привет', 'היי אחד', '{n} hi'),
+  'ping_n_hi_2': ('{n} привета', 'שני היי', '{n} his'),
+  'ping_n_hi_n': ('{n} приветов', '{n} היי', '{n} his'),
+  'ping_n_st_1': ('{n} стикер', 'סטיקר אחד', '{n} sticker'),
+  'ping_n_st_2': ('{n} стикера', 'שני סטיקרים', '{n} stickers'),
+  'ping_n_st_n': ('{n} стикеров', '{n} סטיקרים', '{n} stickers'),
+  'ping_got_ok': ('Отлично', 'מעולה', 'Great'),
   'sticker_pack_title': ('Стикеры', 'סטיקרים', 'Stickers'),
   'sticker_mine_title': ('Мои стикеры', 'הסטיקרים שלי', 'My stickers'),
   'sticker_from_gallery': ('Из галереи', 'מהגלריה', 'From gallery'),
@@ -4857,6 +4877,15 @@ class _HomePageState extends State<HomePage> {
   /* v2.0.17: incoming pings (приветы + stickers) — the Friends tab
      inbox and the unseen badge on the «Друзья» nav slot. */
   List<Ping> _pings = [];
+  /* v2.0.19: «you got mail» — unseen pings are also surfaced in a
+     sheet on entry and when new ones land mid-session (the owner:
+     «хочу чтоб когда заходили в приложение оно отсвечивалось на
+     экране, типо тебе отправили так и так столько то столько
+     стикеров»). _presentedPingIds remembers everything already
+     shown this launch (or seen live on the Friends tab) so no ping
+     is ever presented twice. */
+  final Set<String> _presentedPingIds = {};
+  bool _pingSheetOpen = false;
   Timer? _friendsTimer;
   LatLng? _lastCitySyncPos; // last position the city auto-sync judged
 
@@ -5210,6 +5239,8 @@ class _HomePageState extends State<HomePage> {
               ),
         ];
       });
+      // v2.0.19: surface what arrived (launch sheet / new arrivals).
+      _maybePresentPings();
     } catch (e) {
       debugPrint('TiradA pings load failed: $e');
     }
@@ -5232,6 +5263,71 @@ class _HomePageState extends State<HomePage> {
           .isFilter('seen_at', null);
     } catch (e) {
       debugPrint('TiradA pings mark-seen failed: $e');
+    }
+  }
+
+  /* v2.0.19: decide whether the «you got mail» sheet should pop.
+     Called after every _loadPings (app start, the ~30 s cadence,
+     Friends-tab mutations) and once more when the intro finishes.
+     Candidates are unseen pings never presented this launch. On the
+     Friends tab the inbox itself is on screen, so candidates are
+     silently marked presented instead. When another route or sheet
+     is up (or this sheet is already open) the call defers WITHOUT
+     marking anything — the next refresh cycle retries. */
+  void _maybePresentPings() {
+    if (!mounted || myUidOrNull == null) return; // guests: no pings
+    if (!_introDone || _loading) return; // shell not visible yet
+    final fresh = [
+      for (final p in _pings)
+        if (!p.seen && !_presentedPingIds.contains(p.id)) p,
+    ];
+    if (fresh.isEmpty) return;
+    if (_tab == 2) {
+      _presentedPingIds.addAll(fresh.map((p) => p.id));
+      return;
+    }
+    if (_pingSheetOpen) return;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
+    _presentedPingIds.addAll(fresh.map((p) => p.id));
+    _showNewPingsSheet(fresh);
+  }
+
+  Future<void> _showNewPingsSheet(List<Ping> items) async {
+    _pingSheetOpen = true;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (_) => NewPingsSheet(pings: items),
+      );
+    } finally {
+      _pingSheetOpen = false;
+    }
+    // Dismissed (the «Отлично» button or a swipe down): exactly the
+    // presented pings become seen — the tab badge follows at once.
+    await _markPingsSeenIds({for (final p in items) p.id});
+  }
+
+  /* The seen_at update for an explicit id set (the sheet path);
+     _markPingsSeen above stays the Friends tab's mark-all. */
+  Future<void> _markPingsSeenIds(Set<String> ids) async {
+    if (ids.isEmpty) return;
+    if (mounted) {
+      setState(() {
+        _pings = [
+          for (final p in _pings)
+            ids.contains(p.id) ? p.copyWith(seen: true) : p,
+        ];
+      });
+    }
+    try {
+      await supa
+          .from('pings')
+          .update({'seen_at': DateTime.now().toUtc().toIso8601String()})
+          .inFilter('id', ids.toList());
+    } catch (e) {
+      debugPrint('TiradA pings mark-seen (sheet) failed: $e');
     }
   }
 
@@ -5858,6 +5954,9 @@ class _HomePageState extends State<HomePage> {
       return SplashIntro(
         onDone: () {
           if (mounted) setState(() => _introDone = true);
+          // v2.0.19: pings may have loaded under the intro — retry
+          // the «you got mail» sheet now that the shell is visible.
+          _maybePresentPings();
         },
       );
     }
@@ -12070,6 +12169,45 @@ String relTime(DateTime t) {
   return trf('rel_day', {'n': d.inDays});
 }
 
+/* v2.0.19: plural-form index for the counted nouns in the «you got
+   mail» summary — 0 singular, 1 paucal, 2 plural. Russian follows
+   the full 1 / 2–4 / 5+ rule with the 11–14 exception; Hebrew uses
+   its אחד / שני / N forms; English only splits 1 vs the rest. */
+int _pluralForm(int n) {
+  switch (appLang.value) {
+    case 'he':
+      return n == 1 ? 0 : (n == 2 ? 1 : 2);
+    case 'en':
+      return n == 1 ? 0 : 2;
+    default: // ru
+      final m10 = n % 10, m100 = n % 100;
+      if (m10 == 1 && m100 != 11) return 0;
+      if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 1;
+      return 2;
+  }
+}
+
+/* «2 стикера» — base is a kStr stem ('ping_n_hi' / 'ping_n_st')
+   with _1 / _2 / _n plural variants. */
+String _countedNoun(String base, int n) {
+  final form = _pluralForm(n);
+  final key = form == 0 ? '${base}_1' : (form == 1 ? '${base}_2' : '${base}_n');
+  return trf(key, {'n': n});
+}
+
+/* The sheet header: «Тебе отправили: 1 привет и 2 стикера» — a kind
+   with a zero count is left out of the sentence entirely. */
+String pingsSummary(int hi, int stickers) {
+  if (hi > 0 && stickers > 0) {
+    return trf('ping_got_both', {
+      'hi': _countedNoun('ping_n_hi', hi),
+      'st': _countedNoun('ping_n_st', stickers),
+    });
+  }
+  if (hi > 0) return trf('ping_got_hi', {'hi': _countedNoun('ping_n_hi', hi)});
+  return trf('ping_got_st', {'st': _countedNoun('ping_n_st', stickers)});
+}
+
 bool isPackSticker(String ref) => ref.startsWith('pack:');
 
 String stickerPublicUrl(String path) =>
@@ -12101,6 +12239,147 @@ Widget stickerImage(String ref, {double size = 96}) {
     fit: BoxFit.contain,
     errorBuilder: (_, __, ___) => fallback,
   );
+}
+
+/* Friend avatar with the online dot — shared by the Friends tab
+   rows and PingCard (extracted in v2.0.19 from _FriendsTabState). */
+Widget friendAvatar(Friend f, {double radius = 22}) {
+  return Stack(
+    children: [
+      CircleAvatar(
+        radius: radius,
+        backgroundColor: T.surfaceHi,
+        backgroundImage:
+            f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
+        child: f.avatarUrl == null
+            ? AvatarFace(f.avatar,
+                glyphSize: radius, emojiSize: radius - 2, ghostForDefault: true)
+            : null,
+      ),
+      if (f.online)
+        Positioned(
+          right: 0,
+          bottom: 0,
+          child: Container(
+            width: 11,
+            height: 11,
+            decoration: BoxDecoration(
+              color: T.online,
+              shape: BoxShape.circle,
+              border: Border.all(color: T.surface, width: 2),
+            ),
+          ),
+        ),
+    ],
+  );
+}
+
+/* One ping as a card: sender (tap → their sheet, the reply path),
+   the привет line or the sticker, and — for a custom sticker — the
+   «Сохранить» affordance. Shared by the Friends tab inbox
+   (stickerSize 96, with delete) and the v2.0.19 «you got mail»
+   sheet (stickerSize 116, no delete). */
+class PingCard extends StatelessWidget {
+  final Ping ping;
+  final bool saved;
+  final VoidCallback? onSave;
+  final VoidCallback? onDelete;
+  final VoidCallback onOpenSender;
+  final double stickerSize;
+  const PingCard({
+    super.key,
+    required this.ping,
+    required this.onOpenSender,
+    this.saved = false,
+    this.onSave,
+    this.onDelete,
+    this.stickerSize = 96,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = ping;
+    final canSave = p.kind == 'sticker' &&
+        p.sticker != null &&
+        !isPackSticker(p.sticker!);
+    return Container(
+      margin: const EdgeInsets.only(bottom: T.s8),
+      padding: const EdgeInsets.all(T.s12),
+      decoration: BoxDecoration(
+        color: T.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: T.stroke),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              GestureDetector(
+                onTap: onOpenSender,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    friendAvatar(p.from, radius: 18),
+                    const SizedBox(width: T.s8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          p.from.mode == 'ghost' ? tr('ghost') : p.from.name,
+                          style: T.body(14, w: FontWeight.w700),
+                        ),
+                        Text(
+                          relTime(p.createdAt),
+                          style: T.body(11.5, color: T.faint),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              if (onDelete != null)
+                Pressable(
+                  onTap: onDelete,
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: TiradIcon(TIGlyph.trash, size: 17, color: T.faint),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: T.s8),
+          if (p.kind == 'hi')
+            Text(tr('ping_hi_text'), style: T.body(16))
+          else if (p.sticker != null)
+            stickerImage(p.sticker!, size: stickerSize),
+          if (canSave) ...[
+            const SizedBox(height: T.s8),
+            if (saved)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const TiradIcon(TIGlyph.check, size: 14, color: T.online),
+                  const SizedBox(width: 5),
+                  Text(
+                    tr('ping_saved'),
+                    style: T.body(12.5, color: T.online, w: FontWeight.w700),
+                  ),
+                ],
+              )
+            else
+              GhostButton(
+                text: tr('ping_save'),
+                small: true,
+                icon: TIGlyph.plus,
+                onPressed: onSave,
+              ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 /* Pick an image for a custom sticker and re-encode it as PNG,
@@ -12567,6 +12846,129 @@ class _StickerPickerSheetState extends State<StickerPickerSheet> {
   }
 }
 
+/* ---------------- «you got mail» sheet (v2.0.19) ----------------
+   Presented by HomePage over whatever tab is showing: on entry
+   with everything unseen, and mid-session with just the newly
+   arrived items. The header is the counted summary («Тебе
+   отправили: 1 привет и 2 стикера»); the body is the shared
+   PingCard list with the sticker big (116 dp — the sticker is the
+   point); dismissal marks exactly these pings seen (HomePage's
+   _markPingsSeenIds). Save state mirrors the inbox: the sheet
+   loads its own saved-paths set and runs the same insert. */
+class NewPingsSheet extends StatefulWidget {
+  final List<Ping> pings;
+  const NewPingsSheet({super.key, required this.pings});
+
+  @override
+  State<NewPingsSheet> createState() => _NewPingsSheetState();
+}
+
+class _NewPingsSheetState extends State<NewPingsSheet> {
+  final Set<String> _savedPaths = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedPaths();
+  }
+
+  Future<void> _loadSavedPaths() async {
+    final uid = myUidOrNull;
+    if (uid == null) return;
+    try {
+      final rows = await supa
+          .from('user_stickers')
+          .select('path')
+          .eq('owner_id', uid);
+      if (!mounted) return;
+      setState(() {
+        _savedPaths
+          ..clear()
+          ..addAll([
+            for (final r in rows as List) (r['path'] ?? '').toString(),
+          ]);
+      });
+    } catch (e) {
+      debugPrint('TiradA saved stickers load failed: $e');
+    }
+  }
+
+  /* The inbox's save flow, verbatim: insert the path into my
+     collection, then flip the card to «Сохранено». */
+  Future<void> _saveSticker(Ping p) async {
+    final uid = myUidOrNull;
+    final path = p.sticker;
+    if (uid == null || path == null) return;
+    try {
+      await supa.from('user_stickers').insert({
+        'owner_id': uid,
+        'path': path,
+      });
+    } catch (e) {
+      debugPrint('TiradA sticker save failed: $e');
+      if (mounted) snack(context, tr('friends_error'));
+      return;
+    }
+    if (mounted) setState(() => _savedPaths.add(path));
+  }
+
+  /* Reply path: close this sheet first, then open the friend's
+     sheet on the navigator's context (the FriendSheet pattern). */
+  void _openSender(Ping p) {
+    final nav = Navigator.of(context);
+    nav.pop();
+    showFriendSheet(nav.context, p.from);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hi = widget.pings.where((p) => p.kind == 'hi').length;
+    final st = widget.pings.length - hi;
+    return SheetShell(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(T.s20, T.s4, T.s20, T.s20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              pingsSummary(hi, st),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: T.s16),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.52,
+              ),
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final p in widget.pings)
+                    PingCard(
+                      ping: p,
+                      stickerSize: 116,
+                      saved: p.sticker != null &&
+                          _savedPaths.contains(p.sticker),
+                      onSave: () => _saveSticker(p),
+                      onOpenSender: () => _openSender(p),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: T.s12),
+            FireButton(
+              text: tr('ping_got_ok'),
+              icon: TIGlyph.check,
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /* ---------------- friends tab ----------------
    The full friends system lives here since v2.0.17 (the Profile
    tab keeps only a «Друзья» jump row): search by nickname,
@@ -12812,36 +13214,10 @@ class _FriendsTabState extends State<FriendsTab> {
     widget.onPingsChanged();
   }
 
-  Widget _avatar(Friend f, {double radius = 22}) {
-    return Stack(
-      children: [
-        CircleAvatar(
-          radius: radius,
-          backgroundColor: T.surfaceHi,
-          backgroundImage:
-              f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
-          child: f.avatarUrl == null
-              ? AvatarFace(f.avatar,
-                  glyphSize: radius, emojiSize: radius - 2, ghostForDefault: true)
-              : null,
-        ),
-        if (f.online)
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Container(
-              width: 11,
-              height: 11,
-              decoration: BoxDecoration(
-                color: T.online,
-                shape: BoxShape.circle,
-                border: Border.all(color: T.surface, width: 2),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+  /* v2.0.19: the avatar rendering lives in the shared friendAvatar
+     (PingCard uses it too); this stays as the tab's local shortcut. */
+  Widget _avatar(Friend f, {double radius = 22}) =>
+      friendAvatar(f, radius: radius);
 
   Widget _personRow(Friend f, {Widget? trailing, VoidCallback? onTap}) {
     return Container(
@@ -12915,82 +13291,19 @@ class _FriendsTabState extends State<FriendsTab> {
     }
   }
 
+  /* v2.0.19: the row rendering lives in the shared PingCard (the
+     «you got mail» sheet renders the same card bigger); this wires
+     it to the tab's saved-set, delete and reply callbacks. */
   Widget _pingRow(Ping p) {
     final canSave = p.kind == 'sticker' &&
         p.sticker != null &&
         !isPackSticker(p.sticker!);
-    final saved = canSave && _savedPaths.contains(p.sticker);
-    return Container(
-      margin: const EdgeInsets.only(bottom: T.s8),
-      padding: const EdgeInsets.all(T.s12),
-      decoration: BoxDecoration(
-        color: T.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: T.stroke),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              GestureDetector(
-                onTap: () => widget.onOpenFriend(p.from),
-                child: _avatar(p.from, radius: 18),
-              ),
-              const SizedBox(width: T.s8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      p.from.mode == 'ghost' ? tr('ghost') : p.from.name,
-                      style: T.body(14, w: FontWeight.w700),
-                    ),
-                    Text(
-                      relTime(p.createdAt),
-                      style: T.body(11.5, color: T.faint),
-                    ),
-                  ],
-                ),
-              ),
-              Pressable(
-                onTap: () => _deletePing(p),
-                child: const Padding(
-                  padding: EdgeInsets.all(6),
-                  child: TiradIcon(TIGlyph.trash, size: 17, color: T.faint),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: T.s8),
-          if (p.kind == 'hi')
-            Text(tr('ping_hi_text'), style: T.body(16))
-          else if (p.sticker != null)
-            stickerImage(p.sticker!, size: 96),
-          if (canSave) ...[
-            const SizedBox(height: T.s8),
-            if (saved)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const TiradIcon(TIGlyph.check, size: 14, color: T.online),
-                  const SizedBox(width: 5),
-                  Text(
-                    tr('ping_saved'),
-                    style: T.body(12.5, color: T.online, w: FontWeight.w700),
-                  ),
-                ],
-              )
-            else
-              GhostButton(
-                text: tr('ping_save'),
-                small: true,
-                icon: TIGlyph.plus,
-                onPressed: () => _savePingSticker(p),
-              ),
-          ],
-        ],
-      ),
+    return PingCard(
+      ping: p,
+      saved: canSave && _savedPaths.contains(p.sticker),
+      onSave: () => _savePingSticker(p),
+      onDelete: () => _deletePing(p),
+      onOpenSender: () => widget.onOpenFriend(p.from),
     );
   }
 
@@ -13596,7 +13909,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.18',
+                  'TiradA anon · 2.0.19',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -14346,7 +14659,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.18',
+            'TiradA anon · 2.0.19',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
