@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.16.
+// TiradA anon — native app (Flutter), v2.0.17.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -1510,6 +1510,83 @@ const Map<String, (String, String, String)> kStr = {
   'nav_places': ('Места', 'מקומות', 'Places'),
   'nav_route': ('Маршрут', 'מסלול', 'Route'),
   'nav_profile': ('Профиль', 'פרופיל', 'Profile'),
+  /* v2.0.17: Friends tab, pings (приветы) and stickers. */
+  'nav_friends': ('Друзья', 'חברים', 'Friends'),
+  'friends_search_hint': ('Поиск по нику…', 'חיפוש לפי כינוי…', 'Search by nickname…'),
+  'friends_none': ('Пока нет друзей', 'אין עדיין חברים', 'No friends yet'),
+  'friends_none_hint': (
+    'Найди друзей по нику выше — и кидай им приветы и стикеры с карты и отсюда.',
+    'מצא חברים לפי כינוי למעלה — ושלח להם היי וסטיקרים מהמפה ומכאן.',
+    'Find friends by nickname above — then send them his and stickers from the map and from here.'
+  ),
+  'friends_requests_in': ('Заявки тебе', 'בקשות אליך', 'Requests for you'),
+  'friends_requests_out': ('Ты отправил', 'בקשות ששלחת', 'Sent by you'),
+  'friends_accept': ('Принять', 'אישור', 'Accept'),
+  'friends_decline': ('Отклонить', 'דחייה', 'Decline'),
+  'friends_cancel': ('Отменить', 'ביטול', 'Cancel'),
+  'friends_add': ('Добавить', 'הוספה', 'Add'),
+  'friends_sent': ('Заявка отправлена', 'הבקשה נשלחה', 'Request sent'),
+  'friends_already': ('Вы друзья', 'אתם חברים', 'Friends'),
+  'friends_not_found': ('Никого не нашлось', 'לא נמצא אף אחד', 'Nobody found'),
+  'friends_error': (
+    'Что-то пошло не так — попробуй ещё раз',
+    'משהו השתבש — נסה שוב',
+    'Something went wrong — try again'
+  ),
+  'friends_guest': (
+    'Войди в аккаунт — и здесь будут твои друзья, заявки и приветы.',
+    'היכנס לחשבון — והחברים, הבקשות וההיי שלך יופיעו כאן.',
+    'Sign in — and your friends, requests and his will show up here.'
+  ),
+  'friends_list_title': ('Мои друзья', 'החברים שלי', 'My friends'),
+  'ping_hi_btn': ('Привет', 'היי', 'Say hi'),
+  'ping_sticker_btn': ('Стикер', 'סטיקר', 'Sticker'),
+  'ping_sent_hi': ('Привет отправлен 👋', 'ההיי נשלח 👋', 'Hi sent 👋'),
+  'ping_sent_sticker': ('Стикер отправлен', 'הסטיקר נשלח', 'Sticker sent'),
+  'ping_signin': (
+    'Войди, чтобы кидать приветы и стикеры',
+    'היכנס כדי לשלוח היי וסטיקרים',
+    'Sign in to send his and stickers'
+  ),
+  'ping_inbox_title': ('Приветы и стикеры', 'היי וסטיקרים', 'His & stickers'),
+  'ping_inbox_empty': (
+    'Пока пусто — друзья ещё не кидали тебе приветов.',
+    'ריק בינתיים — חברים עוד לא שלחו לך היי.',
+    'Empty for now — friends have not sent you a hi yet.'
+  ),
+  'ping_hi_text': ('👋 Привет!', '👋 היי!', '👋 Hi!'),
+  'ping_save': ('Сохранить', 'שמירה', 'Save'),
+  'ping_saved': ('Сохранено', 'נשמר', 'Saved'),
+  'ping_delete': ('Удалить', 'מחיקה', 'Delete'),
+  'sticker_pack_title': ('Стикеры', 'סטיקרים', 'Stickers'),
+  'sticker_mine_title': ('Мои стикеры', 'הסטיקרים שלי', 'My stickers'),
+  'sticker_from_gallery': ('Из галереи', 'מהגלריה', 'From gallery'),
+  'sticker_delete_title': ('Удалить стикер?', 'למחוק את הסטיקר?', 'Delete this sticker?'),
+  'sticker_delete_body': (
+    'Он исчезнет из твоих стикеров.',
+    'הוא ייעלם מהסטיקרים שלך.',
+    'It will disappear from your stickers.'
+  ),
+  'sticker_pick_fail': (
+    'Не получилось взять картинку — попробуй другую',
+    'לא הצלחנו לקחת את התמונה — נסה אחרת',
+    'Could not load that image — try another one'
+  ),
+  'sticker_upload_fail': (
+    'Стикер не загрузился — проверь интернет и попробуй ещё раз',
+    'הסטיקר לא עלה — בדוק את החיבור ונסה שוב',
+    'The sticker did not upload — check your connection and try again'
+  ),
+  'sticker_save_fail': (
+    'Стикер загрузился, но не сохранился — попробуй ещё раз',
+    'הסטיקר עלה אבל לא נשמר — נסה שוב',
+    'The sticker uploaded but did not save — try again'
+  ),
+  'sticker_created': ('Стикер готов 🎉', 'הסטיקר מוכן 🎉', 'Sticker ready 🎉'),
+  'rel_now': ('только что', 'ממש עכשיו', 'just now'),
+  'rel_min': ('{n} мин назад', 'לפני {n} דקות', '{n} min ago'),
+  'rel_hour': ('{n} ч назад', 'לפני {n} שעות', '{n} h ago'),
+  'rel_day': ('{n} д назад', 'לפני {n} ימים', '{n} d ago'),
   'pick_city': ('Выбери город', 'בחר עיר', 'Choose a city'),
   'live_in_city': ('в городе: ', 'בעיר: ', 'in the city: '),
   'live_hot': ('{n} мест жарких', '{n} מקומות חמים', '{n} hot places'),
@@ -4764,7 +4841,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  int _tab = 0; // 0 map · 1 places · 2 route · 3 profile
+  int _tab = 0; // 0 map · 1 places · 2 friends · 3 route · 4 profile
   bool _mapTabOpened = false;
   List<Place> _places = [];
   List<City> _cities = [];
@@ -4777,6 +4854,10 @@ class _HomePageState extends State<HomePage> {
   int? _temp;
   TIGlyph _wxGlyph = TIGlyph.sun;
   List<Friend> _friends = [];
+  /* v2.0.17: incoming pings (приветы + stickers) — the Friends tab
+     inbox and the unseen badge on the «Друзья» nav slot. */
+  List<Ping> _pings = [];
+  Timer? _friendsTimer;
   LatLng? _lastCitySyncPos; // last position the city auto-sync judged
 
   @override
@@ -4805,6 +4886,16 @@ class _HomePageState extends State<HomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) LocationService.ensureLocation(context);
     });
+    // v2.0.17: piggyback the ~30 s friends cadence (the same rhythm
+    // MapTab refreshes friend markers at) — while the app is open,
+    // accepted friends and incoming pings stay fresh without a
+    // realtime subscription.
+    _friendsTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (myUidOrNull != null) {
+        _loadFriends();
+        _loadPings();
+      }
+    });
     // v2.0.16: the 4 s ticker timer is gone with the ticker strip
     // it fed (see build()) — nothing rotates any more.
   }
@@ -4817,6 +4908,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _friendsTimer?.cancel();
     appLang.removeListener(_onLangChanged);
     AiXpBus.pending.removeListener(_drainAiXp);
     PushService.foreground.removeListener(_onForegroundPush);
@@ -4940,6 +5032,7 @@ class _HomePageState extends State<HomePage> {
       }
       if (_city != null) _fetchTemp(_city!);
       _loadFriends();
+      _loadPings();
       // A fix may already exist by the time the data lands — judge
       // it once now; later fixes arrive through the listener.
       _syncCityToLocation();
@@ -5063,6 +5156,83 @@ class _HomePageState extends State<HomePage> {
         ];
       });
     } catch (_) {}
+  }
+
+  /* v2.0.17: incoming pings (приветы + stickers) for the Friends tab
+     inbox and the unseen badge. Latest 30, newest first; sender
+     profiles are fetched in one query and joined in memory. */
+  Future<void> _loadPings() async {
+    final uid = myUidOrNull;
+    if (uid == null) {
+      if (mounted && _pings.isNotEmpty) setState(() => _pings = []);
+      return;
+    }
+    try {
+      final rows = await supa
+          .from('pings')
+          .select('id, from_id, kind, sticker, created_at, seen_at')
+          .eq('to_id', uid)
+          .order('created_at', ascending: false)
+          .limit(30);
+      final list = rows as List;
+      if (list.isEmpty) {
+        if (mounted && _pings.isNotEmpty) setState(() => _pings = []);
+        return;
+      }
+      final senderIds = <String>{
+        for (final r in list) (r['from_id'] ?? '').toString(),
+      }..remove('');
+      final byId = <String, Friend>{};
+      if (senderIds.isNotEmpty) {
+        final profs = await supa
+            .from('profiles')
+            .select('id, name, avatar, avatar_url, online, mode, city')
+            .inFilter('id', senderIds.toList());
+        for (final p in profs as List) {
+          final m = Map<String, dynamic>.from(p as Map);
+          byId[m['id'] as String] = friendFromProfile(m);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _pings = [
+          for (final r in list)
+            if (byId.containsKey(r['from_id']))
+              Ping(
+                id: (r['id'] ?? '').toString(),
+                from: byId[r['from_id']]!,
+                kind: (r['kind'] as String?) ?? 'hi',
+                sticker: r['sticker'] as String?,
+                createdAt:
+                    DateTime.tryParse((r['created_at'] ?? '').toString()) ??
+                        DateTime.now(),
+                seen: r['seen_at'] != null,
+              ),
+        ];
+      });
+    } catch (e) {
+      debugPrint('TiradA pings load failed: $e');
+    }
+  }
+
+  /* Opening the Friends tab marks every unseen ping seen — the
+     badge clears locally at once, the rows update in the
+     background. */
+  Future<void> _markPingsSeen() async {
+    final uid = myUidOrNull;
+    if (uid == null || _pings.every((p) => p.seen)) return;
+    setState(() {
+      _pings = [for (final p in _pings) p.copyWith(seen: true)];
+    });
+    try {
+      await supa
+          .from('pings')
+          .update({'seen_at': DateTime.now().toUtc().toIso8601String()})
+          .eq('to_id', uid)
+          .isFilter('seen_at', null);
+    } catch (e) {
+      debugPrint('TiradA pings mark-seen failed: $e');
+    }
   }
 
   /* Current temperature + condition from Open-Meteo (free, no key).
@@ -5233,7 +5403,7 @@ class _HomePageState extends State<HomePage> {
         cities: _cities,
         friends: _friends,
         signedIn: myUidOrNull != null,
-        onRoute: () => setState(() => _tab = 2),
+        onRoute: () => _selectTab(3),
       ),
     );
   }
@@ -5364,7 +5534,7 @@ class _HomePageState extends State<HomePage> {
     return GestureDetector(
       onTap: () {
         HapticFeedback.selectionClick();
-        setState(() => _tab = 3);
+        _selectTab(4);
       },
       child: inner,
     );
@@ -5450,33 +5620,75 @@ class _HomePageState extends State<HomePage> {
      it. The now-unused kStr keys (live_*, tick_*) stay in the table
      harmlessly. */
 
+  /* v2.0.17: the single funnel for tab switches (nav slots, header
+     avatar, DealSheet «route» callback, Profile «Друзья» row), so the
+     side effects stay in sync: the map's first-open location flow and
+     the friends tab's ping refresh + seen-marking. */
+  void _selectTab(int idx) {
+    setState(() => _tab = idx);
+    // First time the Map tab is opened: re-run the location flow
+    // (the permission may have been granted in Settings meanwhile).
+    if (idx == 0 && !_mapTabOpened) {
+      _mapTabOpened = true;
+      LocationService.ensureLocation(context);
+    }
+    if (idx == 2) {
+      _loadPings();
+      _markPingsSeen();
+    }
+  }
+
+  int get _unseenPings => _pings.where((p) => !p.seen).length;
+
   /* v2.0.12: nav items are TI glyphs — inactive: monoline gray;
      active: the spec's ActiveIconBadge (white filled glyph on the
      glowing gradient circle). Every slot has the SAME structure
      (36 px icon zone + label under it), so switching tabs changes
-     nothing but colours — zero layout shift, the FAB stays centred. */
-  Widget _navSlot(int idx, TIGlyph glyph, String label) {
+     nothing but colours — zero layout shift, the FAB stays centred.
+     v2.0.17: an optional count badge (unseen pings on «Друзья»). */
+  Widget _navSlot(int idx, TIGlyph glyph, String label, {int badge = 0}) {
     final active = _tab == idx;
     return Pressable(
-      onTap: () {
-        setState(() => _tab = idx);
-        // First time the Map tab is opened: re-run the location flow
-        // (the permission may have been granted in Settings meanwhile).
-        if (idx == 0 && !_mapTabOpened) {
-          _mapTabOpened = true;
-          LocationService.ensureLocation(context);
-        }
-      },
+      onTap: () => _selectTab(idx),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(
             width: 38,
             height: 38,
-            child: Center(
-              child: active
-                  ? ActiveIconBadge(glyph: glyph, size: 36)
-                  : TiradIcon(glyph, size: 23, color: T.iconGray),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Center(
+                  child: active
+                      ? ActiveIconBadge(glyph: glyph, size: 36)
+                      : TiradIcon(glyph, size: 23, color: T.iconGray),
+                ),
+                if (badge > 0)
+                  Positioned(
+                    top: -4,
+                    right: -4,
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 17),
+                      height: 17,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                        color: T.fire,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        badge > 9 ? '9+' : '$badge',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          height: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 3),
@@ -5511,54 +5723,92 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
-        // v2.0.12: five EQUAL-width slots. The old spaceBetween Row of
-        // variable-width children let the active slot's expanded pill
-        // (label + wider padding) change the left/right group widths,
-        // so the FAB drifted off-centre — worst with a left tab active.
-        // Now every child sits centred inside its own fixed slot: the
-        // pill may grow/shrink inside slot bounds without moving any
-        // sibling, and the middle slot's centre IS the panel centre,
-        // so the FAB is exactly centred in every tab state.
+        // v2.0.17: FIVE tabs (Друзья added at index 2) and the
+        // «Ты в деле» FAB still sits EXACTLY on the panel's
+        // horizontal centre — the owner has rejected an off-centre
+        // FAB twice, so the geometry is structural, not hopeful:
+        // the bar is a Stack whose base layer is a 75 dp row (the
+        // pre-2.0.17 panel content height, set by the FAB column)
+        // split into two EXACTLY half-width groups — left: Карта ·
+        // Места · Друзья, right: Маршрут · Профиль — and the FAB is
+        // a Positioned.fill overlay centred on the stack. Half +
+        // half means the stack centre IS the panel centre in every
+        // tab state; the groups never resize (each slot is an
+        // Expanded Column of fixed structure), so switching tabs
+        // shifts nothing. The overlay does not steal slot taps:
+        // _DealFab's GestureDetector wraps ONLY its badge circle
+        // (see _DealFab), and the Center around it hit-tests
+        // nothing by itself. The slots beside the centre keep their
+        // full tap areas.
         //
-        // v2.0.13 ROOT-CAUSE FIX (panel filled the whole screen): the
-        // slots must NOT be wrapped in Center/Align. A Center sizes
-        // itself to constraints.maxHeight whenever that is finite and
-        // no heightFactor is set — and the Scaffold bottomNavigationBar
-        // slot hands this bar loose constraints with maxHeight = the
-        // FULL screen height. In v2.0.12 each slot was
-        // Expanded(child: Center(...)), so every Center stretched to
-        // full height, the Row and the Container followed, and the
-        // panel's background/border covered the entire screen with the
-        // nav row floating in the vertical middle (centred by those
-        // very Centers). The slot widgets themselves are
-        // Column(mainAxisSize.min) and shrink-wrap their height; the
-        // Expanded gives each a tight WIDTH, and the Column's default
-        // crossAxisAlignment.center centres icon+label horizontally
-        // inside the slot — no Center needed. Never re-add one here.
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        // v2.0.13 ROOT-CAUSE FIX (panel filled the whole screen)
+        // still applies to the ROW: slots must NOT be wrapped in
+        // Center/Align there. A Center sizes itself to
+        // constraints.maxHeight whenever that is finite and no
+        // heightFactor is set — and the Scaffold bottomNavigationBar
+        // slot hands this bar loose constraints with maxHeight =
+        // the FULL screen height. In v2.0.12 each slot was
+        // Expanded(child: Center(...)), so every Center stretched
+        // to full height and the panel covered the whole screen.
+        // The one Center in the FAB overlay is safe: it lives
+        // inside Positioned.fill, and positioned children do not
+        // size the Stack — the Stack takes the base row's 75 dp.
+        child: Stack(
+          clipBehavior: Clip.none,
           children: [
-            Expanded(
-              child: _navSlot(0, TIGlyph.mapPin, tr('nav_map')),
+            SizedBox(
+              height: 75,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: _navSlot(0, TIGlyph.mapPin, tr('nav_map')),
+                        ),
+                        Expanded(
+                          child: _navSlot(1, TIGlyph.flame, tr('nav_places')),
+                        ),
+                        Expanded(
+                          child: _navSlot(
+                            2,
+                            TIGlyph.users,
+                            tr('nav_friends'),
+                            badge: _unseenPings,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child:
+                              _navSlot(3, TIGlyph.routePath, tr('nav_route')),
+                        ),
+                        Expanded(
+                          child: _navSlot(4, TIGlyph.ghost, tr('nav_profile')),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-            Expanded(
-              child: _navSlot(1, TIGlyph.flame, tr('nav_places')),
-            ),
-            Expanded(
-              child: _DealFab(onTap: _openDeal),
-            ),
-            Expanded(
-              child: _navSlot(2, TIGlyph.routePath, tr('nav_route')),
-            ),
-            Expanded(
-              child: _navSlot(3, TIGlyph.ghost, tr('nav_profile')),
+            Positioned.fill(
+              child: Center(
+                child: _DealFab(onTap: _openDeal),
+              ),
             ),
           ],
         ),
       ),
     );
   }
-
   @override
   Widget build(BuildContext context) {
     if (!_introDone) {
@@ -5626,6 +5876,13 @@ class _HomePageState extends State<HomePage> {
                     onCheckIn: _checkIn,
                     onPhotoUploaded: _onPhotoUploaded,
                   ),
+                  FriendsTab(
+                    friends: _friends,
+                    pings: _pings,
+                    onOpenFriend: (f) => showFriendSheet(context, f),
+                    onFriendsChanged: _loadFriends,
+                    onPingsChanged: _loadPings,
+                  ),
                   RouteTab(
                     places: _cityPlaces,
                     allPlaces: _places,
@@ -5642,6 +5899,7 @@ class _HomePageState extends State<HomePage> {
                     city: _city,
                     onProfileChanged: (p) => setState(() => _profile = p),
                     onOpenTasks: _openTasks,
+                    onOpenFriends: () => _selectTab(2),
                     hapticsValue: hapticsOn,
                     onToggleHaptics: _setHaptics,
                   ),
@@ -5679,12 +5937,18 @@ class _DealFabState extends State<_DealFab> with SingleTickerProviderStateMixin 
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: widget.onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AnimatedBuilder(
+    // v2.0.17: the GestureDetector wraps ONLY the badge — the FAB
+    // now floats as a centred overlay above the nav row (see
+    // _bottomNav), and its hit area must stay limited to its
+    // circle so the «Друзья» / «Маршрут» slots beside the centre
+    // keep their full tap areas. The label under the badge is
+    // decoration, not a tap target.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedBuilder(
             animation: _c,
             builder: (_, child) {
               final s = 1 + _c.value * 0.07;
@@ -5722,17 +5986,17 @@ class _DealFabState extends State<_DealFab> with SingleTickerProviderStateMixin 
               ],
             ),
           ),
-          const SizedBox(height: 3),
-          Text(
-            tr('in_deal_btn'),
-            style: const TextStyle(
-              color: kRed,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w800,
-            ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          tr('in_deal_btn'),
+          style: const TextStyle(
+            color: kRed,
+            fontSize: 10.5,
+            fontWeight: FontWeight.w800,
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -8170,50 +8434,10 @@ class _MapTabState extends State<MapTab> {
     });
   }
 
-  void _showFriend(Friend f) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: kSurface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 30),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: kSurface2,
-              backgroundImage:
-                  f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
-              child: f.avatarUrl == null
-                  ? AvatarFace(f.avatar,
-                      glyphSize: 28, emojiSize: 26, ghostForDefault: true)
-                  : null,
-            ),
-            const SizedBox(width: 14),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  f.mode == 'ghost' ? tr('ghost') : f.name,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                Text(
-                  f.online ? tr('online_now') : tr('seen_recently'),
-                  style: TextStyle(color: f.online ? kGreen : kMuted),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  /* v2.0.17: the sheet itself is the shared showFriendSheet /
+     FriendSheet (header + «Привет» / «Стикер» ping actions), also
+     used by the Friends tab. */
+  void _showFriend(Friend f) => showFriendSheet(context, f);
 
   @override
   Widget build(BuildContext context) {
@@ -11739,6 +11963,1147 @@ class _BadgesPageState extends State<BadgesPage> {
   }
 }
 
+/* ---------------- friends tab · pings · stickers (v2.0.17) ----------------
+   The owner: «добавь вкладку друзья, и сделай так чтоб когда я на
+   карте нажимал на друга я мог кинуть ему там привет или что-то
+   ещё», «смайлики… которые я могу кинуть — а точнее стикеры», «и
+   чтоб можно было создать свои стикеры из галереи, и сохранение,
+   чтоб люди могли сохранить стикер».
+
+   Data contracts (server schema created in parallel):
+   · pings(id, from_id, to_id, kind 'hi'|'sticker', sticker,
+     created_at, seen_at) — a «привет» or a thrown sticker.
+   · user_stickers(id, owner_id, path, created_at) — the user's own
+     sticker collection; objects live in the PUBLIC 'stickers'
+     bucket at '<uid>/<filename>.png'.
+   · A sticker reference is either 'pack:1'…'pack:8' (the bundled
+     pack in assets/stickers/) or a bucket path (custom sticker).
+   No realtime subscription: pings refresh on app start, on Friends
+   tab open and on HomePage's ~30 s friends cadence. */
+
+/* One incoming ping, sender already joined to a Friend. */
+class Ping {
+  final String id;
+  final Friend from;
+  final String kind; // 'hi' | 'sticker'
+  final String? sticker;
+  final DateTime createdAt;
+  final bool seen;
+  const Ping({
+    required this.id,
+    required this.from,
+    required this.kind,
+    this.sticker,
+    required this.createdAt,
+    this.seen = false,
+  });
+
+  Ping copyWith({bool? seen}) => Ping(
+        id: id,
+        from: from,
+        kind: kind,
+        sticker: sticker,
+        createdAt: createdAt,
+        seen: seen ?? this.seen,
+      );
+}
+
+/* A profiles row → Friend (the join used by pings + friends tab). */
+Friend friendFromProfile(Map<String, dynamic> p) => Friend(
+      id: p['id'] as String,
+      name: (p['name'] as String?) ?? tr('ghost'),
+      avatar: p['avatar'] as String?,
+      avatarUrl: p['avatar_url'] as String?,
+      mode: p['mode'] as String?,
+      cityId: p['city'] as String?,
+      online: p['online'] == true,
+    );
+
+/* «5 мин назад» — compact relative time for the ping inbox. */
+String relTime(DateTime t) {
+  final d = DateTime.now().difference(t);
+  if (d.inMinutes < 1) return tr('rel_now');
+  if (d.inMinutes < 60) return trf('rel_min', {'n': d.inMinutes});
+  if (d.inHours < 24) return trf('rel_hour', {'n': d.inHours});
+  return trf('rel_day', {'n': d.inDays});
+}
+
+bool isPackSticker(String ref) => ref.startsWith('pack:');
+
+String stickerPublicUrl(String path) =>
+    supa.storage.from('stickers').getPublicUrl(path);
+
+/* Renders a sticker reference at a square size: bundled asset for
+   'pack:N', public bucket URL for a custom sticker path. */
+Widget stickerImage(String ref, {double size = 96}) {
+  final fallback = SizedBox(
+    width: size,
+    height: size,
+    child: Center(
+      child: TiradIcon(TIGlyph.ghost, size: size * 0.5, color: T.iconGray),
+    ),
+  );
+  if (isPackSticker(ref)) {
+    return Image.asset(
+      'assets/stickers/st${ref.substring(5)}.png',
+      width: size,
+      height: size,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => fallback,
+    );
+  }
+  return Image.network(
+    stickerPublicUrl(ref),
+    width: size,
+    height: size,
+    fit: BoxFit.contain,
+    errorBuilder: (_, __, ___) => fallback,
+  );
+}
+
+/* Pick an image for a custom sticker and re-encode it as PNG,
+   KEEPING its transparency — pickAndProcessImage re-encodes to
+   JPEG for place photos, which would flatten a sticker's alpha
+   onto black. The longest side is capped at 512. Returns null ONLY
+   when the user cancels; failures throw ImagePickException (the
+   same contract as pickAndProcessImage). */
+Future<Uint8List?> pickAndProcessSticker() async {
+  try {
+    final x = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (x == null) return null;
+    final bytes = await x.readAsBytes();
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return bytes;
+    var out = decoded;
+    const cap = 512;
+    if (out.width > cap || out.height > cap) {
+      out = out.width >= out.height
+          ? img.copyResize(out, width: cap)
+          : img.copyResize(out, height: cap);
+    }
+    return Uint8List.fromList(img.encodePng(out));
+  } catch (e) {
+    throw ImagePickException(e);
+  }
+}
+
+/* The friend bottom sheet — opened from a map marker tap and from
+   the Friends tab. v2.0.17 adds the actions area: «Привет» and
+   «Стикер» throw a ping at the friend (pings table). */
+void showFriendSheet(BuildContext context, Friend f) {
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (_) => FriendSheet(friend: f),
+  );
+}
+
+class FriendSheet extends StatefulWidget {
+  final Friend friend;
+  const FriendSheet({super.key, required this.friend});
+
+  @override
+  State<FriendSheet> createState() => _FriendSheetState();
+}
+
+class _FriendSheetState extends State<FriendSheet> {
+  bool _sendingHi = false;
+  bool _stickerSent = false;
+
+  void _promptLogin() {
+    snack(context, tr('ping_signin'));
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const LoginPage()),
+    );
+  }
+
+  Future<void> _sendHi() async {
+    final uid = myUidOrNull;
+    if (uid == null) {
+      _promptLogin();
+      return;
+    }
+    if (_sendingHi) return;
+    setState(() => _sendingHi = true);
+    try {
+      await supa.from('pings').insert({
+        'from_id': uid,
+        'to_id': widget.friend.id,
+        'kind': 'hi',
+      });
+    } catch (e) {
+      debugPrint('TiradA ping (hi) insert failed: $e');
+      if (mounted) {
+        setState(() => _sendingHi = false);
+        snack(context, tr('friends_error'));
+      }
+      return;
+    }
+    if (!mounted) return;
+    final nav = Navigator.of(context);
+    nav.pop();
+    snack(nav.context, tr('ping_sent_hi'));
+  }
+
+  /* The picker's send callback: insert the sticker ping. Throws on
+     failure so the picker stays open; the error is surfaced here. */
+  Future<void> _sendStickerRef(String ref) async {
+    final uid = myUidOrNull;
+    if (uid == null) throw StateError('guest');
+    try {
+      await supa.from('pings').insert({
+        'from_id': uid,
+        'to_id': widget.friend.id,
+        'kind': 'sticker',
+        'sticker': ref,
+      });
+    } catch (e) {
+      debugPrint('TiradA ping (sticker) insert failed: $e');
+      if (mounted) snack(context, tr('friends_error'));
+      rethrow;
+    }
+    _stickerSent = true;
+  }
+
+  Future<void> _openStickers() async {
+    if (myUidOrNull == null) {
+      _promptLogin();
+      return;
+    }
+    _stickerSent = false;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => StickerPickerSheet(onSend: _sendStickerRef),
+    );
+    if (!mounted) return;
+    if (_stickerSent) {
+      final nav = Navigator.of(context);
+      nav.pop();
+      snack(nav.context, tr('ping_sent_sticker'));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final f = widget.friend;
+    return SheetShell(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(T.s20, T.s4, T.s20, T.s20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 28,
+                  backgroundColor: T.surfaceHi,
+                  backgroundImage:
+                      f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
+                  child: f.avatarUrl == null
+                      ? AvatarFace(f.avatar,
+                          glyphSize: 28, emojiSize: 26, ghostForDefault: true)
+                      : null,
+                ),
+                const SizedBox(width: 14),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      f.mode == 'ghost' ? tr('ghost') : f.name,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      f.online ? tr('online_now') : tr('seen_recently'),
+                      style: TextStyle(color: f.online ? kGreen : kMuted),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: T.s16),
+            Row(
+              children: [
+                Expanded(
+                  child: FireButton(
+                    text: tr('ping_hi_btn'),
+                    small: true,
+                    icon: TIGlyph.ghost,
+                    onPressed: _sendingHi ? null : _sendHi,
+                  ),
+                ),
+                const SizedBox(width: T.s12),
+                Expanded(
+                  child: GhostButton(
+                    text: tr('ping_sticker_btn'),
+                    small: true,
+                    icon: TIGlyph.photo,
+                    onPressed: _openStickers,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/* Sticker picker: the bundled pack + the user's own stickers, with
+   creation from the gallery and long-press delete. Tapping any
+   sticker sends it through [onSend] and closes the picker. */
+class StickerPickerSheet extends StatefulWidget {
+  final Future<void> Function(String ref) onSend;
+  const StickerPickerSheet({super.key, required this.onSend});
+
+  @override
+  State<StickerPickerSheet> createState() => _StickerPickerSheetState();
+}
+
+class _StickerPickerSheetState extends State<StickerPickerSheet> {
+  List<Map<String, dynamic>> _mine = [];
+  bool _loading = true;
+  bool _creating = false;
+  bool _sending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMine();
+  }
+
+  Future<void> _loadMine() async {
+    final uid = myUidOrNull;
+    if (uid == null) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+    try {
+      final rows = await supa
+          .from('user_stickers')
+          .select('id, path, created_at')
+          .eq('owner_id', uid)
+          .order('created_at', ascending: false);
+      if (!mounted) return;
+      setState(() {
+        _mine = [
+          for (final r in rows as List) Map<String, dynamic>.from(r as Map),
+        ];
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('TiradA user_stickers load failed: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _send(String ref) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    try {
+      await widget.onSend(ref);
+    } catch (_) {
+      if (mounted) setState(() => _sending = false);
+      return; // stay open — the sender already surfaced the error
+    }
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  /* Create a custom sticker: gallery → PNG (alpha kept, ≤512) →
+     'stickers' bucket at '<uid>/<ts>.png' → user_stickers row →
+     it appears in «Мои стикеры» at once. Staged errors, like the
+     2.0.14 photo fix. */
+  Future<void> _createSticker() async {
+    final uid = myUidOrNull;
+    if (uid == null || _creating) return;
+    final Uint8List? bytes;
+    try {
+      bytes = await pickAndProcessSticker();
+    } on ImagePickException catch (e) {
+      debugPrint('TiradA sticker pick failed: $e');
+      if (mounted) snack(context, tr('sticker_pick_fail'));
+      return;
+    }
+    if (bytes == null || !mounted) return;
+    setState(() => _creating = true);
+    final path = '$uid/${DateTime.now().millisecondsSinceEpoch}.png';
+    try {
+      await supa.storage.from('stickers').uploadBinary(
+            path,
+            bytes,
+            fileOptions: const FileOptions(
+              contentType: 'image/png',
+              upsert: true,
+            ),
+          );
+    } catch (e) {
+      debugPrint('TiradA sticker upload failed: $e');
+      if (mounted) {
+        snack(context, tr('sticker_upload_fail'));
+        setState(() => _creating = false);
+      }
+      return;
+    }
+    try {
+      await supa.from('user_stickers').insert({
+        'owner_id': uid,
+        'path': path,
+      });
+    } catch (e) {
+      debugPrint('TiradA user_stickers insert failed: $e');
+      if (mounted) {
+        snack(context, tr('sticker_save_fail'));
+        setState(() => _creating = false);
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _creating = false);
+    snack(context, tr('sticker_created'));
+    _loadMine();
+  }
+
+  Future<void> _deleteMine(Map<String, dynamic> row) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: T.surface,
+        title: Text(tr('sticker_delete_title'), style: T.head(16)),
+        content: Text(
+          tr('sticker_delete_body'),
+          style: T.body(14, color: T.muted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(tr('friends_cancel')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(
+              tr('ping_delete'),
+              style: const TextStyle(color: T.salmon),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final id = (row['id'] ?? '').toString();
+    final path = (row['path'] ?? '').toString();
+    try {
+      await supa.from('user_stickers').delete().eq('id', id);
+    } catch (e) {
+      debugPrint('TiradA user_stickers delete failed: $e');
+      if (mounted) snack(context, tr('friends_error'));
+      return;
+    }
+    try {
+      await supa.storage.from('stickers').remove([path]);
+    } catch (_) {}
+    if (mounted) {
+      setState(() => _mine.removeWhere((r) => r['id'] == row['id']));
+    }
+  }
+
+  Widget _tile(Widget child, {VoidCallback? onTap, VoidCallback? onLongPress}) {
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        decoration: BoxDecoration(
+          color: T.surfaceHi,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: T.stroke),
+        ),
+        padding: const EdgeInsets.all(6),
+        child: child,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SheetShell(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.78,
+        ),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(T.s20, T.s4, T.s20, T.s20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                sectionLabel(tr('sticker_pack_title'), glyph: TIGlyph.flame),
+                GridView.count(
+                  crossAxisCount: 4,
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  children: [
+                    for (var i = 1; i <= 8; i++)
+                      _tile(
+                        Image.asset(
+                          'assets/stickers/st$i.png',
+                          fit: BoxFit.contain,
+                        ),
+                        onTap: () => _send('pack:$i'),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: T.s20),
+                sectionLabel(tr('sticker_mine_title'), glyph: TIGlyph.star),
+                if (_loading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: T.s16),
+                    child: Center(
+                      child: CircularProgressIndicator(color: kRed),
+                    ),
+                  )
+                else
+                  GridView.count(
+                    crossAxisCount: 4,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    children: [
+                      _tile(
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            if (_creating)
+                              const CircularProgressIndicator(
+                                color: kRed,
+                                strokeWidth: 2,
+                              )
+                            else
+                              const TiradIcon(TIGlyph.plus,
+                                  size: 24, color: T.iconGray),
+                            const SizedBox(height: 4),
+                            Text(
+                              tr('sticker_from_gallery'),
+                              textAlign: TextAlign.center,
+                              style: T.body(9.5, color: T.muted),
+                            ),
+                          ],
+                        ),
+                        onTap: _creating ? null : _createSticker,
+                      ),
+                      for (final row in _mine)
+                        _tile(
+                          Image.network(
+                            stickerPublicUrl((row['path'] ?? '').toString()),
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) => const Center(
+                              child: TiradIcon(TIGlyph.ghost,
+                                  size: 24, color: T.iconGray),
+                            ),
+                          ),
+                          onTap: () =>
+                              _send((row['path'] ?? '').toString()),
+                          onLongPress: () => _deleteMine(row),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/* ---------------- friends tab ----------------
+   The full friends system lives here since v2.0.17 (the Profile
+   tab keeps only a «Друзья» jump row): search by nickname,
+   incoming / outgoing requests, the accepted list with online and
+   «в деле» status, and the ping inbox («Приветы и стикеры»)
+   above the list. Accepted friends + pings are owned by HomePage
+   and flow in as props; this tab owns search, requests and the
+   saved-sticker set, and pokes HomePage through the callbacks
+   after every mutation. */
+class FriendsTab extends StatefulWidget {
+  final List<Friend> friends;
+  final List<Ping> pings;
+  final void Function(Friend) onOpenFriend;
+  final VoidCallback onFriendsChanged;
+  final VoidCallback onPingsChanged;
+  const FriendsTab({
+    super.key,
+    required this.friends,
+    required this.pings,
+    required this.onOpenFriend,
+    required this.onFriendsChanged,
+    required this.onPingsChanged,
+  });
+
+  @override
+  State<FriendsTab> createState() => _FriendsTabState();
+}
+
+class _FriendsTabState extends State<FriendsTab> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  List<Friend> _results = [];
+  /* otherId → 'friend' | 'out' | 'in' | 'none' */
+  final Map<String, String> _relation = {};
+  bool _searching = false;
+  bool _searched = false;
+  List<({String fid, Friend f})> _incoming = [];
+  List<({String fid, Friend f})> _outgoing = [];
+  final Set<String> _savedPaths = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRequests();
+    _loadSavedPaths();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadRequests() async {
+    final uid = myUidOrNull;
+    if (uid == null) return;
+    try {
+      final rows = await supa
+          .from('friendships')
+          .select('id, requester, addressee')
+          .eq('status', 'pending')
+          .or('requester.eq.$uid, addressee.eq.$uid');
+      final list = rows as List;
+      final otherIds = <String>{};
+      for (final r in list) {
+        otherIds.add(
+            (r['requester'] == uid ? r['addressee'] : r['requester'])
+                .toString());
+      }
+      final byId = <String, Friend>{};
+      if (otherIds.isNotEmpty) {
+        final profs = await supa
+            .from('profiles')
+            .select('id, name, avatar, avatar_url, online, mode, city')
+            .inFilter('id', otherIds.toList());
+        for (final p in profs as List) {
+          final m = Map<String, dynamic>.from(p as Map);
+          byId[m['id'] as String] = friendFromProfile(m);
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _incoming = [
+          for (final r in list)
+            if (r['addressee'] == uid && byId.containsKey(r['requester']))
+              (
+                fid: (r['id'] ?? '').toString(),
+                f: byId[r['requester']]!,
+              ),
+        ];
+        _outgoing = [
+          for (final r in list)
+            if (r['requester'] == uid && byId.containsKey(r['addressee']))
+              (
+                fid: (r['id'] ?? '').toString(),
+                f: byId[r['addressee']]!,
+              ),
+        ];
+      });
+    } catch (e) {
+      debugPrint('TiradA friend requests load failed: $e');
+    }
+  }
+
+  Future<void> _loadSavedPaths() async {
+    final uid = myUidOrNull;
+    if (uid == null) return;
+    try {
+      final rows = await supa
+          .from('user_stickers')
+          .select('path')
+          .eq('owner_id', uid);
+      if (!mounted) return;
+      setState(() {
+        _savedPaths
+          ..clear()
+          ..addAll([
+            for (final r in rows as List) (r['path'] ?? '').toString(),
+          ]);
+      });
+    } catch (e) {
+      debugPrint('TiradA saved stickers load failed: $e');
+    }
+  }
+
+  Future<void> _search() async {
+    final uid = myUidOrNull;
+    final q = _searchCtrl.text.trim();
+    if (uid == null || q.length < 2 || _searching) return;
+    setState(() => _searching = true);
+    try {
+      final rows = await supa
+          .from('profiles')
+          .select('id, name, avatar, avatar_url, online, mode, city')
+          .ilike('name', '%$q%')
+          .limit(20);
+      final rel = await supa
+          .from('friendships')
+          .select('requester, addressee, status')
+          .or('requester.eq.$uid, addressee.eq.$uid');
+      _relation.clear();
+      for (final r in rel as List) {
+        final other =
+            (r['requester'] == uid ? r['addressee'] : r['requester'])
+                .toString();
+        _relation[other] = r['status'] == 'accepted'
+            ? 'friend'
+            : (r['requester'] == uid ? 'out' : 'in');
+      }
+      if (!mounted) return;
+      setState(() {
+        _results = [
+          for (final p in rows as List)
+            if ((p['id'] ?? '').toString() != uid)
+              friendFromProfile(Map<String, dynamic>.from(p as Map)),
+        ];
+        _searching = false;
+        _searched = true;
+      });
+    } catch (e) {
+      debugPrint('TiradA friend search failed: $e');
+      if (mounted) {
+        setState(() => _searching = false);
+        snack(context, tr('friends_error'));
+      }
+    }
+  }
+
+  Future<void> _sendRequest(Friend f) async {
+    final uid = myUidOrNull;
+    if (uid == null) return;
+    try {
+      await supa.from('friendships').insert({
+        'requester': uid,
+        'addressee': f.id,
+        'status': 'pending',
+      });
+    } catch (e) {
+      debugPrint('TiradA friend request insert failed: $e');
+      if (mounted) snack(context, tr('friends_error'));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _relation[f.id] = 'out');
+    snack(context, tr('friends_sent'));
+    _loadRequests();
+  }
+
+  Future<void> _accept(String fid, Friend f) async {
+    try {
+      await supa
+          .from('friendships')
+          .update({'status': 'accepted'}).eq('id', fid);
+    } catch (e) {
+      debugPrint('TiradA friend accept failed: $e');
+      if (mounted) snack(context, tr('friends_error'));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _relation[f.id] = 'friend');
+    _loadRequests();
+    widget.onFriendsChanged();
+  }
+
+  Future<void> _dropRequest(String fid, Friend f) async {
+    try {
+      await supa.from('friendships').delete().eq('id', fid);
+    } catch (e) {
+      debugPrint('TiradA friend request delete failed: $e');
+      if (mounted) snack(context, tr('friends_error'));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _relation[f.id] = 'none');
+    _loadRequests();
+    widget.onFriendsChanged();
+  }
+
+  Future<void> _savePingSticker(Ping p) async {
+    final uid = myUidOrNull;
+    final path = p.sticker;
+    if (uid == null || path == null) return;
+    try {
+      await supa.from('user_stickers').insert({
+        'owner_id': uid,
+        'path': path,
+      });
+    } catch (e) {
+      debugPrint('TiradA sticker save failed: $e');
+      if (mounted) snack(context, tr('friends_error'));
+      return;
+    }
+    if (mounted) setState(() => _savedPaths.add(path));
+  }
+
+  Future<void> _deletePing(Ping p) async {
+    try {
+      await supa.from('pings').delete().eq('id', p.id);
+    } catch (e) {
+      debugPrint('TiradA ping delete failed: $e');
+      if (mounted) snack(context, tr('friends_error'));
+      return;
+    }
+    widget.onPingsChanged();
+  }
+
+  Widget _avatar(Friend f, {double radius = 22}) {
+    return Stack(
+      children: [
+        CircleAvatar(
+          radius: radius,
+          backgroundColor: T.surfaceHi,
+          backgroundImage:
+              f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
+          child: f.avatarUrl == null
+              ? AvatarFace(f.avatar,
+                  glyphSize: radius, emojiSize: radius - 2, ghostForDefault: true)
+              : null,
+        ),
+        if (f.online)
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              width: 11,
+              height: 11,
+              decoration: BoxDecoration(
+                color: T.online,
+                shape: BoxShape.circle,
+                border: Border.all(color: T.surface, width: 2),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _personRow(Friend f, {Widget? trailing, VoidCallback? onTap}) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: T.s8),
+      decoration: BoxDecoration(
+        color: T.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: T.stroke),
+      ),
+      child: ListTile(
+        onTap: onTap,
+        leading: _avatar(f),
+        title: Text(
+          f.mode == 'ghost' ? tr('ghost') : f.name,
+          style: T.body(15, w: FontWeight.w700),
+        ),
+        subtitle: Text(
+          f.online ? tr('online_now') : tr('seen_recently'),
+          style: T.body(12, color: f.online ? T.online : T.faint),
+        ),
+        trailing: trailing,
+      ),
+    );
+  }
+
+  Widget _smallBtn(String label, VoidCallback? onTap,
+      {bool primary = false}) {
+    return Pressable(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          gradient: primary ? T.fireGrad : null,
+          color: primary ? null : T.surfaceHi,
+          borderRadius: BorderRadius.circular(999),
+          border: primary ? null : Border.all(color: T.stroke),
+        ),
+        child: Text(
+          label,
+          style: T.body(
+            12,
+            color: primary ? Colors.white : T.muted,
+            w: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _searchTrailing(Friend f) {
+    switch (_relation[f.id] ?? 'none') {
+      case 'friend':
+        return _smallBtn(tr('friends_already'), null);
+      case 'out':
+        return _smallBtn(tr('friends_sent'), null);
+      case 'in':
+        final req = _incoming.where((r) => r.f.id == f.id).firstOrNull;
+        if (req == null) return _smallBtn(tr('friends_add'), () => _sendRequest(f));
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _smallBtn(tr('friends_accept'), () => _accept(req.fid, f),
+                primary: true),
+            const SizedBox(width: 6),
+            _smallBtn(tr('friends_decline'), () => _dropRequest(req.fid, f)),
+          ],
+        );
+      default:
+        return _smallBtn(tr('friends_add'), () => _sendRequest(f),
+            primary: true);
+    }
+  }
+
+  Widget _pingRow(Ping p) {
+    final canSave = p.kind == 'sticker' &&
+        p.sticker != null &&
+        !isPackSticker(p.sticker!);
+    final saved = canSave && _savedPaths.contains(p.sticker);
+    return Container(
+      margin: const EdgeInsets.only(bottom: T.s8),
+      padding: const EdgeInsets.all(T.s12),
+      decoration: BoxDecoration(
+        color: T.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: T.stroke),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              GestureDetector(
+                onTap: () => widget.onOpenFriend(p.from),
+                child: _avatar(p.from, radius: 18),
+              ),
+              const SizedBox(width: T.s8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      p.from.mode == 'ghost' ? tr('ghost') : p.from.name,
+                      style: T.body(14, w: FontWeight.w700),
+                    ),
+                    Text(
+                      relTime(p.createdAt),
+                      style: T.body(11.5, color: T.faint),
+                    ),
+                  ],
+                ),
+              ),
+              Pressable(
+                onTap: () => _deletePing(p),
+                child: const Padding(
+                  padding: EdgeInsets.all(6),
+                  child: TiradIcon(TIGlyph.trash, size: 17, color: T.faint),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: T.s8),
+          if (p.kind == 'hi')
+            Text(tr('ping_hi_text'), style: T.body(16))
+          else if (p.sticker != null)
+            stickerImage(p.sticker!, size: 96),
+          if (canSave) ...[
+            const SizedBox(height: T.s8),
+            if (saved)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const TiradIcon(TIGlyph.check, size: 14, color: T.online),
+                  const SizedBox(width: 5),
+                  Text(
+                    tr('ping_saved'),
+                    style: T.body(12.5, color: T.online, w: FontWeight.w700),
+                  ),
+                ],
+              )
+            else
+              GhostButton(
+                text: tr('ping_save'),
+                small: true,
+                icon: TIGlyph.plus,
+                onPressed: () => _savePingSticker(p),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final uid = myUidOrNull;
+    if (uid == null) {
+      return GlowBackground(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(T.s16, T.s12, T.s16, T.s24),
+          children: [
+            EmptyState(
+              glyph: TIGlyph.users,
+              title: tr('nav_friends'),
+              hint: tr('friends_guest'),
+            ),
+            FireButton(
+              text: tr('ping_signin'),
+              icon: TIGlyph.ghost,
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                      builder: (_) => const LoginPage()),
+                );
+              },
+            ),
+          ],
+        ),
+      );
+    }
+    return GlowBackground(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(T.s16, T.s12, T.s16, T.s24),
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchCtrl,
+                  style: T.body(15),
+                  textInputAction: TextInputAction.search,
+                  onSubmitted: (_) => _search(),
+                  decoration: InputDecoration(
+                    hintText: tr('friends_search_hint'),
+                    hintStyle: T.body(14, color: T.faint),
+                    filled: true,
+                    fillColor: T.surface,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 12),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(color: T.stroke),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(color: T.stroke),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(color: T.fire),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: T.s8),
+              Pressable(
+                onTap: _searching ? null : _search,
+                child: Container(
+                  width: 46,
+                  height: 46,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    gradient: T.fireGrad,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: _searching
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Icon(Icons.search,
+                          size: 21, color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          if (_searched) ...[
+            const SizedBox(height: T.s12),
+            if (_results.isEmpty)
+              Text(
+                tr('friends_not_found'),
+                style: T.body(13, color: T.muted),
+              )
+            else
+              for (final f in _results)
+                _personRow(f, trailing: _searchTrailing(f)),
+          ],
+          if (_incoming.isNotEmpty) ...[
+            const SizedBox(height: T.s16),
+            sectionLabel(tr('friends_requests_in'), glyph: TIGlyph.users),
+            for (final r in _incoming)
+              _personRow(
+                r.f,
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _smallBtn(tr('friends_accept'), () => _accept(r.fid, r.f),
+                        primary: true),
+                    const SizedBox(width: 6),
+                    _smallBtn(
+                        tr('friends_decline'), () => _dropRequest(r.fid, r.f)),
+                  ],
+                ),
+              ),
+          ],
+          if (_outgoing.isNotEmpty) ...[
+            const SizedBox(height: T.s16),
+            sectionLabel(tr('friends_requests_out'), glyph: TIGlyph.paperPlane),
+            for (final r in _outgoing)
+              _personRow(
+                r.f,
+                trailing: _smallBtn(
+                    tr('friends_cancel'), () => _dropRequest(r.fid, r.f)),
+              ),
+          ],
+          const SizedBox(height: T.s16),
+          sectionLabel(tr('ping_inbox_title'), glyph: TIGlyph.chat),
+          if (widget.pings.isEmpty)
+            Text(
+              tr('ping_inbox_empty'),
+              style: T.body(13, color: T.muted),
+            )
+          else
+            for (final p in widget.pings) _pingRow(p),
+          const SizedBox(height: T.s16),
+          sectionLabel(tr('friends_list_title'), glyph: TIGlyph.users),
+          if (widget.friends.isEmpty)
+            EmptyState(
+              glyph: TIGlyph.users,
+              title: tr('friends_none'),
+              hint: tr('friends_none_hint'),
+            )
+          else
+            for (final f in widget.friends)
+              _personRow(f, onTap: () => widget.onOpenFriend(f)),
+        ],
+      ),
+    );
+  }
+}
+
 /* ---------------- profile tab: «Мой призрак» + about ---------------- */
 
 class ProfileTab extends StatefulWidget {
@@ -11749,6 +13114,9 @@ class ProfileTab extends StatefulWidget {
   final City? city;
   final void Function(Map<String, dynamic>) onProfileChanged;
   final VoidCallback onOpenTasks;
+  /* v2.0.17: the friends system moved to its own tab — Profile
+     keeps a single «Друзья» jump row. */
+  final VoidCallback onOpenFriends;
   final bool hapticsValue;
   final void Function(bool) onToggleHaptics;
   const ProfileTab({
@@ -11760,6 +13128,7 @@ class ProfileTab extends StatefulWidget {
     required this.city,
     required this.onProfileChanged,
     required this.onOpenTasks,
+    required this.onOpenFriends,
     required this.hapticsValue,
     required this.onToggleHaptics,
   });
@@ -12185,7 +13554,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.16',
+                  'TiradA anon · 2.0.17',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -12935,7 +14304,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.16',
+            'TiradA anon · 2.0.17',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
@@ -12945,6 +14314,16 @@ class _ProfileTabState extends State<ProfileTab> {
              there out of this scroll; Creators — the about page. The
              «О приложении» and «Политика конфиденциальности» buttons
              are gone. */
+          /* v2.0.17: the friends system lives in the «Друзья» tab
+             now — this row is the only trace of it left here. */
+          PressButton(
+            text: tr('nav_friends'),
+            small: true,
+            primary: false,
+            icon: TIGlyph.users,
+            onPressed: widget.onOpenFriends,
+          ),
+          const SizedBox(height: 10),
           PressButton(
             text: tr('settings_btn'),
             small: true,
