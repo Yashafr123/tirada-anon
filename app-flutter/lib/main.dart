@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.14.
+// TiradA anon — native app (Flutter), v2.0.15.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -450,19 +450,44 @@ class RoadRoute {
   });
 }
 
-/* Real road routing via the free public OSRM demo server — no key,
-   no signup, no paid tier (owner's free-services rule). Every failure
-   (offline, timeout, OSRM error) returns null and the caller keeps
-   the straight-line behaviour of v2.0.9. Results are cached in
-   memory per (profile + rounded waypoints), so re-opening the same
-   route never re-hits the server. */
+/* Real road routing via free OSRM servers — no key, no signup, no
+   paid tier (owner's free-services rule). Every failure (offline,
+   timeout, OSRM error) returns null and the caller keeps the
+   straight-line behaviour of v2.0.9. Results are cached in memory
+   per (profile + rounded waypoints), so re-opening the same route
+   — or switching car ↔ bus, which share the driving route — never
+   re-hits the server. */
 class RoutingService {
   static final Map<String, RoadRoute> _cache = {};
 
   /* Route-tab transport → OSRM profile. 'bus' uses driving geometry:
-     there is no transit routing here, and we don't pretend otherwise. */
+     there is no transit routing here, and we don't pretend
+     otherwise — the bus TIME is the driving duration adjusted at
+     display time in the RouteTab (×1.35 + 8 min, v2.0.15). */
   static String profileFor(String transport) =>
       transport == 'walk' ? 'foot' : 'driving';
+
+  /* OSRM hosts per profile (v2.0.15). ROOT CAUSE of «время не
+     меняется от транспорта»: the public demo server
+     (router.project-osrm.org) IGNORES the profile in the path —
+     verified live 2026-11-25: /route/v1/foot/… and
+     /route/v1/driving/… returned byte-identical car-speed results
+     (340.1 s over the same 3.86 km), so once the road route landed,
+     walk, bus and car all displayed one and the same duration and
+     the same polyline. The FOSSGIS server (routing.openstreetmap.de,
+     free, no key) runs a separate instance per profile and honours
+     it: for the same waypoints routed-foot answered 2395 s over a
+     shorter pedestrian geometry, routed-car 340 s. The demo server
+     remains only as a DRIVING fallback (for driving its numbers
+     are the correct car numbers). */
+  static List<String> _basesFor(String profile) => profile == 'foot'
+      ? const [
+          'https://routing.openstreetmap.de/routed-foot/route/v1/driving'
+        ]
+      : const [
+          'https://routing.openstreetmap.de/routed-car/route/v1/driving',
+          'https://router.project-osrm.org/route/v1/driving',
+        ];
 
   static String cacheKey(String profile, List<LatLng> pts) =>
       '$profile|${pts.map((p) => '${p.latitude.toStringAsFixed(5)},${p.longitude.toStringAsFixed(5)}').join(';')}';
@@ -473,13 +498,24 @@ class RoutingService {
     final key = cacheKey(profile, waypoints);
     final hit = _cache[key];
     if (hit != null) return hit;
+    for (final base in _basesFor(profile)) {
+      final result = await _fetchFrom(base, waypoints);
+      if (result != null) {
+        _cache[key] = result;
+        return result;
+      }
+    }
+    return null;
+  }
+
+  static Future<RoadRoute?> _fetchFrom(
+      String base, List<LatLng> waypoints) async {
     final client = HttpClient();
     try {
       client.connectionTimeout = const Duration(seconds: 6);
       final coords =
           waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
-      final uri = Uri.parse(
-          'https://router.project-osrm.org/route/v1/$profile/$coords'
+      final uri = Uri.parse('$base/$coords'
           '?overview=full&geometries=geojson&annotations=false');
       final req = await client.getUrl(uri).timeout(const Duration(seconds: 6));
       final resp = await req.close().timeout(const Duration(seconds: 6));
@@ -514,8 +550,7 @@ class RoutingService {
         ],
       );
       if (result.totalKm <= 0) return null;
-      _cache[key] = result;
-      return result;
+      return result; // caching lives in route(), keyed by profile
     } catch (_) {
       return null;
     } finally {
@@ -8846,6 +8881,27 @@ class _RouteTabState extends State<RouteTab> {
   Set<String> _readyCounted = {};
 
   static const _speeds = {'walk': 5.0, 'bus': 18.0, 'car': 30.0};
+
+  /* Bus time (v2.0.15): OSRM has no transit routing, so the bus
+     rides the DRIVING road route — but its displayed time must not
+     be the car's number (before 2.0.15 bus and car showed the exact
+     same OSRM duration). Bus estimate = driving duration × 1.35
+     (stops, lights, boarding) + a flat 8 min access/wait buffer.
+     The buffer rides on the FIRST leg, so the leg rows still sum
+     to the header total. Walk and car show the raw OSRM durations
+     of their own profiles. While no road route has landed, the
+     straight-line fallback stays speed-based per mode via _speeds
+     (walk 5, bus 18, car 30 km/h), so it is mode-aware too. */
+  static const _busFactor = 1.35;
+  static const _busBufferMins = 8.0;
+
+  double _modeTotalMins(double roadMins) => _transport == 'bus'
+      ? roadMins * _busFactor + _busBufferMins
+      : roadMins;
+
+  double _modeLegMins(double legRoadMins, int leg) => _transport == 'bus'
+      ? legRoadMins * _busFactor + (leg == 0 ? _busBufferMins : 0)
+      : legRoadMins;
   /* v2.0.12: transport marks are TI glyphs (walk/bus/car), resolved
      inline at the render sites — the emoji map is gone. */
   static const _checkInRadiusKm = 0.15; // «Я здесь» opens within ~150 m
@@ -9599,6 +9655,10 @@ class _RouteTabState extends State<RouteTab> {
     final pts = [start, for (final p in _stops) LatLng(p.lat, p.lng)];
     final profile = RoutingService.profileFor(_transport);
     final sig = RoutingService.cacheKey(profile, pts);
+    // Bus and car share the driving signature ON PURPOSE (v2.0.15):
+    // switching between them reuses the loaded driving route with
+    // no refetch — only the displayed times change, via
+    // _modeTotalMins/_modeLegMins reading _transport at build time.
     if (sig == _roadSig) return;
     _roadSig = sig;
     _road = null;
@@ -9712,14 +9772,16 @@ class _RouteTabState extends State<RouteTab> {
   }
 
   Widget _legRow(LatLng a, Place b, {String? fromLabel, int leg = -1}) {
-    // OSRM leg values once the road route has landed; the straight-
-    // line estimate for this leg until then (and on any failure).
+    // OSRM leg values once the road route has landed, adjusted for
+    // the selected transport (v2.0.15: bus legs are the driving
+    // legs ×1.35, +8 min wait on the first leg); the straight-line
+    // estimate for this leg until then (and on any failure).
     final r = _road;
     final double km;
     final int mins;
     if (r != null && leg >= 0 && leg < r.legKm.length) {
       km = r.legKm[leg];
-      mins = r.legMins[leg].round();
+      mins = _modeLegMins(r.legMins[leg], leg).round();
     } else {
       km = haversineKm(a.latitude, a.longitude, b.lat, b.lng);
       mins = (km / (_speeds[_transport] ?? 30) * 60).round();
@@ -10064,8 +10126,15 @@ class _RouteTabState extends State<RouteTab> {
                       _summaryChip(
                         TIGlyph.clock,
                         trf('mins_short', {
-                          'n': _road?.totalMins.round() ??
-                              (_displayTotalKm /
+                          // v2.0.15: the OSRM total goes through
+                          // the transport adjustment (bus = driving
+                          // ×1.35 + 8 min) — before, this chip showed
+                          // the raw duration, identical for bus/car
+                          // and, via the profile-blind demo server,
+                          // for walking too.
+                          'n': _road != null
+                              ? _modeTotalMins(_road!.totalMins).round()
+                              : (_displayTotalKm /
                                       (_speeds[_transport] ?? 5) *
                                       60)
                                   .round(),
@@ -12066,7 +12135,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.14',
+                  'TiradA anon · 2.0.15',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -12816,7 +12885,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.14',
+            'TiradA anon · 2.0.15',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
