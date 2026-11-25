@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.19.
+// TiradA anon — native app (Flutter), v2.0.20.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -5568,7 +5568,10 @@ class _HomePageState extends State<HomePage> {
      timestamp, which also busts the NetworkImage cache). Guest → the
      on-phone avatar mirrored through GuestAvatarBus (photo file, else
      the guest emoji). No avatar anywhere → the branded ghost look.
-     Tap = the Profile tab, identical to the bottom-nav Profile slot. */
+     Tap = the Profile tab. v2.0.20: the bottom bar no longer has a
+     Profile slot (Друзья took the far-right place), so this header
+     button — top-right, rendered above the IndexedStack on every
+     tab — is THE profile entry. */
   Widget _profileButton() {
     Widget face(String? photoUrl, String? photoPath, String emoji) {
       return Container(
@@ -5790,13 +5793,13 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 3),
           // v2.0.18: the label is laid out unconstrained
           // horizontally (centred on the slot centre, softWrap
-          // off): with the centre gap the left slots are exactly
-          // 38 dp wide at 360 dp screen width, and a label like
-          // «Друзья» (~36–40 dp at 10.5) must never wrap to a
-          // second line or lose letters to the slot edge. It can
-          // only paint into the slack the geometry note in
-          // _bottomNav verifies (≥ 14 dp clear of the «Ты в деле»
-          // label, ≥ 12 dp clear of any neighbouring label).
+          // off): a label like «Друзья» (~36–40 dp at 10.5) must
+          // never wrap to a second line or lose letters to the
+          // slot edge. It can only paint into the slack the
+          // geometry note in _bottomNav verifies (v2.0.20: every
+          // slot is 57 dp wide at 360 dp screen width, ≥ 15 dp
+          // clear of any neighbouring label, ≥ 21.5 dp clear of
+          // the «Ты в деле» label).
           UnconstrainedBox(
             constrainedAxis: Axis.vertical,
             child: Text(
@@ -5833,36 +5836,54 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
-        // v2.0.18: the 2.0.17 geometry (two half-width groups, FAB
-        // overlaid dead-centre) CROWDED the centre: the «Друзья»
-        // slot centre sat only ~27 dp from the panel centre, so
-        // the FAB badge and its RadarSweep painted over the
-        // «Друзья» icon and the «Друзья» / «Ты в деле» / «Маршрут»
-        // labels overlapped on the baseline (owner's screenshot:
-        // «исправь, что это за пиздец»). The fix reserves a REAL
-        // centre gap: the base row is now [Expanded left group:
-        // Карта · Места · Друзья] [fixed 92 dp empty gap]
-        // [Expanded right group: Маршрут · Профиль]. Both groups
-        // have flex 1, so each gets exactly (rowWidth − 92) / 2
-        // and the gap's centre IS the panel centre — structurally,
-        // in every tab state; the FAB overlay (Positioned.fill +
+        // v2.0.20: the owner moved «Профиль» OUT of the bar
+        // («перемести раздел профиль сверху справо, а раздел
+        // друзья поставь на место профиля»): the Profile tab
+        // (index 4, unchanged in the IndexedStack) is now reached
+        // ONLY from the header avatar button at the top-right,
+        // and «Друзья» takes the far-right slot where «Профиль»
+        // used to be. The base row is now [Expanded left group:
+        // Карта · Места] [fixed 92 dp empty gap] [Expanded right
+        // group: Маршрут · Друзья]. Tab indices are untouched
+        // (0 map · 1 places · 2 friends · 3 route · 4 profile) —
+        // the bar simply renders four of the five; the Друзья
+        // slot keeps its unseen-pings badge, and the active-tab
+        // state is still driven by _tab == idx, so no slot
+        // highlights while the Profile tab is open.
+        //
+        // v2.0.18 geometry, recomputed for 2+2 slots: the 2.0.17
+        // geometry (two half-width groups, FAB overlaid
+        // dead-centre) CROWDED the centre — the «Друзья» slot
+        // centre sat only ~27 dp from the panel centre, so the
+        // FAB badge and its RadarSweep painted over the «Друзья»
+        // icon and the labels overlapped on the baseline
+        // (owner's screenshot: «исправь, что это за пиздец»). The
+        // fix reserves a REAL centre gap: both groups have flex
+        // 1, so each gets exactly (rowWidth − 92) / 2 and the
+        // gap's centre IS the panel centre — structurally, in
+        // every tab state; the FAB overlay (Positioned.fill +
         // Center) therefore still sits dead-centre, now over
         // empty space. Arithmetic at a 360 dp-wide screen (panel
         // content width 320 after the 12 dp margins and 8 dp
-        // padding): groups are 114 wide, left slots 38, right
-        // slots 57; slot centres from the content's left edge —
-        // Карта 19, Места 57, Друзья 95, Маршрут 234.5, Профиль
-        // 291.5, panel centre 160. The nearest centres (Друзья
-        // 65 dp, Маршрут 74.5 dp from centre) clear the FAB badge
-        // (radius 29) by 17 dp to the 38 dp icon zone, and the
-        // full RadarSweep (radius 43) by 3 dp to the zone / 4 dp
-        // to the visible 36 dp badge — the sweep never covers a
-        // neighbouring icon. Labels: «Ты в деле» (~62 dp at 10.5)
-        // lives inside the 92 dp gap (129..191 around the centre)
-        // and the nearest tab labels end ≥ 14 dp away from it, so
-        // all six labels share the baseline with no overlaps and
-        // no font reduction. Panel height (~90 dp), margins,
-        // colours and radius are unchanged from 2.0.17.
+        // padding): groups are 114 wide, every slot is 57 wide;
+        // slot centres from the content's left edge — Карта
+        // 28.5, Места 85.5, Маршрут 234.5, Друзья 291.5, panel
+        // centre 160. The nearest centres (Места and Маршрут,
+        // both 74.5 dp from centre — roomier than 2.0.18's
+        // 65 dp) clear the FAB badge (radius 29) by 26.5 dp to
+        // the 38 dp icon zone, and the full RadarSweep (radius
+        // 43) by 12.5 dp to the zone / 13.5 dp to the visible
+        // 36 dp badge; even at the pulse peak (scale 1.07 →
+        // sweep radius ~46) the sweep clears a selected
+        // neighbour's badge by ~10.5 dp — it never covers a
+        // neighbouring icon. Labels: «Ты в деле» (~62 dp at
+        // 10.5) lives inside the 92 dp gap (129..191 around the
+        // centre); «Места» ends ~28 dp before it and «Маршрут»
+        // starts ~21.5 dp after it; «Маршрут» / «Друзья» labels
+        // are ~15 dp apart — all five labels share the baseline
+        // with no overlaps and no font reduction. Panel height
+        // (~90 dp), margins, colours and radius are unchanged
+        // from 2.0.17.
         //
         // v2.0.17: FIVE tabs (Друзья added at index 2); the bar is
         // a Stack whose base layer is a 75 dp row (the pre-2.0.17
@@ -5905,14 +5926,6 @@ class _HomePageState extends State<HomePage> {
                         Expanded(
                           child: _navSlot(1, TIGlyph.flame, tr('nav_places')),
                         ),
-                        Expanded(
-                          child: _navSlot(
-                            2,
-                            TIGlyph.users,
-                            tr('nav_friends'),
-                            badge: _unseenPings,
-                          ),
-                        ),
                       ],
                     ),
                   ),
@@ -5929,7 +5942,12 @@ class _HomePageState extends State<HomePage> {
                               _navSlot(3, TIGlyph.routePath, tr('nav_route')),
                         ),
                         Expanded(
-                          child: _navSlot(4, TIGlyph.ghost, tr('nav_profile')),
+                          child: _navSlot(
+                            2,
+                            TIGlyph.users,
+                            tr('nav_friends'),
+                            badge: _unseenPings,
+                          ),
                         ),
                       ],
                     ),
@@ -13909,7 +13927,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.19',
+                  'TiradA anon · 2.0.20',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -14659,7 +14677,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.19',
+            'TiradA anon · 2.0.20',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
