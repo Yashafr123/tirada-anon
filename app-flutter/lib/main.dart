@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.11.
+// TiradA anon — native app (Flutter), v2.0.12.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -53,6 +53,16 @@ class T {
   static const muted = Color(0xFF9A9AA3);
   static const faint = Color(0xFF5C5C66);
   static const salmon = Color(0xFFFF8A7A);
+
+  /* v2.0.12 icon set (owner's spec): monoline glyphs in soft gray. */
+  static const iconGray = Color(0xFF9A9AA0);
+
+  /* Active-badge gradient (owner's spec): #E8301E → #FF6A1A. */
+  static const specGrad = LinearGradient(
+    colors: [Color(0xFFE8301E), Color(0xFFFF6A1A)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
 
   /* Gradients */
   static const fireGrad = LinearGradient(
@@ -399,6 +409,13 @@ class MapRouteBus {
       ValueNotifier<MapRouteLine?>(null);
   static final ValueNotifier<int> showTick = ValueNotifier<int>(0);
 
+  /* v2.0.12: «delete route» requests coming from the MAP (the chip's
+     delete button). The RouteTab owns the active-route state, so it
+     listens to this tick and performs the actual stop-tracking wipe
+     (with the confirm sheet when progress exists). The map itself
+     only clears plain directions lines directly. */
+  static final ValueNotifier<int> deleteRequestTick = ValueNotifier<int>(0);
+
   static void show(MapRouteLine l) {
     line.value = l;
     showTick.value++;
@@ -409,6 +426,10 @@ class MapRouteBus {
 
   static void clear() {
     line.value = null;
+  }
+
+  static void requestDeleteRoute() {
+    deleteRequestTick.value++;
   }
 }
 
@@ -567,11 +588,8 @@ class City {
       );
 }
 
-const kTypeEmoji = <String, String>{
-  'park': '🌳', 'cafe': '☕', 'bar': '🍸', 'restaurant': '🍽️', 'club': '🎧',
-  'beach': '🏖️', 'view': '🌇', 'sport': '🏀', 'culture': '🎭',
-  'market': '🛍️', 'other': '📍',
-};
+/* v2.0.12: the type→emoji map is gone — type icons are TI vector
+   glyphs now (see typeGlyph in the TI library). */
 
 Color typeColor(String t) {
   switch (t) {
@@ -722,18 +740,21 @@ int vibeOf(Place p) {
 String vibeWord(int v) =>
     v >= 70 ? tr('vibe_hot') : (v >= 45 ? tr('vibe_mid') : tr('vibe_calm'));
 
-/* Open-Meteo weathercode → condition emoji (night-aware for clear sky). */
-String wxEmojiFor(int? code, int hour) {
-  if (code == null) return '☀️';
+/* Open-Meteo weathercode → TI condition glyph (night-aware for clear
+   sky). v2.0.12: vector glyphs replace the weather emoji. */
+TIGlyph wxGlyphFor(int? code, int hour) {
+  if (code == null) return TIGlyph.sun;
   final night = hour >= 20 || hour < 6;
-  if (code == 0) return night ? '🌙' : '☀️';
-  if (code == 1 || code == 2) return '🌤️';
-  if (code == 3) return '☁️';
-  if (code == 45 || code == 48) return '🌫️';
-  if (code >= 95) return '⛈️';
-  if ((code >= 71 && code <= 77) || code == 85 || code == 86) return '❄️';
-  if (code >= 51) return '🌧️';
-  return '🌤️';
+  if (code == 0) return night ? TIGlyph.moon : TIGlyph.sun;
+  if (code == 1) return TIGlyph.sun;
+  if (code == 2 || code == 3) return TIGlyph.cloud;
+  if (code == 45 || code == 48) return TIGlyph.fog;
+  if (code >= 95) return TIGlyph.storm;
+  if ((code >= 71 && code <= 77) || code == 85 || code == 86) {
+    return TIGlyph.snow;
+  }
+  if (code >= 51) return TIGlyph.cloudRain;
+  return TIGlyph.sun;
 }
 
 double haversineKm(double lat1, double lng1, double lat2, double lng2) {
@@ -1178,8 +1199,8 @@ const Map<String, (String, String, String)> kStr = {
   ),
   'hint_password': ('Пароль', 'סיסמה', 'Password'),
   'wait': ('Секунду…', 'רגע…', 'One second…'),
-  'sign_in': ('🚀 Войти', '🚀 כניסה', '🚀 Sign in'),
-  'sign_up': ('✨ Создать аккаунт', '✨ יצירת חשבון', '✨ Create account'),
+  'sign_in': ('Войти', 'כניסה', 'Sign in'),
+  'sign_up': ('Создать аккаунт', 'יצירת חשבון', 'Create account'),
   'login_web_note': (
     'Тот же аккаунт, что и на сайте tirada-anon.vercel.app',
     'אותו חשבון כמו באתר tirada-anon.vercel.app',
@@ -1245,8 +1266,8 @@ const Map<String, (String, String, String)> kStr = {
     'No friends are in yet. Be the first 🔥'
   ),
   'deal_in_city': ('в сети · {city}', 'מחובר · {city}', 'online · {city}'),
-  'deal_in': ('🔥 в деле', '🔥 בפנים', '🔥 in'),
-  'deal_top_pick': ('🏆 Топ выбор радара', '🏆 הבחירה המובילה של הרדאר', "🏆 Radar's top pick"),
+  'deal_in': ('в деле', 'בפנים', 'in'),
+  'deal_top_pick': ('Топ выбор радара', 'הבחירה המובילה של הרדאר', "Radar's top pick"),
   'deal_already': (
     '📍 А движ уже есть: {name}',
     '📍 וכבר יש וייב: {name}',
@@ -1257,9 +1278,9 @@ const Map<String, (String, String, String)> kStr = {
     'העיר {city} · עכשיו {word} שם (וייב {v}%), ממך · בקו ישר: {d} ק״מ. אפשר להתחיל מכאן — חברים יצטרפו דרך הקישור.',
     '{city} · it is {word} there right now (vibe {v}%), from you · straight line: {d} km. You can start here — friends will join via the link.'
   ),
-  'deal_route_btn': ('🚗 Маршрут', '🚗 מסלול', '🚗 Route'),
+  'deal_route_btn': ('Маршрут', 'מסלול', 'Route'),
   'deal_other': ('Другое место', 'מקום אחר', 'Another place'),
-  'deal_poll_title': ('🗳️ Куда идём?', '🗳️ לאן הולכים?', '🗳️ Where are we going?'),
+  'deal_poll_title': ('Куда идём?', 'לאן הולכים?', 'Where are we going?'),
   'deal_poll_hint': (
     'Тапни место — это будет твой голос',
     'הקש על מקום — וזה הקול שלך',
@@ -1288,8 +1309,8 @@ const Map<String, (String, String, String)> kStr = {
   'camera': ('Камера', 'מצלמה', 'Camera'),
   'gallery': ('Галерея', 'גלריה', 'Gallery'),
   'who_sees_photo': ('Кто увидит фото?', 'מי יראה את התמונה?', 'Who will see the photo?'),
-  'vis_all': ('🌍 Всем', '🌍 לכולם', '🌍 Everyone'),
-  'vis_friends': ('👻 Только друзьям', '👻 רק לחברים', '👻 Friends only'),
+  'vis_all': ('Всем', 'לכולם', 'Everyone'),
+  'vis_friends': ('Только друзьям', 'רק לחברים', 'Friends only'),
   'vis_none': ('Не показывать', 'לא להציג', "Don't show"),
   'photo_posted': (
     'Фото опубликовано 📸 · +25 XP за фото',
@@ -1302,9 +1323,9 @@ const Map<String, (String, String, String)> kStr = {
     "The photo didn't upload — try again"
   ),
   'reviews_suffix': (' · {n} отзывов', ' · {n} ביקורות', ' · {n} reviews'),
-  'new_place': ('✨ новое место', '✨ מקום חדש', '✨ new place'),
+  'new_place': ('новое место', 'מקום חדש', 'new place'),
   'km_from_you': ('· {d} км от тебя', '· {d} ק״מ ממך', '· {d} km from you'),
-  'crowd_now': ('👥 Сейчас отдыхают: ~{n}', '👥 נחים עכשיו: ~{n}', '👥 Hanging out now: ~{n}'),
+  'crowd_now': ('Сейчас отдыхают: ~{n}', 'נחים עכשיו: ~{n}', 'Hanging out now: ~{n}'),
   'crowd_friends': (' · друзья рядом: {n}', ' · חברים בקרבת מקום: {n}', ' · friends nearby: {n}'),
   'you_here': ('✓ Ты здесь', '✓ אתה כאן', "✓ You're here"),
   'i_here': ('✓ Я здесь', '✓ אני כאן', "✓ I'm here"),
@@ -1320,16 +1341,16 @@ const Map<String, (String, String, String)> kStr = {
     '{name} — vibe {v}% in TiradA anon 🔥'
   ),
   'uploading': ('Загрузка…', 'מעלה…', 'Uploading…'),
-  'add_photo': ('📸 Добавить фото', '📸 הוסף תמונה', '📸 Add a photo'),
-  'route_here': ('🧭 Маршрут сюда', '🧭 מסלול לכאן', '🧭 Route here'),
+  'add_photo': ('Добавить фото', 'הוסף תמונה', 'Add a photo'),
+  'route_here': ('Маршрут сюда', 'מסלול לכאן', 'Route here'),
   'to_navigator': ('В навигатор', 'לנווט', 'Open navigator'),
-  'ghost_photos_here': ('📸 Фото призраков здесь', '📸 תמונות רוחות כאן', '📸 Ghost photos here'),
+  'ghost_photos_here': ('Фото призраков здесь', 'תמונות רוחות כאן', 'Ghost photos here'),
   'tap_photo_fire': (
     'тап по фото — поставить 🔥',
     'הקש על תמונה — כדי לתת 🔥',
     'tap a photo — to give 🔥'
   ),
-  'ghost_reviews': ('💬 Отзывы призраков', '💬 ביקורות רוחות', '💬 Ghost reviews'),
+  'ghost_reviews': ('Отзывы призраков', 'ביקורות רוחות', 'Ghost reviews'),
   'reviews_empty': (
     'Пока тихо — стань первым призраком с отзывом.',
     'שקט בינתיים — תהיה הרוח הראשונה עם ביקורת.',
@@ -1340,8 +1361,8 @@ const Map<String, (String, String, String)> kStr = {
     '{avg} · {n} ביקורות רוחות',
     '{avg} · {n} ghost reviews'
   ),
-  'hint_review': ('✍️ Оставить отзыв…', '✍️ כתוב ביקורת…', '✍️ Write a review…'),
-  'leave_review': ('✍️ Оставить отзыв', '✍️ כתוב ביקורת', '✍️ Write a review'),
+  'hint_review': ('Оставить отзыв…', 'כתוב ביקורת…', 'Write a review…'),
+  'leave_review': ('Оставить отзыв', 'כתוב ביקורת', 'Write a review'),
   'signin_to_review': (
     'Войди, чтобы оставить отзыв',
     'היכנס כדי לכתוב ביקורת',
@@ -1355,15 +1376,11 @@ const Map<String, (String, String, String)> kStr = {
     '{city} · {n} מקומות · {hot} חמים',
     '{city} · {n} places · {hot} hot'
   ),
-  'chip_dir': ('🧭 {name} · {d} · ', '🧭 {name} · {d} · ', '🧭 {name} · {d} · '),
+  'chip_dir': ('{name} · {d} · ', '{name} · {d} · ', '{name} · {d} · '),
   'chip_walk': ('≈ {n} мин пешком', '≈ {n} דקות הליכה', '≈ {n} min on foot'),
-  'chip_drive': (' · 🚗 ≈ {n} мин', ' · 🚗 ≈ {n} דקות', ' · 🚗 ≈ {n} min'),
+  'chip_drive': (' · ≈ {n} мин', ' · ≈ {n} דקות', ' · ≈ {n} min'),
   'chip_from_center': (' · от центра города', ' · ממרכז העיר', ' · from the city center'),
-  'chip_route': (
-    '🗺️ {title} · {n} точки · {d}',
-    '🗺️ {title} · {n} נקודות · {d}',
-    '🗺️ {title} · {n} stops · {d}'
-  ),
+  'chip_route': ('{title} · {n} точки · {d}', '{title} · {n} נקודות · {d}', '{title} · {n} stops · {d}'),
   'unit_m': ('м', 'מ׳', 'm'),
   'unit_km': ('км', 'ק״מ', 'km'),
   'type_park': ('Парки', 'פארקים', 'Parks'),
@@ -1378,13 +1395,13 @@ const Map<String, (String, String, String)> kStr = {
   'type_market': ('Магазины', 'חנויות', 'Shops'),
   'type_other': ('Разное', 'שונות', 'Misc'),
   'sort_vibe': ('По движу', 'לפי הוייב', 'By vibe'),
-  'sort_dist': ('📍 Рядом со мной', '📍 קרוב אליי', '📍 Near me'),
+  'sort_dist': ('Рядом со мной', 'קרוב אליי', 'Near me'),
   'sort_rating': ('По рейтингу', 'לפי דירוג', 'By rating'),
   'sort_price': ('По цене', 'לפי מחיר', 'By price'),
   'sort_name': ('А–Я', 'א–ת', 'A–Z'),
   'places_count': ('{n} мест', '{n} מקומות', '{n} places'),
-  'tasks_book': ('🎯 Задачник', '🎯 משימות', '🎯 Tasks'),
-  'ai_day': ('🤖 ИИ дня', '🤖 ה-AI של היום', '🤖 AI of the day'),
+  'tasks_book': ('Задачник', 'משימות', 'Tasks'),
+  'ai_day': ('ИИ дня', 'ה-AI של היום', 'AI of the day'),
   'first_task': ('Первое задание: {t}', 'המשימה הראשונה: {t}', 'First task: {t}'),
   'open_tasks': ('Открыть задачник →', 'לפתוח את המשימות ←', 'Open the tasks →'),
   'city_now': ('Город сейчас', 'העיר עכשיו', 'The city now'),
@@ -1393,7 +1410,7 @@ const Map<String, (String, String, String)> kStr = {
   'stat_avg_vibe': ('средний движ', 'וייב ממוצע', 'average vibe'),
   'search_hint': ('Поиск места…', 'חיפוש מקום…', 'Search a place…'),
   'all': ('Все', 'הכול', 'All'),
-  'only_hot': ('🔥 Только жаркие', '🔥 רק חמים', '🔥 Only hot'),
+  'only_hot': ('Только жаркие', 'רק חמים', 'Only hot'),
   'found_n': ('Найдено: {n}', 'נמצאו: {n}', 'Found: {n}'),
   'empty_title': ('Здесь пока тихо', 'שקט כאן בינתיים', 'Quiet here for now'),
   'empty_hint': (
@@ -1402,7 +1419,7 @@ const Map<String, (String, String, String)> kStr = {
     'Try another filter, search or city.'
   ),
   'new_short': ('✨ новое', '✨ חדש', '✨ new'),
-  'dist_badge': ('📍 {d} км', '📍 {d} ק״מ', '📍 {d} km'),
+  'dist_badge': ('{d} км', '{d} ק״מ', '{d} km'),
   'route_evening_title': ('Маршрут на вечер', 'מסלול לערב', 'Evening route'),
   'route_saved_title': ('Сохранённый маршрут', 'מסלול שמור', 'Saved route'),
   'route_title_a': ('Маршрут на ', 'מסלול ל', 'Route for the '),
@@ -1477,25 +1494,31 @@ const Map<String, (String, String, String)> kStr = {
     'המסלול השמור שלך ב{city}.',
     'Your saved route across {city}.'
   ),
-  'route_start_center': (
-    '📍 Геолокация выключена — старт от центра города',
-    '📍 המיקום כבוי — מתחילים ממרכז העיר',
-    '📍 Location is off — starting from the city center'
-  ),
-  'route_start_you': ('📍 Старт — от тебя', '📍 מתחילים — ממך', '📍 Start — from you'),
+  'route_start_center': ('Геолокация выключена — старт от центра города', 'המיקום כבוי — מתחילים ממרכז העיר', 'Location is off — starting from the city center'),
+  'route_start_you': ('Старт — от тебя', 'מתחילים — ממך', 'Start — from you'),
   'route_summary': (
     '🗺️ {n} точки · всего ≈ {d}',
     '🗺️ {n} נקודות · סך הכול ≈ {d}',
     '🗺️ {n} stops · total ≈ {d}'
   ),
   'route_summary_done': (' · ✓ маршрут пройден', ' · ✓ המסלול הושלם', ' · ✓ route completed'),
-  'tp_walk': ('🚶 Пешком', '🚶 ברגל', '🚶 Walking'),
-  'tp_bus': ('🚌 Автобус', '🚌 אוטובוס', '🚌 Bus'),
-  'tp_car': ('🚗 Машина', '🚗 ברכב', '🚗 Car'),
-  'route_reshuffle': ('🎲 Пересобрать маршрут', '🎲 בנה מסלול מחדש', '🎲 Reshuffle route'),
-  'route_show_map': ('🗺️ Показать на карте', '🗺️ הצג במפה', '🗺️ Show on map'),
-  'route_save': ('💾 Сохранить маршрут', '💾 שמור מסלול', '💾 Save route'),
-  'route_back_evening': ('🌙 К маршруту на вечер', '🌙 למסלול הערב', '🌙 Back to the evening route'),
+  'tp_walk': ('Пешком', 'ברגל', 'Walking'),
+  'tp_bus': ('Автобус', 'אוטובוס', 'Bus'),
+  'tp_car': ('Машина', 'ברכב', 'Car'),
+  'route_reshuffle': ('Пересобрать маршрут', 'בנה מסלול מחדש', 'Reshuffle route'),
+  'route_show_map': ('Показать на карте', 'הצג במפה', 'Show on map'),
+  'route_save': ('Сохранить маршрут', 'שמור מסלול', 'Save route'),
+  'delete_route': ('Удалить маршрут', 'מחיקת מסלול', 'Delete route'),
+  'delete_route_title': ('Удалить маршрут?', 'למחוק את המסלול?', 'Delete route?'),
+  'delete_route_progress': (
+    'Прогресс по точкам будет сброшен',
+    'ההתקדמות בתחנות תאופס',
+    'Progress at the stops will be reset'
+  ),
+  'btn_cancel': ('Отмена', 'ביטול', 'Cancel'),
+  'btn_delete': ('Удалить', 'מחיקה', 'Delete'),
+  'route_deleted': ('Маршрут удалён', 'המסלול נמחק', 'Route deleted'),
+  'route_back_evening': ('К маршруту на вечер', 'למסלול הערב', 'Back to the evening route'),
   'my_routes': ('Мои маршруты', 'המסלולים שלי', 'My routes'),
   'ready_routes': ('Готовые маршруты', 'מסלולים מוכנים', 'Ready routes'),
   'route_no_places': (
@@ -1503,9 +1526,9 @@ const Map<String, (String, String, String)> kStr = {
     'בעיר הזו אין עדיין מקומות למסלול.',
     'This city has no places for a route yet.'
   ),
-  'from_center': ('🏙️ от центра', '🏙️ מהמרכז', '🏙️ from the center'),
-  'from_you': ('📍 от тебя', '📍 ממך', '📍 from you'),
-  'steps_title': ('👟 Шаги сегодня', '👟 צעדים היום', "👟 Today's steps"),
+  'from_center': ('от центра', 'מהמרכז', 'from the center'),
+  'from_you': ('от тебя', 'ממך', 'from you'),
+  'steps_title': ('Шаги сегодня', 'צעדים היום', "Today's steps"),
   'steps_no_access': (
     'Нет доступа к шагам — разреши физическую активность, и шаги начнут давать XP',
     'אין גישה לצעדים — אשר פעילות גופנית, והצעדים יתחילו לתת XP',
@@ -1516,7 +1539,7 @@ const Map<String, (String, String, String)> kStr = {
     'כל 1000 צעדים = +5 XP (עד +50 ביום) · עד ה-+5 XP הבא: {n} צעדים · היום +{xp} XP',
     'Every 1000 steps = +5 XP (up to +50 a day) · {n} steps to the next +5 XP · today +{xp} XP'
   ),
-  'cq_title': ('🏙️ Квест города — {city}', '🏙️ קווסט העיר — {city}', '🏙️ City quest — {city}'),
+  'cq_title': ('Квест города — {city}', 'קווסט העיר — {city}', 'City quest — {city}'),
   'cq_checkin': ('Зачекинься: {name}', 'עשה צ׳ק-אין: {name}', 'Check in: {name}'),
   'cq_photo': ('Сфотографируй: {name}', 'צלם: {name}', 'Photograph: {name}'),
   'cq_fav': ('Добавь в избранное: {name}', 'הוסף למועדפים: {name}', 'Add to favorites: {name}'),
@@ -1530,7 +1553,7 @@ const Map<String, (String, String, String)> kStr = {
     'שלושת הצעדים ביום — בונוס +50 XP. הצעדים נספרים מעצמם: צ׳ק-אין, תמונה ולב במקומות הנכונים.',
     'All three steps in a day — a +50 XP bonus. Steps count automatically: a check-in, a photo and a heart at the right places.'
   ),
-  'tour_title': ('🏆 Фото дня — турнир', '🏆 תמונת היום — טורניר', '🏆 Photo of the day — tournament'),
+  'tour_title': ('Фото дня — турнир', 'תמונת היום — טורניר', 'Photo of the day — tournament'),
   'tour_sub': (
     'Фото призраков города за сегодня. Больше 🔥 — выше место; лидер дня завтра получит +25 XP.',
     'תמונות הרוחות של העיר מהיום. יותר 🔥 — מקום גבוה יותר; מוביל היום יקבל מחר +25 XP.',
@@ -1549,12 +1572,12 @@ const Map<String, (String, String, String)> kStr = {
   'tour_leader': ('🏆 Фото дня · {ghost}', '🏆 תמונת היום · {ghost}', '🏆 Photo of the day · {ghost}'),
   'ai_task_done': ('Задание ИИ выполнено · +{xp} XP', 'משימת ה-AI הושלמה · +{xp} XP', 'AI task complete · +{xp} XP'),
   'daily_task_done': ('Задание дня выполнено · +20 XP', 'משימת היום הושלמה · +20 XP', 'Daily task complete · +20 XP'),
-  'ai_quest_label': ('🗺️ Квест дня: {t}', '🗺️ קווסט היום: {t}', '🗺️ Quest of the day: {t}'),
-  'ai_route_theme_label': ('🌙 Тема маршрута: {t}', '🌙 נושא המסלול: {t}', '🌙 Route theme: {t}'),
+  'ai_quest_label': ('Квест дня: {t}', 'קווסט היום: {t}', 'Quest of the day: {t}'),
+  'ai_route_theme_label': ('Тема маршрута: {t}', 'נושא המסלול: {t}', 'Route theme: {t}'),
   'done_btn': ('Готово ✓', 'בוצע ✓', 'Done ✓'),
   'loading': ('Загрузка…', 'טוען…', 'Loading…'),
-  'week_quest_label': ('🗓️ Квест недели: {t}', '🗓️ קווסט השבוע: {t}', '🗓️ Quest of the week: {t}'),
-  'daily_task_label': ('🎯 Задание дня', '🎯 משימת היום', '🎯 Daily task'),
+  'week_quest_label': ('Квест недели: {t}', 'קווסט השבוע: {t}', 'Quest of the week: {t}'),
+  'daily_task_label': ('Задание дня', 'משימת היום', 'Daily task'),
   'b_first_night': ('Первая ночь', 'הלילה הראשון', 'First Night'),
   'c_1_night': ('1 ночь в деле', 'לילה אחד בפנים', '1 night in'),
   'c_5_nights': ('5 ночей в деле', '5 לילות בפנים', '5 nights in'),
@@ -1582,7 +1605,7 @@ const Map<String, (String, String, String)> kStr = {
   'c_5_routes': ('5 маршрутов', '5 מסלולים', '5 routes'),
   't_king': ('Король ночей', 'מלך הלילות', 'King of Nights'),
   'c_10_nights': ('10 ночей в деле', '10 לילות בפנים', '10 nights in'),
-  'badges_title': ('🏆 Награды', '🏆 פרסים', '🏆 Rewards'),
+  'badges_title': ('Награды', 'פרסים', 'Rewards'),
   'badges_open_count': (
     'Награды · открыто {n} из {total}',
     'פרסים · נפתחו {n} מתוך {total}',
@@ -1595,7 +1618,7 @@ const Map<String, (String, String, String)> kStr = {
   'level_ladder': ('Лестница уровней', 'סולם הרמות', 'Level ladder'),
   'xp_left': ('осталось {n} XP', 'נותרו {n} XP', '{n} XP to go'),
   'xp_from': ('от {n} XP', 'מ-{n} XP', 'from {n} XP'),
-  'top_ghosts': ('👑 Топ призраков', '👑 טופ הרוחות', '👑 Top ghosts'),
+  'top_ghosts': ('Топ призраков', 'טופ הרוחות', 'Top ghosts'),
   'top_signin_title': (
     'Войди, чтобы видеть топ города',
     'היכנס כדי לראות את טופ העיר',
@@ -1614,8 +1637,8 @@ const Map<String, (String, String, String)> kStr = {
   ),
   'you_suffix': (' · ты', ' · אתה', ' · you'),
   'language': ('Язык', 'שפה', 'Language'),
-  'settings_btn': ('⚙️ Настройки', '⚙️ הגדרות', '⚙️ Settings'),
-  'creators_btn': ('👻 Создатели', '👻 היוצרים', '👻 Creators'),
+  'settings_btn': ('Настройки', 'הגדרות', 'Settings'),
+  'creators_btn': ('Создатели', 'היוצרים', 'Creators'),
   'creators_title': ('Создатели', 'היוצרים', 'Creators'),
   'main_creator': ('главный создатель', 'היוצר הראשי', 'main creator'),
   'app_tagline': (
@@ -1626,7 +1649,7 @@ const Map<String, (String, String, String)> kStr = {
   'we_on_air': ('Мы на связи', 'דברו איתנו', 'Get in touch'),
   'made_by_ghosts': ('Сделали призраки', 'נוצר על ידי רוחות', 'Made by ghosts'),
   'avatar_sheet_title': ('Аватар призрака', 'האווטאר של הרוח', "The ghost's avatar"),
-  'photo_from_gallery': ('📷 Фото из галереи', '📷 תמונה מהגלריה', '📷 Photo from gallery'),
+  'photo_from_gallery': ('Фото из галереи', 'תמונה מהגלריה', 'Photo from gallery'),
   'guest_photo_note': (
     'Гостю фото сохранится только на этом телефоне. Войди — и аватар будет жить в облаке.',
     'לאורח התמונה תישמר רק בטלפון הזה. היכנס — והאווטאר יחיה בענן.',
@@ -1662,10 +1685,10 @@ const Map<String, (String, String, String)> kStr = {
   ),
   'ghost_nick_label': ('Ник призрака', 'הכינוי של הרוח', "The ghost's nickname"),
   'map_mode_label': ('Режим на карте', 'מצב במפה', 'Map mode'),
-  'mode_visible': ('👁 Видимый', '👁 גלוי', '👁 Visible'),
-  'mode_ghost': ('👻 Призрак', '👻 רוח', '👻 Ghost'),
-  'mode_offline': ('🚫 Невидимка', '🚫 בלתי נראה', '🚫 Invisible'),
-  'signin_create': ('🚀 Войти / Создать аккаунт', '🚀 כניסה / יצירת חשבון', '🚀 Sign in / Create account'),
+  'mode_visible': ('Видимый', 'גלוי', 'Visible'),
+  'mode_ghost': ('Призрак', 'רוח', 'Ghost'),
+  'mode_offline': ('Невидимка', 'בלתי נראה', 'Invisible'),
+  'signin_create': ('Войти / Создать аккаунт', 'כניסה / יצירת חשבון', 'Sign in / Create account'),
   'account_why': (
     'Аккаунт нужен для друзей на карте, своего ника и синхронизации. Всё остальное работает и так.',
     'החשבון נדרש לחברים במפה, לכינוי שלך ולסנכרון. כל השאר עובד גם ככה.',
@@ -1675,13 +1698,13 @@ const Map<String, (String, String, String)> kStr = {
   'stat_places_opened': ('мест открыто', 'מקומות נפתחו', 'places opened'),
   'stat_routes_built': ('маршрута построено', 'מסלולים נבנו', 'routes built'),
   'stat_photos_city': ('фото в городе', 'תמונות בעיר', 'photos in the city'),
-  'max_level': ('Максимальный уровень 👑', 'הרמה המקסימלית 👑', 'Maximum level 👑'),
+  'max_level': ('Максимальный уровень', 'הרמה המקסימלית', 'Maximum level'),
   'to_level': (
     'До уровня {n} «{name}» осталось {xp} XP',
     'עד רמה {n} «{name}» נותרו {xp} XP',
     '{xp} XP left to level {n} “{name}”'
   ),
-  'streak_line': ('🔥 серия: {n} дн.', '🔥 רצף: {n} ימים', '🔥 streak: {n} days'),
+  'streak_line': ('серия: {n} дн.', 'רצף: {n} ימים', 'streak: {n} days'),
   'record': ('рекорд: {n}', 'שיא: {n}', 'record: {n}'),
   'wd_1': ('Пн', 'ב׳', 'Mon'),
   'wd_2': ('Вт', 'ג׳', 'Tue'),
@@ -1690,7 +1713,7 @@ const Map<String, (String, String, String)> kStr = {
   'wd_5': ('Пт', 'ו׳', 'Fri'),
   'wd_6': ('Сб', 'ש׳', 'Sat'),
   'wd_7': ('Вс', 'א׳', 'Sun'),
-  'favorites_label': ('❤️ Избранное', '❤️ מועדפים', '❤️ Favorites'),
+  'favorites_label': ('Избранное', 'מועדפים', 'Favorites'),
   'favorites_empty': (
     'Пока пусто — жми сердечко у мест',
     'ריק בינתיים — לחץ על הלב ליד מקומות',
@@ -1699,21 +1722,21 @@ const Map<String, (String, String, String)> kStr = {
   'sign_out': ('Выйти', 'התנתק', 'Sign out'),
   'ghost_card_label': ('Карточка призрака', 'כרטיס הרוח', 'Ghost card'),
   'level_line': ('Уровень {n} · {name} · {xp} XP', 'רמה {n} · {name} · {xp} XP', 'Level {n} · {name} · {xp} XP'),
-  'share_card': ('🔗 Поделиться карточкой', '🔗 שיתוף הכרטיס', '🔗 Share the card'),
+  'share_card': ('Поделиться карточкой', 'שיתוף הכרטיס', 'Share the card'),
   'share_card_text': (
     '👻 {nick} #{num} — TiradA anon\nУровень {n} · {name} · {xp} XP\nГород: {city} · живой радар движа 🔥',
     '👻 {nick} #{num} — TiradA anon\nרמה {n} · {name} · {xp} XP\nעיר: {city} · רדאר חי של הבילוי 🔥',
     '👻 {nick} #{num} — TiradA anon\nLevel {n} · {name} · {xp} XP\nCity: {city} · a live vibe radar 🔥'
   ),
   'haptics_label': ('Вибрация кнопок', 'רטט בכפתורים', 'Button vibration'),
-  'notif_section': ('🔔 Уведомления', '🔔 התראות', '🔔 Notifications'),
-  'notif_quest': ('🏙️ Квесты и задания дня', '🏙️ קווסטים ומשימות היום', '🏙️ Quests and daily tasks'),
-  'notif_friends': ('👻 Друзья в деле и онлайн', '👻 חברים בפנים ומחוברים', '👻 Friends in and online'),
-  'notif_votes': ('🗳️ Голосования', '🗳️ הצבעות', '🗳️ Votes'),
-  'notif_photos': ('📸 Фото и турнир дня', '📸 תמונות וטורניר היום', '📸 Photos and the daily tournament'),
-  'notif_streak': ('🔥 Серия под угрозой', '🔥 רצף בסכנה', '🔥 Streak at risk'),
-  'notif_rain': ('🌧️ Дождь в городе', '🌧️ גשם בעיר', '🌧️ Rain in the city'),
-  'notif_steps': ('👟 Цели шагов', '👟 יעדי צעדים', '👟 Step goals'),
+  'notif_section': ('Уведомления', 'התראות', 'Notifications'),
+  'notif_quest': ('Квесты и задания дня', 'קווסטים ומשימות היום', 'Quests and daily tasks'),
+  'notif_friends': ('Друзья в деле и онлайн', 'חברים בפנים ומחוברים', 'Friends in and online'),
+  'notif_votes': ('Голосования', 'הצבעות', 'Votes'),
+  'notif_photos': ('Фото и турнир дня', 'תמונות וטורניר היום', 'Photos and the daily tournament'),
+  'notif_streak': ('Серия под угрозой', 'רצף בסכנה', 'Streak at risk'),
+  'notif_rain': ('Дождь в городе', 'גשם בעיר', 'Rain in the city'),
+  'notif_steps': ('Цели шагов', 'יעדי צעדים', 'Step goals'),
   'in_deal_btn': ('Ты в деле', 'אתה בפנים', "You're in"),
   // __MORE_KEYS__
 };
@@ -1750,9 +1773,21 @@ Widget hairline({double opacity = 1}) => Container(
       ),
     );
 
-Widget sectionLabel(String text, {Color color = T.muted}) => Padding(
+Widget sectionLabel(String text, {Color color = T.muted, TIGlyph? glyph}) =>
+    Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Text(text.toUpperCase(), style: T.micro(color: color)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (glyph != null) ...[
+            TiradIcon(glyph, size: 13, color: color),
+            const SizedBox(width: 6),
+          ],
+          Flexible(
+            child: Text(text.toUpperCase(), style: T.micro(color: color)),
+          ),
+        ],
+      ),
     );
 
 /* Dark bg with dark-red radial glows in the corners + faint radar rings
@@ -1841,7 +1876,16 @@ class FireButton extends StatefulWidget {
   final String text;
   final VoidCallback? onPressed;
   final bool small;
-  const FireButton({super.key, required this.text, required this.onPressed, this.small = false});
+  /* v2.0.12: optional TI glyph before the label (icon roles are
+     vector now, never emoji). */
+  final TIGlyph? icon;
+  const FireButton({
+    super.key,
+    required this.text,
+    required this.onPressed,
+    this.small = false,
+    this.icon,
+  });
 
   @override
   State<FireButton> createState() => _FireButtonState();
@@ -1898,16 +1942,31 @@ class _FireButtonState extends State<FireButton>
                       horizontal: widget.small ? 16 : 22,
                     ),
                     child: Center(
-                      child: Text(
-                        widget.text,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontFamily: 'Montserrat',
-                          color: Colors.white,
-                          fontSize: widget.small ? 13.5 : 16,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.4,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (widget.icon != null) ...[
+                            TiradIcon(
+                              widget.icon!,
+                              size: widget.small ? 16 : 19,
+                              color: Colors.white,
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Flexible(
+                            child: Text(
+                              widget.text,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontFamily: 'Montserrat',
+                                color: Colors.white,
+                                fontSize: widget.small ? 13.5 : 16,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.4,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -1960,7 +2019,15 @@ class GhostButton extends StatelessWidget {
   final String text;
   final VoidCallback? onPressed;
   final bool small;
-  const GhostButton({super.key, required this.text, required this.onPressed, this.small = false});
+  /* v2.0.12: optional TI glyph before the label. */
+  final TIGlyph? icon;
+  const GhostButton({
+    super.key,
+    required this.text,
+    required this.onPressed,
+    this.small = false,
+    this.icon,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1984,16 +2051,32 @@ class GhostButton extends StatelessWidget {
               vertical: small ? 10 : 15,
               horizontal: small ? 16 : 22,
             ),
-            child: Text(
-              text,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontFamily: 'Montserrat',
-                color: T.text,
-                fontSize: small ? 13.5 : 15.5,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.4,
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (icon != null) ...[
+                  TiradIcon(
+                    icon!,
+                    size: small ? 16 : 19,
+                    color: T.iconGray,
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                Flexible(
+                  child: Text(
+                    text,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      color: T.text,
+                      fontSize: small ? 13.5 : 15.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -2009,18 +2092,87 @@ class PressButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final bool primary;
   final bool small;
+  final TIGlyph? icon;
   const PressButton({
     super.key,
     required this.text,
     required this.onPressed,
     this.primary = true,
     this.small = false,
+    this.icon,
   });
 
   @override
   Widget build(BuildContext context) => primary
-      ? FireButton(text: text, onPressed: onPressed, small: small)
-      : GhostButton(text: text, onPressed: onPressed, small: small);
+      ? FireButton(text: text, onPressed: onPressed, small: small, icon: icon)
+      : GhostButton(text: text, onPressed: onPressed, small: small, icon: icon);
+}
+
+/* Danger action in the app's own button language (v2.0.12): the
+   GhostButton shell — dark glass, red border, soft red shadow — with
+   a salmon TI glyph + salmon label, so a destructive action reads
+   instantly without leaving the design system. */
+class DangerButton extends StatelessWidget {
+  final String text;
+  final VoidCallback? onPressed;
+  final bool small;
+  final TIGlyph icon;
+  const DangerButton({
+    super.key,
+    required this.text,
+    required this.onPressed,
+    this.small = false,
+    this.icon = TIGlyph.trash,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(small ? 14 : T.rButton);
+    return Opacity(
+      opacity: onPressed != null ? 1 : 0.4,
+      child: Pressable(
+        onTap: onPressed,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: T.surface,
+            gradient: T.glassGrad,
+            borderRadius: radius,
+            border: Border.all(color: T.fire.withOpacity(0.65), width: 1.3),
+            boxShadow: [
+              BoxShadow(color: T.fire.withOpacity(0.16), blurRadius: 14),
+            ],
+          ),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              vertical: small ? 10 : 15,
+              horizontal: small ? 16 : 22,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TiradIcon(icon, size: small ? 16 : 19, color: T.salmon),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    text,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      color: T.salmon,
+                      fontSize: small ? 13.5 : 15.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /* Small pill action (chips that behave like buttons). */
@@ -2028,7 +2180,15 @@ class PillButton extends StatelessWidget {
   final String text;
   final bool selected;
   final VoidCallback onTap;
-  const PillButton({super.key, required this.text, required this.selected, required this.onTap});
+  /* v2.0.12: optional TI glyph before the label (type filter chips). */
+  final TIGlyph? icon;
+  const PillButton({
+    super.key,
+    required this.text,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2045,14 +2205,28 @@ class PillButton extends StatelessWidget {
           border: Border.all(color: selected ? Colors.transparent : T.stroke),
           boxShadow: selected ? T.glowRed : null,
         ),
-        child: Text(
-          text,
-          style: TextStyle(
-            fontFamily: 'Inter',
-            fontWeight: FontWeight.w700,
-            fontSize: 13,
-            color: selected ? Colors.white : T.text,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              TiradIcon(
+                icon!,
+                size: 15,
+                color: selected ? Colors.white : T.iconGray,
+                filled: selected,
+              ),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              text,
+              style: TextStyle(
+                fontFamily: 'Inter',
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                color: selected ? Colors.white : T.text,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2116,7 +2290,7 @@ class VibeBadge extends StatelessWidget {
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('🔥', style: TextStyle(fontSize: 11, color: c)),
+            TiradIcon(TIGlyph.flame, size: 12, color: c, filled: vibe >= 70),
             const SizedBox(width: 2),
             AnimatedNumber(
               value: vibe,
@@ -2514,98 +2688,840 @@ class _GaugePainter extends CustomPainter {
   bool shouldRepaint(_GaugePainter old) => old.t != t || old.color != color;
 }
 
-/* Custom geometric nav icons — one 2px stroke language, drawn, not emoji. */
-enum NavGlyph { pin, flame, route, ghost }
 
-class NavIcon extends StatelessWidget {
-  final NavGlyph glyph;
+/* ================== TI ICON SET (v2.0.12) ==================
+   The owner's design spec, verbatim core: "Set of minimalist
+   emoji-style icons, monoline outline style, thick rounded stroke,
+   rounded line caps and joins, soft gray color (#9a9aa0), no fill,
+   simple geometric shapes. One active icon in filled solid white
+   glyph on a glowing orange-to-red gradient circle (#e8301e to
+   #ff6a1a) with soft neon glow and subtle radar rings."
+
+   Every glyph is a vector drawn on a 24-unit grid with ONE stroke
+   width (2.1 units), round caps/joins, stroke-only in T.iconGray.
+   [TIPaint.paint] draws onto any canvas (widgets AND map-marker
+   bitmaps); [TiradIcon] is the widget form; [ActiveIconBadge] is
+   the active-state form (white filled glyph on the spec gradient).
+   This set REPLACES emoji in every icon role in the app; emoji
+   inside text content (tasks, snackbars, share text) is untouched. */
+
+enum TIGlyph {
+  flame, ghost, mapPin, routePath, heart, star, bolt, skull,
+  wineGlass, coffeeCup, tree, utensils, umbrella, musicNote, ball,
+  eye, bag, landmark, camera, photo, paperPlane, gear, bell, check,
+  x, chevronBack, plus, minus, navArrow, compass, cloud, sun, moon,
+  cloudRain, snow, fog, storm, phone, globe, trash, users, voteBox,
+  target, calendar, link, share, lock, trophy, dice, walk, car, bus,
+  pencil, chat,
+}
+
+/* Place type → TI glyph (map pins, chips, cards — replaces the old
+   kTypeEmoji/kPinEmoji emoji maps in every icon role). */
+TIGlyph typeGlyph(String type) {
+  switch (type) {
+    case 'restaurant':
+      return TIGlyph.utensils;
+    case 'cafe':
+      return TIGlyph.coffeeCup;
+    case 'bar':
+      return TIGlyph.wineGlass;
+    case 'park':
+      return TIGlyph.tree;
+    case 'beach':
+      return TIGlyph.umbrella;
+    case 'culture':
+      return TIGlyph.landmark;
+    case 'sport':
+      return TIGlyph.ball;
+    case 'club':
+      return TIGlyph.musicNote;
+    case 'view':
+      return TIGlyph.eye;
+    case 'market':
+      return TIGlyph.bag;
+    default:
+      return TIGlyph.mapPin;
+  }
+}
+
+class TIPaint {
+  TIPaint._();
+
+  /* Draws [g] inside [rect] on any canvas. [filled] renders the
+     solid variant (active states, badge glyphs, rating stars). */
+  static void paint(
+    Canvas canvas,
+    TIGlyph g,
+    Rect rect,
+    Color color, {
+    bool filled = false,
+    double strokeScale = 1,
+  }) {
+    final s = rect.width / 24;
+    canvas.save();
+    canvas.translate(rect.left, rect.top);
+    canvas.scale(s);
+    final stroke = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.1 * strokeScale
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final fill = Paint()..color = color;
+    final main = filled ? fill : stroke;
+    Offset o(double x, double y) => Offset(x, y);
+
+    void line(double x1, double y1, double x2, double y2, [Paint? p]) =>
+        canvas.drawLine(o(x1, y1), o(x2, y2), p ?? stroke);
+    void circle(double x, double y, double r, [Paint? p]) =>
+        canvas.drawCircle(o(x, y), r, p ?? stroke);
+    void dot(double x, double y, [double r = 1.35]) =>
+        canvas.drawCircle(o(x, y), r, fill);
+
+    switch (g) {
+      case TIGlyph.flame:
+        final p = Path()
+          ..moveTo(12, 2.8)
+          ..cubicTo(13.4, 6, 17.8, 8.6, 17.8, 13.4)
+          ..cubicTo(17.8, 17.6, 15.2, 20.6, 12, 20.6)
+          ..cubicTo(8.8, 20.6, 6.2, 17.6, 6.2, 13.4)
+          ..cubicTo(6.2, 10.4, 7.6, 8.4, 9, 6.6)
+          ..cubicTo(9.4, 8.4, 10.2, 9.4, 11.2, 10)
+          ..cubicTo(10.6, 7.2, 11, 4.8, 12, 2.8);
+        canvas.drawPath(p, main);
+      case TIGlyph.ghost:
+        final p = Path()
+          ..moveTo(5.5, 20.5)
+          ..lineTo(5.5, 11)
+          ..cubicTo(5.5, 6.6, 8.4, 3.5, 12, 3.5)
+          ..cubicTo(15.6, 3.5, 18.5, 6.6, 18.5, 11)
+          ..lineTo(18.5, 20.5)
+          ..lineTo(15.3, 17.8)
+          ..lineTo(12, 20.5)
+          ..lineTo(8.7, 17.8)
+          ..close();
+        canvas.drawPath(p, main);
+        if (!filled) {
+          dot(9.6, 10.5, 1.3);
+          dot(14.4, 10.5, 1.3);
+        }
+      case TIGlyph.mapPin:
+        final p = Path()
+          ..moveTo(12, 21.5)
+          ..cubicTo(12, 21.5, 5, 14.8, 5, 10.2)
+          ..cubicTo(5, 6.2, 8.1, 3, 12, 3)
+          ..cubicTo(15.9, 3, 19, 6.2, 19, 10.2)
+          ..cubicTo(19, 14.8, 12, 21.5, 12, 21.5);
+        canvas.drawPath(p, main);
+        // Filled (badge) form: the hole is knocked out in bg colour,
+        // like the old nav pin — reads as the pin's centre dot.
+        circle(12, 10.2, 3, filled ? (Paint()..color = T.bg) : stroke);
+      case TIGlyph.routePath:
+        circle(6, 18.5, 3);
+        circle(18, 5.5, 3);
+        final p = Path()
+          ..moveTo(6, 15.5)
+          ..lineTo(6, 11)
+          ..cubicTo(6, 7.5, 18, 10.5, 18, 8.5);
+        canvas.drawPath(p, stroke);
+        dot(6, 18.5, 1.1);
+        dot(18, 5.5, 1.1);
+      case TIGlyph.heart:
+        final p = Path()
+          ..moveTo(12, 20.3)
+          ..cubicTo(7.2, 16.6, 3.6, 13.3, 3.6, 9.4)
+          ..cubicTo(3.6, 6.5, 5.8, 4.6, 8.3, 4.6)
+          ..cubicTo(10, 4.6, 11.4, 5.5, 12, 6.7)
+          ..cubicTo(12.6, 5.5, 14, 4.6, 15.7, 4.6)
+          ..cubicTo(18.2, 4.6, 20.4, 6.5, 20.4, 9.4)
+          ..cubicTo(20.4, 13.3, 16.8, 16.6, 12, 20.3)
+          ..close();
+        canvas.drawPath(p, main);
+      case TIGlyph.star:
+        final p = Path();
+        for (var i = 0; i < 10; i++) {
+          final ang = -math.pi / 2 + i * math.pi / 5;
+          final r = i.isEven ? 9.2 : 3.9;
+          final x = 12 + r * math.cos(ang);
+          final y = 12 + r * math.sin(ang);
+          if (i == 0) {
+            p.moveTo(x, y);
+          } else {
+            p.lineTo(x, y);
+          }
+        }
+        p.close();
+        canvas.drawPath(p, main);
+      case TIGlyph.bolt:
+        final p = Path()
+          ..moveTo(13.2, 2.6)
+          ..lineTo(5.6, 13.4)
+          ..lineTo(10.9, 13.4)
+          ..lineTo(9.7, 21.4)
+          ..lineTo(18.4, 10.2)
+          ..lineTo(12.9, 10.2)
+          ..close();
+        canvas.drawPath(p, main);
+      case TIGlyph.skull:
+        final p = Path()
+          ..moveTo(12, 3.2)
+          ..cubicTo(7.6, 3.2, 4.8, 6.7, 4.8, 11)
+          ..cubicTo(4.8, 13.7, 5.9, 15.3, 7.2, 16.2)
+          ..lineTo(7.2, 19.8)
+          ..lineTo(16.8, 19.8)
+          ..lineTo(16.8, 16.2)
+          ..cubicTo(18.1, 15.3, 19.2, 13.7, 19.2, 11)
+          ..cubicTo(19.2, 6.7, 16.4, 3.2, 12, 3.2)
+          ..close();
+        canvas.drawPath(p, main);
+        if (!filled) {
+          dot(9.1, 11.2, 1.5);
+          dot(14.9, 11.2, 1.5);
+          line(10.4, 16.6, 10.4, 19.8);
+          line(13.6, 16.6, 13.6, 19.8);
+        }
+      case TIGlyph.wineGlass:
+        final p = Path()
+          ..moveTo(6.2, 3.2)
+          ..lineTo(17.8, 3.2)
+          ..cubicTo(17.8, 8.2, 15.4, 11.2, 12, 11.2)
+          ..cubicTo(8.6, 11.2, 6.2, 8.2, 6.2, 3.2)
+          ..close();
+        canvas.drawPath(p, main);
+        line(12, 11.2, 12, 18.6);
+        line(8.4, 20.6, 15.6, 20.6);
+      case TIGlyph.coffeeCup:
+        final p = Path()
+          ..moveTo(5.4, 9.6)
+          ..lineTo(16.6, 9.6)
+          ..lineTo(15.9, 15.8)
+          ..cubicTo(15.7, 17.7, 14.5, 18.9, 12.7, 18.9)
+          ..lineTo(9.3, 18.9)
+          ..cubicTo(7.5, 18.9, 6.3, 17.7, 6.1, 15.8)
+          ..close();
+        canvas.drawPath(p, main);
+        final h = Path()
+          ..moveTo(16.6, 10.8)
+          ..cubicTo(19.4, 10.8, 19.4, 14.8, 16.2, 14.9);
+        canvas.drawPath(h, stroke);
+        line(4.4, 21.2, 19.6, 21.2);
+        line(9.2, 3.4, 9.2, 5.6);
+        line(13.4, 3.4, 13.4, 5.6);
+      case TIGlyph.tree:
+        circle(12, 8.6, 4.8);
+        line(12, 13.4, 12, 20.4);
+        line(12, 16.6, 9.4, 14.6);
+        line(8.2, 20.6, 15.8, 20.6);
+      case TIGlyph.utensils:
+        final f = Path()
+          ..moveTo(5.2, 3.6)
+          ..lineTo(5.2, 7.6)
+          ..cubicTo(5.2, 9.4, 6, 10.2, 7, 10.2)
+          ..cubicTo(8, 10.2, 8.8, 9.4, 8.8, 7.6)
+          ..lineTo(8.8, 3.6);
+        canvas.drawPath(f, stroke);
+        line(7, 10.2, 7, 20.4);
+        final k = Path()
+          ..moveTo(16.8, 20.4)
+          ..lineTo(16.8, 3.8)
+          ..cubicTo(18.6, 5.8, 19.2, 8.2, 19.2, 10.6)
+          ..cubicTo(19.2, 12.8, 18.3, 14, 16.8, 14.2);
+        canvas.drawPath(k, main);
+      case TIGlyph.umbrella:
+        final p = Path()
+          ..moveTo(3.8, 11.2)
+          ..cubicTo(3.8, 6.4, 7.4, 3.8, 12, 3.8)
+          ..cubicTo(16.6, 3.8, 20.2, 6.4, 20.2, 11.2);
+        canvas.drawPath(p, main);
+        final sc = Path()
+          ..moveTo(3.8, 11.2)
+          ..cubicTo(5.2, 9.8, 6.8, 9.8, 8.2, 11.2)
+          ..cubicTo(9.6, 9.8, 10.6, 9.8, 12, 11.2)
+          ..cubicTo(13.4, 9.8, 14.4, 9.8, 15.8, 11.2)
+          ..cubicTo(17.2, 9.8, 18.8, 9.8, 20.2, 11.2);
+        canvas.drawPath(sc, stroke);
+        line(12, 11.2, 12, 18.2);
+        final hk = Path()
+          ..moveTo(12, 18.2)
+          ..cubicTo(12, 20.4, 15.4, 20.4, 15.4, 18);
+        canvas.drawPath(hk, stroke);
+      case TIGlyph.musicNote:
+        circle(8.1, 17.2, 2.5);
+        circle(17.1, 15.2, 2.5);
+        line(10.6, 17.2, 10.6, 5.4);
+        line(19.6, 15.2, 19.6, 3.6);
+        line(10.6, 5.4, 19.6, 3.6);
+      case TIGlyph.ball:
+        circle(12, 12, 8.6);
+        final pent = Path();
+        for (var i = 0; i < 5; i++) {
+          final ang = -math.pi / 2 + i * 2 * math.pi / 5;
+          final x = 12 + 3.4 * math.cos(ang);
+          final y = 12 + 3.4 * math.sin(ang);
+          if (i == 0) {
+            pent.moveTo(x, y);
+          } else {
+            pent.lineTo(x, y);
+          }
+        }
+        pent.close();
+        canvas.drawPath(pent, stroke);
+        for (var i = 0; i < 5; i++) {
+          final ang = -math.pi / 2 + i * 2 * math.pi / 5;
+          line(12 + 3.4 * math.cos(ang), 12 + 3.4 * math.sin(ang),
+              12 + 8.2 * math.cos(ang), 12 + 8.2 * math.sin(ang));
+        }
+      case TIGlyph.eye:
+        final p = Path()
+          ..moveTo(2.6, 12)
+          ..cubicTo(5.6, 6.6, 8.9, 4.6, 12, 4.6)
+          ..cubicTo(15.1, 4.6, 18.4, 6.6, 21.4, 12)
+          ..cubicTo(18.4, 17.4, 15.1, 19.4, 12, 19.4)
+          ..cubicTo(8.9, 19.4, 5.6, 17.4, 2.6, 12)
+          ..close();
+        canvas.drawPath(p, main);
+        circle(12, 12, 3.1);
+      case TIGlyph.bag:
+        final p = Path()
+          ..moveTo(5.9, 8.2)
+          ..lineTo(18.1, 8.2)
+          ..lineTo(17.3, 19.6)
+          ..cubicTo(17.2, 20.5, 16.6, 21, 15.8, 21)
+          ..lineTo(8.2, 21)
+          ..cubicTo(7.4, 21, 6.8, 20.5, 6.7, 19.6)
+          ..close();
+        canvas.drawPath(p, main);
+        final h = Path()
+          ..moveTo(9.2, 10.4)
+          ..lineTo(9.2, 6.8)
+          ..cubicTo(9.2, 5, 10.4, 3.8, 12, 3.8)
+          ..cubicTo(13.6, 3.8, 14.8, 5, 14.8, 6.8)
+          ..lineTo(14.8, 10.4);
+        canvas.drawPath(h, stroke);
+      case TIGlyph.landmark:
+        final p = Path()
+          ..moveTo(4, 9.4)
+          ..lineTo(12, 4.2)
+          ..lineTo(20, 9.4);
+        canvas.drawPath(p, main);
+        line(6.4, 11.6, 6.4, 17.4);
+        line(10, 11.6, 10, 17.4);
+        line(14, 11.6, 14, 17.4);
+        line(17.6, 11.6, 17.6, 17.4);
+        line(4, 19.8, 20, 19.8);
+      case TIGlyph.camera:
+        final r = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(3.6, 7.2, 16.8, 12.6), const Radius.circular(2.6));
+        canvas.drawRRect(r, main);
+        circle(12, 13.5, 3.3);
+        final vf = Path()
+          ..moveTo(9, 7.2)
+          ..lineTo(10.4, 4.6)
+          ..lineTo(13.6, 4.6)
+          ..lineTo(15, 7.2);
+        canvas.drawPath(vf, stroke);
+      case TIGlyph.photo:
+        final r = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(4, 5, 16, 14.4), const Radius.circular(2.2));
+        canvas.drawRRect(r, main);
+        circle(9, 9.8, 1.6);
+        final m = Path()
+          ..moveTo(4.6, 17.6)
+          ..lineTo(10, 12.8)
+          ..lineTo(13.4, 15.6)
+          ..lineTo(15.8, 13.6)
+          ..lineTo(19.4, 17.2);
+        canvas.drawPath(m, stroke);
+      case TIGlyph.paperPlane:
+        final p = Path()
+          ..moveTo(21.3, 2.9)
+          ..lineTo(3.9, 10.7)
+          ..lineTo(10.4, 13.4)
+          ..lineTo(13.1, 20.1)
+          ..close();
+        canvas.drawPath(p, main);
+        line(10.4, 13.4, 21.3, 2.9);
+      case TIGlyph.gear:
+        for (var i = 0; i < 8; i++) {
+          canvas.save();
+          canvas.translate(12, 12);
+          canvas.rotate(i * math.pi / 4);
+          canvas.drawLine(
+            const Offset(0, -5.4),
+            const Offset(0, -8.4),
+            Paint()
+              ..color = color
+              ..strokeWidth = 3.1 * strokeScale
+              ..strokeCap = StrokeCap.round,
+          );
+          canvas.restore();
+        }
+        circle(12, 12, 5.2);
+        circle(12, 12, 1.9);
+      case TIGlyph.bell:
+        final p = Path()
+          ..moveTo(12, 4.2)
+          ..cubicTo(8.9, 4.2, 6.6, 6.7, 6.6, 10.4)
+          ..cubicTo(6.6, 13.9, 5.9, 15.7, 4.9, 16.9)
+          ..lineTo(19.1, 16.9)
+          ..cubicTo(18.1, 15.7, 17.4, 13.9, 17.4, 10.4)
+          ..cubicTo(17.4, 6.7, 15.1, 4.2, 12, 4.2)
+          ..close();
+        canvas.drawPath(p, main);
+        final cl = Path()
+          ..moveTo(10.1, 19.6)
+          ..cubicTo(10.7, 20.8, 13.3, 20.8, 13.9, 19.6);
+        canvas.drawPath(cl, stroke);
+      case TIGlyph.check:
+        final p = Path()
+          ..moveTo(4.6, 12.6)
+          ..lineTo(9.9, 17.9)
+          ..lineTo(19.4, 6.4);
+        canvas.drawPath(p, filled
+            ? (Paint()
+              ..color = color
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 3 * strokeScale
+              ..strokeCap = StrokeCap.round
+              ..strokeJoin = StrokeJoin.round)
+            : stroke);
+      case TIGlyph.x:
+        line(6, 6, 18, 18);
+        line(18, 6, 6, 18);
+      case TIGlyph.chevronBack:
+        final p = Path()
+          ..moveTo(14.6, 5.4)
+          ..lineTo(7.9, 12)
+          ..lineTo(14.6, 18.6);
+        canvas.drawPath(p, stroke);
+      case TIGlyph.plus:
+        line(12, 5, 12, 19);
+        line(5, 12, 19, 12);
+      case TIGlyph.minus:
+        line(5, 12, 19, 12);
+      case TIGlyph.navArrow:
+        final p = Path()
+          ..moveTo(12, 2.8)
+          ..lineTo(19.2, 20.4)
+          ..lineTo(12, 16.7)
+          ..lineTo(4.8, 20.4)
+          ..close();
+        canvas.drawPath(p, main);
+      case TIGlyph.compass:
+        circle(12, 12, 8.6);
+        final n = Path()
+          ..moveTo(15.6, 8.4)
+          ..lineTo(13.1, 13.1)
+          ..lineTo(8.4, 15.6)
+          ..lineTo(10.9, 10.9)
+          ..close();
+        canvas.drawPath(n, main);
+      case TIGlyph.cloud:
+        final p = Path()
+          ..moveTo(7, 18.6)
+          ..lineTo(17, 18.6)
+          ..cubicTo(19.8, 18.6, 21.2, 16.7, 21.2, 14.4)
+          ..cubicTo(21.2, 12.3, 19.6, 10.6, 17.5, 10.3)
+          ..cubicTo(16.9, 7.1, 14.5, 4.9, 11.4, 4.9)
+          ..cubicTo(8.4, 4.9, 5.9, 7.4, 5.9, 10.4)
+          ..cubicTo(4.3, 11, 2.8, 12.7, 2.8, 14.6)
+          ..cubicTo(2.8, 16.8, 4.7, 18.6, 7, 18.6)
+          ..close();
+        canvas.drawPath(p, main);
+      case TIGlyph.sun:
+        circle(12, 12, 4.1);
+        for (var i = 0; i < 8; i++) {
+          final a = i * math.pi / 4;
+          line(12 + 6.3 * math.cos(a), 12 + 6.3 * math.sin(a),
+              12 + 8.6 * math.cos(a), 12 + 8.6 * math.sin(a));
+        }
+      case TIGlyph.moon:
+        final p = Path()
+          ..moveTo(20.4, 14.6)
+          ..cubicTo(19.1, 17.9, 16, 20.1, 12.4, 20.1)
+          ..cubicTo(7.8, 20.1, 4, 16.3, 4, 11.7)
+          ..cubicTo(4, 8.1, 6.1, 5.2, 9.2, 4)
+          ..cubicTo(8.4, 5.9, 7.9, 8, 7.9, 10.4)
+          ..cubicTo(7.9, 15, 11.7, 18.8, 16.3, 18.8)
+          ..cubicTo(17.9, 18.8, 19.4, 18.1, 20.4, 14.6)
+          ..close();
+        canvas.drawPath(p, main);
+      case TIGlyph.cloudRain:
+        final p = Path()
+          ..moveTo(7, 15.4)
+          ..lineTo(17, 15.4)
+          ..cubicTo(19.4, 15.4, 20.6, 13.9, 20.6, 12)
+          ..cubicTo(20.6, 10.2, 19.3, 8.8, 17.5, 8.5)
+          ..cubicTo(17, 5.9, 14.9, 4.2, 12.2, 4.2)
+          ..cubicTo(9.4, 4.2, 7.2, 6.3, 7.2, 9)
+          ..cubicTo(5.8, 9.5, 4.6, 10.9, 4.6, 12.4)
+          ..cubicTo(4.6, 14.1, 5.6, 15.4, 7, 15.4)
+          ..close();
+        canvas.drawPath(p, main);
+        line(8.6, 18, 7.8, 20.4);
+        line(12.4, 18, 11.6, 20.4);
+        line(16.2, 18, 15.4, 20.4);
+      case TIGlyph.snow:
+        final p = Path()
+          ..moveTo(7, 15.4)
+          ..lineTo(17, 15.4)
+          ..cubicTo(19.4, 15.4, 20.6, 13.9, 20.6, 12)
+          ..cubicTo(20.6, 10.2, 19.3, 8.8, 17.5, 8.5)
+          ..cubicTo(17, 5.9, 14.9, 4.2, 12.2, 4.2)
+          ..cubicTo(9.4, 4.2, 7.2, 6.3, 7.2, 9)
+          ..cubicTo(5.8, 9.5, 4.6, 10.9, 4.6, 12.4)
+          ..cubicTo(4.6, 14.1, 5.6, 15.4, 7, 15.4)
+          ..close();
+        canvas.drawPath(p, main);
+        dot(8.6, 18.6, 1.15);
+        dot(12.4, 20, 1.15);
+        dot(16.2, 18.6, 1.15);
+      case TIGlyph.fog:
+        final p = Path()
+          ..moveTo(6.4, 10.4)
+          ..cubicTo(6.8, 7.4, 9, 5.4, 11.8, 5.4)
+          ..cubicTo(14.3, 5.4, 16.3, 7.2, 16.8, 9.6)
+          ..cubicTo(18.6, 9.9, 19.8, 11.4, 19.8, 13.2);
+        canvas.drawPath(p, main);
+        line(5.4, 13.4, 14.6, 13.4);
+        line(4.2, 17, 19.8, 17);
+        line(6.4, 20.4, 17.6, 20.4);
+      case TIGlyph.storm:
+        final p = Path()
+          ..moveTo(7, 14.6)
+          ..lineTo(16.4, 14.6)
+          ..cubicTo(18.8, 14.6, 20, 13.1, 20, 11.2)
+          ..cubicTo(20, 9.4, 18.7, 8, 16.9, 7.7)
+          ..cubicTo(16.4, 5.1, 14.3, 3.4, 11.6, 3.4)
+          ..cubicTo(8.8, 3.4, 6.6, 5.5, 6.6, 8.2)
+          ..cubicTo(5.2, 8.5, 4, 9.9, 4, 11.6)
+          ..cubicTo(4, 13.3, 5.2, 14.6, 7, 14.6)
+          ..close();
+        canvas.drawPath(p, main);
+        final b = Path()
+          ..moveTo(12.6, 15.6)
+          ..lineTo(9.8, 19.4)
+          ..lineTo(11.8, 19.4)
+          ..lineTo(11.2, 21.8)
+          ..lineTo(14.4, 17.8)
+          ..lineTo(12.4, 17.8)
+          ..close();
+        canvas.drawPath(b, fill);
+      case TIGlyph.phone:
+        final r = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(8.4, 3.4, 7.2, 17.2), const Radius.circular(2.2));
+        canvas.drawRRect(r, main);
+        line(11, 17.4, 13, 17.4);
+        line(4.9, 9.6, 4.9, 14.4);
+        line(19.1, 9.6, 19.1, 14.4);
+      case TIGlyph.globe:
+        circle(12, 12, 8.6);
+        final e = Path()
+          ..addOval(const Rect.fromLTWH(8.6, 3.4, 6.8, 17.2));
+        canvas.drawPath(e, stroke);
+        line(3.4, 12, 20.6, 12);
+      case TIGlyph.trash:
+        line(4.4, 6.4, 19.6, 6.4);
+        final hd = Path()
+          ..moveTo(9.4, 6.4)
+          ..lineTo(9.4, 4.9)
+          ..cubicTo(9.4, 4.1, 10, 3.6, 10.8, 3.6)
+          ..lineTo(13.2, 3.6)
+          ..cubicTo(14, 3.6, 14.6, 4.1, 14.6, 4.9)
+          ..lineTo(14.6, 6.4);
+        canvas.drawPath(hd, stroke);
+        final b = Path()
+          ..moveTo(6.4, 6.4)
+          ..lineTo(7.5, 19.2)
+          ..cubicTo(7.6, 20.2, 8.3, 20.7, 9.3, 20.7)
+          ..lineTo(14.7, 20.7)
+          ..cubicTo(15.7, 20.7, 16.4, 20.2, 16.5, 19.2)
+          ..lineTo(17.6, 6.4);
+        canvas.drawPath(b, main);
+        line(10.2, 10.4, 10.5, 16.8);
+        line(13.8, 10.4, 13.5, 16.8);
+      case TIGlyph.users:
+        circle(9.2, 9, 3.4);
+        final s1 = Path()
+          ..moveTo(3.4, 19.6)
+          ..cubicTo(3.4, 15.9, 5.9, 14.1, 9.2, 14.1)
+          ..cubicTo(12.5, 14.1, 15, 15.9, 15, 19.6);
+        canvas.drawPath(s1, main);
+        circle(17.2, 10, 2.6);
+        final s2 = Path()
+          ..moveTo(16.2, 14.4)
+          ..cubicTo(18.9, 14.8, 20.6, 16.6, 20.6, 19.6);
+        canvas.drawPath(s2, stroke);
+      case TIGlyph.voteBox:
+        final paper = Path()
+          ..moveTo(8.4, 10.6)
+          ..lineTo(8.4, 4.4)
+          ..lineTo(15.6, 4.4)
+          ..lineTo(15.6, 10.6);
+        canvas.drawPath(paper, main);
+        final ck = Path()
+          ..moveTo(10.2, 7.4)
+          ..lineTo(11.7, 8.9)
+          ..lineTo(14, 6.2);
+        canvas.drawPath(ck, stroke);
+        final bx = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(3.8, 10.6, 16.4, 9.6), const Radius.circular(1.8));
+        canvas.drawRRect(bx, main);
+      case TIGlyph.target:
+        circle(12, 12, 8.4);
+        circle(12, 12, 4.9);
+        dot(12, 12, 1.5);
+      case TIGlyph.calendar:
+        final r = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(4, 5.6, 16, 14.8), const Radius.circular(2.2));
+        canvas.drawRRect(r, main);
+        line(4, 10.2, 20, 10.2);
+        line(8.4, 3.4, 8.4, 7.6);
+        line(15.6, 3.4, 15.6, 7.6);
+        dot(8.6, 14, 1.05);
+        dot(12, 14, 1.05);
+        dot(15.4, 14, 1.05);
+      case TIGlyph.link:
+        canvas.save();
+        canvas.translate(12, 12);
+        canvas.rotate(math.pi / 4);
+        final r1 = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(-8.6, -3.4, 10, 6.8), const Radius.circular(3.4));
+        canvas.drawRRect(r1, stroke);
+        final r2 = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(-1.4, -3.4, 10, 6.8), const Radius.circular(3.4));
+        canvas.drawRRect(r2, stroke);
+        canvas.restore();
+      case TIGlyph.share:
+        circle(6, 12, 2.7);
+        circle(17.6, 5.4, 2.7);
+        circle(17.6, 18.6, 2.7);
+        line(8.4, 10.7, 15.2, 6.7);
+        line(8.4, 13.3, 15.2, 17.3);
+      case TIGlyph.lock:
+        final r = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(5.4, 10.6, 13.2, 9.8), const Radius.circular(2.2));
+        canvas.drawRRect(r, main);
+        final sh = Path()
+          ..moveTo(8.4, 10.6)
+          ..lineTo(8.4, 7.9)
+          ..cubicTo(8.4, 5.9, 10, 4.4, 12, 4.4)
+          ..cubicTo(14, 4.4, 15.6, 5.9, 15.6, 7.9)
+          ..lineTo(15.6, 10.6);
+        canvas.drawPath(sh, stroke);
+        dot(12, 15.4, 1.4);
+      case TIGlyph.trophy:
+        final cup = Path()
+          ..moveTo(7, 4.4)
+          ..lineTo(17, 4.4)
+          ..lineTo(17, 9.4)
+          ..cubicTo(17, 12.9, 14.8, 14.9, 12, 14.9)
+          ..cubicTo(9.2, 14.9, 7, 12.9, 7, 9.4)
+          ..close();
+        canvas.drawPath(cup, main);
+        final h1 = Path()
+          ..moveTo(7, 6.4)
+          ..cubicTo(4.7, 6.4, 3.8, 7.9, 3.8, 9.2)
+          ..cubicTo(3.8, 11, 5.2, 12.1, 7.1, 12.1);
+        canvas.drawPath(h1, stroke);
+        final h2 = Path()
+          ..moveTo(17, 6.4)
+          ..cubicTo(19.3, 6.4, 20.2, 7.9, 20.2, 9.2)
+          ..cubicTo(20.2, 11, 18.8, 12.1, 16.9, 12.1);
+        canvas.drawPath(h2, stroke);
+        line(12, 14.9, 12, 17.6);
+        line(8.4, 20.2, 15.6, 20.2);
+      case TIGlyph.dice:
+        final r = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(4.4, 4.4, 15.2, 15.2), const Radius.circular(3.2));
+        canvas.drawRRect(r, main);
+        dot(8.9, 8.9, 1.4);
+        dot(15.1, 8.9, 1.4);
+        dot(12, 12, 1.4);
+        dot(8.9, 15.1, 1.4);
+        dot(15.1, 15.1, 1.4);
+      case TIGlyph.walk:
+        circle(13.8, 4.4, 1.95);
+        line(12.9, 7.4, 11.2, 12.2);
+        line(12.5, 9, 9.4, 11.8);
+        line(12.5, 9, 15.4, 11);
+        line(11.2, 12.2, 8.4, 16.4);
+        line(8.4, 16.4, 7.9, 20.4);
+        line(11.2, 12.2, 14.4, 15.6);
+        line(14.4, 15.6, 17.2, 17.2);
+      case TIGlyph.car:
+        final b = Path()
+          ..moveTo(3.4, 15.8)
+          ..lineTo(4.7, 10.7)
+          ..cubicTo(4.9, 9.8, 5.6, 9.3, 6.5, 9.1)
+          ..lineTo(8.5, 8.7)
+          ..lineTo(10.3, 6.2)
+          ..cubicTo(10.7, 5.6, 11.4, 5.2, 12.2, 5.2)
+          ..lineTo(12.9, 5.2)
+          ..cubicTo(13.7, 5.2, 14.4, 5.6, 14.8, 6.2)
+          ..lineTo(16.6, 8.7)
+          ..lineTo(18.6, 9.1)
+          ..cubicTo(19.5, 9.3, 20.2, 9.8, 20.4, 10.7)
+          ..lineTo(21.7, 15.8);
+        canvas.drawPath(b, main);
+        line(3.4, 15.8, 21.7, 15.8);
+        circle(7.5, 16.1, 2);
+        circle(16.6, 16.1, 2);
+      case TIGlyph.bus:
+        final r = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(5, 4.2, 14, 13.4), const Radius.circular(2.6));
+        canvas.drawRRect(r, main);
+        line(5, 10.4, 19, 10.4);
+        dot(8.4, 14, 1.2);
+        dot(15.6, 14, 1.2);
+        line(7.6, 17.6, 7.6, 20.2);
+        line(16.4, 17.6, 16.4, 20.2);
+      case TIGlyph.pencil:
+        final p = Path()
+          ..moveTo(4.6, 19.4)
+          ..lineTo(5.6, 15.7)
+          ..lineTo(16.9, 4.4)
+          ..cubicTo(17.7, 3.6, 19, 3.6, 19.8, 4.4)
+          ..cubicTo(20.6, 5.2, 20.6, 6.5, 19.8, 7.3)
+          ..lineTo(8.5, 18.6)
+          ..close();
+        canvas.drawPath(p, main);
+        line(14.9, 6.4, 17.6, 9.1);
+      case TIGlyph.chat:
+        final r = RRect.fromRectAndRadius(
+            const Rect.fromLTWH(3.6, 4.8, 16.8, 11.8), const Radius.circular(3.4));
+        canvas.drawRRect(r, main);
+        final t = Path()
+          ..moveTo(8, 16.6)
+          ..lineTo(8, 20.4)
+          ..lineTo(13.2, 16.6);
+        canvas.drawPath(t, stroke);
+        dot(8.2, 10.7, 1.1);
+        dot(12, 10.7, 1.1);
+        dot(15.8, 10.7, 1.1);
+    }
+    canvas.restore();
+  }
+}
+
+class _TIPainter extends CustomPainter {
+  final TIGlyph glyph;
   final Color color;
-  final double size;
   final bool filled;
-  const NavIcon({
+  const _TIPainter(this.glyph, this.color, this.filled);
+
+  @override
+  void paint(Canvas canvas, Size size) =>
+      TIPaint.paint(canvas, glyph, Offset.zero & size, color, filled: filled);
+
+  @override
+  bool shouldRepaint(_TIPainter old) =>
+      old.glyph != glyph || old.color != color || old.filled != filled;
+}
+
+/* The monoline icon as a widget: soft gray #9A9AA0 by default,
+   stroke-only, no fill (the owner's spec). */
+class TiradIcon extends StatelessWidget {
+  final TIGlyph glyph;
+  final double size;
+  final Color color;
+  final bool filled;
+  const TiradIcon(
+    this.glyph, {
     super.key,
-    required this.glyph,
-    required this.color,
-    this.size = 23,
+    this.size = 20,
+    this.color = T.iconGray,
     this.filled = false,
   });
 
   @override
   Widget build(BuildContext context) => CustomPaint(
         size: Size.square(size),
-        painter: _NavIconPainter(glyph, color, filled),
+        painter: _TIPainter(glyph, color, filled),
       );
 }
 
-class _NavIconPainter extends CustomPainter {
-  final NavGlyph glyph;
-  final Color color;
-  final bool filled;
-  _NavIconPainter(this.glyph, this.color, this.filled);
+/* The ACTIVE state from the spec: filled solid white glyph on a
+   glowing orange-to-red gradient circle (#E8301E → #FF6A1A) with a
+   soft neon glow and subtle radar rings around it. */
+class ActiveIconBadge extends StatelessWidget {
+  final TIGlyph glyph;
+  final double size;
+  final bool rings;
+  const ActiveIconBadge({
+    super.key,
+    required this.glyph,
+    this.size = 40,
+    this.rings = true,
+  });
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.width / 24;
-    final stroke = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2 * s
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    final fill = Paint()..color = color;
-    Offset p(double x, double y) => Offset(x * s, y * s);
-    switch (glyph) {
-      case NavGlyph.pin:
-        final path = Path()
-          ..moveTo(12 * s, 21.5 * s)
-          ..cubicTo(12 * s, 21.5 * s, 5 * s, 14.8 * s, 5 * s, 10.2 * s)
-          ..cubicTo(5 * s, 6.2 * s, 8.1 * s, 3 * s, 12 * s, 3 * s)
-          ..cubicTo(15.9 * s, 3 * s, 19 * s, 6.2 * s, 19 * s, 10.2 * s)
-          ..cubicTo(19 * s, 14.8 * s, 12 * s, 21.5 * s, 12 * s, 21.5 * s);
-        canvas.drawPath(path, filled ? fill : stroke);
-        canvas.drawCircle(p(12, 10.2), 3 * s, filled ? (Paint()..color = T.bg) : stroke);
-      case NavGlyph.flame:
-        final path = Path()
-          ..moveTo(12 * s, 2.8 * s)
-          ..cubicTo(13.4 * s, 6 * s, 17.8 * s, 8.6 * s, 17.8 * s, 13.4 * s)
-          ..cubicTo(17.8 * s, 17.6 * s, 15.2 * s, 20.6 * s, 12 * s, 20.6 * s)
-          ..cubicTo(8.8 * s, 20.6 * s, 6.2 * s, 17.6 * s, 6.2 * s, 13.4 * s)
-          ..cubicTo(6.2 * s, 10.4 * s, 7.6 * s, 8.4 * s, 9 * s, 6.6 * s)
-          ..cubicTo(9.4 * s, 8.4 * s, 10.2 * s, 9.4 * s, 11.2 * s, 10 * s)
-          ..cubicTo(10.6 * s, 7.2 * s, 11 * s, 4.8 * s, 12 * s, 2.8 * s);
-        canvas.drawPath(path, filled ? fill : stroke);
-      case NavGlyph.route:
-        canvas.drawCircle(p(6, 18.5), 3 * s, stroke);
-        canvas.drawCircle(p(18, 5.5), 3 * s, stroke);
-        final path = Path()
-          ..moveTo(6 * s, 15.5 * s)
-          ..lineTo(6 * s, 11 * s)
-          ..cubicTo(6 * s, 7.5 * s, 18 * s, 10.5 * s, 18 * s, 8.5 * s);
-        canvas.drawPath(path, stroke);
-        canvas.drawCircle(p(6, 18.5), 1.1 * s, fill);
-        canvas.drawCircle(p(18, 5.5), 1.1 * s, fill);
-      case NavGlyph.ghost:
-        final path = Path()
-          ..moveTo(5.5 * s, 20.5 * s)
-          ..lineTo(5.5 * s, 11 * s)
-          ..cubicTo(5.5 * s, 6.6 * s, 8.4 * s, 3.5 * s, 12 * s, 3.5 * s)
-          ..cubicTo(15.6 * s, 3.5 * s, 18.5 * s, 6.6 * s, 18.5 * s, 11 * s)
-          ..lineTo(18.5 * s, 20.5 * s)
-          ..lineTo(15.3 * s, 17.8 * s)
-          ..lineTo(12 * s, 20.5 * s)
-          ..lineTo(8.7 * s, 17.8 * s)
-          ..close();
-        canvas.drawPath(path, filled ? fill : stroke);
-        if (!filled) {
-          canvas.drawCircle(p(9.6, 10.5), 1.3 * s, fill);
-          canvas.drawCircle(p(14.4, 10.5), 1.3 * s, fill);
-        }
-    }
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        alignment: Alignment.center,
+        children: [
+          if (rings) ...[
+            Positioned(
+              left: -size * 0.13,
+              top: -size * 0.13,
+              right: -size * 0.13,
+              bottom: -size * 0.13,
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border:
+                      Border.all(color: Colors.white.withOpacity(0.13)),
+                ),
+              ),
+            ),
+            Positioned(
+              left: -size * 0.27,
+              top: -size * 0.27,
+              right: -size * 0.27,
+              bottom: -size * 0.27,
+              child: Container(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border:
+                      Border.all(color: Colors.white.withOpacity(0.06)),
+                ),
+              ),
+            ),
+          ],
+          Container(
+            width: size,
+            height: size,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: T.specGrad,
+              boxShadow: [
+                BoxShadow(
+                  color: Color(0x73E8301E),
+                  blurRadius: 16,
+                  spreadRadius: 1,
+                ),
+                BoxShadow(
+                  color: Color(0x40FF6A1A),
+                  blurRadius: 26,
+                ),
+              ],
+            ),
+            child: TiradIcon(
+              glyph,
+              color: Colors.white,
+              filled: true,
+              size: size * 0.56,
+            ),
+          ),
+        ],
+      ),
+    );
   }
-
-  @override
-  bool shouldRepaint(_NavIconPainter old) =>
-      old.glyph != glyph || old.color != color || old.filled != filled;
 }
 
 /* Shimmering skeleton block for loading states. */
@@ -2708,10 +3624,11 @@ class _StaggerInState extends State<StaggerIn>
 
 /* Empty state: big emoji, Unbounded title, quiet hint. */
 class EmptyState extends StatelessWidget {
-  final String emoji;
+  /* v2.0.12: the empty-state mark is a TI glyph, not an emoji. */
+  final TIGlyph glyph;
   final String title;
   final String hint;
-  const EmptyState({super.key, required this.emoji, required this.title, required this.hint});
+  const EmptyState({super.key, required this.glyph, required this.title, required this.hint});
 
   @override
   Widget build(BuildContext context) {
@@ -2720,7 +3637,7 @@ class EmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(emoji, style: const TextStyle(fontSize: 44)),
+          TiradIcon(glyph, size: 46, color: T.iconGray),
           const SizedBox(height: T.s12),
           Text(title, textAlign: TextAlign.center, style: T.display(17)),
           const SizedBox(height: T.s8),
@@ -3284,12 +4201,14 @@ class _LoginPageState extends State<LoginPage> {
                 const SizedBox(height: 24),
                 PressButton(
                   text: _busy ? tr('wait') : tr('sign_in'),
+                  icon: TIGlyph.bolt,
                   onPressed: _busy ? null : () => _go(false),
                 ),
                 const SizedBox(height: 12),
                 PressButton(
                   text: tr('sign_up'),
                   primary: false,
+                  icon: TIGlyph.star,
                   onPressed: _busy ? null : () => _go(true),
                 ),
                 const SizedBox(height: 8),
@@ -3360,7 +4279,7 @@ class _HomePageState extends State<HomePage> {
   bool _loading = true;
   bool _introDone = false;
   int? _temp;
-  String _wxEmoji = '☀️';
+  TIGlyph _wxGlyph = TIGlyph.sun;
   List<Friend> _friends = [];
   int _tickerIdx = 0;
   Timer? _tickerTimer;
@@ -3634,7 +4553,7 @@ class _HomePageState extends State<HomePage> {
       if (t is num && mounted) {
         setState(() {
           _temp = t.round();
-          _wxEmoji = wxEmojiFor(code, DateTime.now().hour);
+          _wxGlyph = wxGlyphFor(code, DateTime.now().hour);
         });
       }
     } catch (_) {}
@@ -3801,7 +4720,8 @@ class _HomePageState extends State<HomePage> {
                   final c = _cities[i];
                   final sel = c.id == _city?.id;
                   return ListTile(
-                    leading: const Text('📍', style: TextStyle(fontSize: 18)),
+                    leading: TiradIcon(TIGlyph.mapPin,
+                        size: 19, color: sel ? T.ember : T.iconGray),
                     title: Text(
                       c.name,
                       style: TextStyle(
@@ -3923,12 +4843,19 @@ class _HomePageState extends State<HomePage> {
                   borderRadius: BorderRadius.circular(999),
                   border: Border.all(color: kBorder),
                 ),
-                child: Text(
-                  '📍 ${_city!.name} ▾',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const TiradIcon(TIGlyph.mapPin, size: 14, color: T.fire),
+                    const SizedBox(width: 5),
+                    Text(
+                      '${_city!.name} ▾',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -3941,12 +4868,19 @@ class _HomePageState extends State<HomePage> {
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(color: kOrange.withOpacity(0.5)),
               ),
-              child: Text(
-                '$_wxEmoji $_temp°',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TiradIcon(_wxGlyph, size: 15, color: T.ember),
+                  const SizedBox(width: 5),
+                  Text(
+                    '$_temp°',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -4036,7 +4970,12 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _navSlot(int idx, NavGlyph glyph, String label) {
+  /* v2.0.12: nav items are TI glyphs — inactive: monoline gray;
+     active: the spec's ActiveIconBadge (white filled glyph on the
+     glowing gradient circle). Every slot has the SAME structure
+     (36 px icon zone + label under it), so switching tabs changes
+     nothing but colours — zero layout shift, the FAB stays centred. */
+  Widget _navSlot(int idx, TIGlyph glyph, String label) {
     final active = _tab == idx;
     return Pressable(
       onTap: () {
@@ -4048,35 +4987,28 @@ class _HomePageState extends State<HomePage> {
           LocationService.ensureLocation(context);
         }
       },
-      child: AnimatedContainer(
-        duration: T.dMed,
-        curve: T.cOut,
-        padding: EdgeInsets.symmetric(
-          horizontal: active ? 14 : 11,
-          vertical: 9,
-        ),
-        decoration: BoxDecoration(
-          color: active ? T.fire.withOpacity(0.18) : Colors.transparent,
-          borderRadius: BorderRadius.circular(T.rPill),
-          border: Border.all(
-            color: active ? T.fire.withOpacity(0.6) : Colors.transparent,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            NavIcon(
-              glyph: glyph,
-              color: active ? T.ember : T.muted,
-              filled: active,
-              size: 22,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 38,
+            height: 38,
+            child: Center(
+              child: active
+                  ? ActiveIconBadge(glyph: glyph, size: 36)
+                  : TiradIcon(glyph, size: 23, color: T.iconGray),
             ),
-            if (active) ...[
-              const SizedBox(width: 7),
-              Text(label, style: T.body(12.5, w: FontWeight.w700)),
-            ],
-          ],
-        ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: T.body(
+              10.5,
+              color: active ? T.text : T.faint,
+              w: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -4099,15 +5031,36 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
+        // v2.0.12: five EQUAL-width slots. The old spaceBetween Row of
+        // variable-width children let the active slot's expanded pill
+        // (label + wider padding) change the left/right group widths,
+        // so the FAB drifted off-centre — worst with a left tab active.
+        // Now every child sits centred inside its own fixed slot: the
+        // pill may grow/shrink inside slot bounds without moving any
+        // sibling, and the middle slot's centre IS the panel centre,
+        // so the FAB is exactly centred in every tab state.
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            _navSlot(0, NavGlyph.pin, tr('nav_map')),
-            _navSlot(1, NavGlyph.flame, tr('nav_places')),
-            _DealFab(onTap: _openDeal),
-            _navSlot(2, NavGlyph.route, tr('nav_route')),
-            _navSlot(3, NavGlyph.ghost, tr('nav_profile')),
+            Expanded(
+              child:
+                  Center(child: _navSlot(0, TIGlyph.mapPin, tr('nav_map'))),
+            ),
+            Expanded(
+              child:
+                  Center(child: _navSlot(1, TIGlyph.flame, tr('nav_places'))),
+            ),
+            Expanded(
+              child: Center(child: _DealFab(onTap: _openDeal)),
+            ),
+            Expanded(
+              child: Center(
+                  child: _navSlot(2, TIGlyph.routePath, tr('nav_route'))),
+            ),
+            Expanded(
+              child:
+                  Center(child: _navSlot(3, TIGlyph.ghost, tr('nav_profile'))),
+            ),
           ],
         ),
       ),
@@ -4248,27 +5201,13 @@ class _DealFabState extends State<_DealFab> with SingleTickerProviderStateMixin 
               alignment: Alignment.center,
               children: [
                 const RadarSweep(size: 86, opacity: 0.13),
-                Container(
-                  width: 58,
-                  height: 58,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: T.fireGradV,
-                    boxShadow: [
-                      BoxShadow(
-                        color: T.fire.withOpacity(0.65),
-                        blurRadius: 20,
-                        spreadRadius: 2,
-                      ),
-                    ],
-                  ),
-                  child: const NavIcon(
-                    glyph: NavGlyph.flame,
-                    color: Colors.white,
-                    filled: true,
-                    size: 29,
-                  ),
+                // v2.0.12: the FAB IS the spec's active badge — white
+                // filled flame on the glowing gradient circle (its own
+                // radar rings off; RadarSweep above provides them).
+                const ActiveIconBadge(
+                  glyph: TIGlyph.flame,
+                  size: 58,
+                  rings: false,
                 ),
               ],
             ),
@@ -4349,7 +5288,8 @@ class _DealSheetState extends State<DealSheet> {
               alignment: Alignment.center,
               children: [
                 RadarSweep(size: 118, opacity: 0.13),
-                Text('🔥', textAlign: TextAlign.center, style: TextStyle(fontSize: 38)),
+                // v2.0.12: the deal hero is the spec's active badge.
+                ActiveIconBadge(glyph: TIGlyph.flame, size: 64),
               ],
             ),
             const SizedBox(height: 6),
@@ -4407,8 +5347,13 @@ class _DealSheetState extends State<DealSheet> {
                       backgroundImage:
                           f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
                       child: f.avatarUrl == null
-                          ? Text(f.avatar ?? '👻',
-                              style: const TextStyle(fontSize: 19))
+                          ? (f.avatar != null &&
+                                  f.avatar != '👻' &&
+                                  f.avatar != '👤'
+                              ? Text(f.avatar!,
+                                  style: const TextStyle(fontSize: 19))
+                              : const TiradIcon(TIGlyph.ghost,
+                                  size: 21, color: T.iconGray))
                           : null,
                     ),
                     const SizedBox(width: 11),
@@ -4430,13 +5375,21 @@ class _DealSheetState extends State<DealSheet> {
                         ],
                       ),
                     ),
-                    Text(
-                      tr('deal_in'),
-                      style: TextStyle(
-                        color: kOrange,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const TiradIcon(TIGlyph.flame,
+                            size: 13, color: T.ember, filled: true),
+                        const SizedBox(width: 4),
+                        Text(
+                          tr('deal_in'),
+                          style: TextStyle(
+                            color: kOrange,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -4454,13 +5407,21 @@ class _DealSheetState extends State<DealSheet> {
                       BoxShadow(color: kRed.withOpacity(0.5), blurRadius: 14),
                     ],
                   ),
-                  child: Text(
-                    tr('deal_top_pick'),
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const TiradIcon(TIGlyph.trophy,
+                          size: 13, color: Colors.white, filled: true),
+                      const SizedBox(width: 5),
+                      Text(
+                        tr('deal_top_pick'),
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -4500,6 +5461,7 @@ class _DealSheetState extends State<DealSheet> {
                   Expanded(
                     child: PressButton(
                       text: tr('deal_route_btn'),
+                      icon: TIGlyph.car,
                       onPressed: () {
                         Navigator.of(context).pop();
                         widget.onRoute();
@@ -4526,10 +5488,18 @@ class _DealSheetState extends State<DealSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    tr('deal_poll_title'),
-                    textAlign: TextAlign.center,
-                    style: T.head(17),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const TiradIcon(TIGlyph.voteBox,
+                          size: 18, color: T.ember),
+                      const SizedBox(width: 7),
+                      Text(
+                        tr('deal_poll_title'),
+                        textAlign: TextAlign.center,
+                        style: T.head(17),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   for (final p in cand)
@@ -4925,12 +5895,14 @@ class _PlaceSheetState extends State<PlaceSheet> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Text('📷', style: TextStyle(fontSize: 20)),
+              leading: const TiradIcon(TIGlyph.camera,
+                  size: 22, color: T.iconGray),
               title: Text(tr('camera'), style: T.body(15, w: FontWeight.w600)),
               onTap: () => Navigator.of(context).pop(ImageSource.camera),
             ),
             ListTile(
-              leading: const Text('🖼️', style: TextStyle(fontSize: 20)),
+              leading:
+                  const TiradIcon(TIGlyph.photo, size: 22, color: T.iconGray),
               title: Text(tr('gallery'), style: T.body(15, w: FontWeight.w600)),
               onTap: () => Navigator.of(context).pop(ImageSource.gallery),
             ),
@@ -4956,12 +5928,14 @@ class _PlaceSheetState extends State<PlaceSheet> {
               FireButton(
                 text: tr('vis_all'),
                 small: true,
+                icon: TIGlyph.globe,
                 onPressed: () => Navigator.of(context).pop('public'),
               ),
               const SizedBox(height: T.s8),
               GhostButton(
                 text: tr('vis_friends'),
                 small: true,
+                icon: TIGlyph.ghost,
                 onPressed: () => Navigator.of(context).pop('friends'),
               ),
               const SizedBox(height: T.s8),
@@ -5012,10 +5986,14 @@ class _PlaceSheetState extends State<PlaceSheet> {
       mainAxisSize: MainAxisSize.min,
       children: [
         for (var i = 0; i < 5; i++)
-          Icon(
-            Icons.star_rounded,
-            size: 17,
-            color: i < full ? T.gold : T.faint.withOpacity(0.5),
+          Padding(
+            padding: const EdgeInsets.only(right: 1.5),
+            child: TiradIcon(
+              TIGlyph.star,
+              size: 15,
+              color: i < full ? T.gold : T.faint.withOpacity(0.5),
+              filled: i < full,
+            ),
           ),
       ],
     );
@@ -5054,9 +6032,10 @@ class _PlaceSheetState extends State<PlaceSheet> {
                       ),
                     ],
                   ),
-                  child: Text(
-                    kTypeEmoji[p.type] ?? '📍',
-                    style: const TextStyle(fontSize: 24),
+                  child: TiradIcon(
+                    typeGlyph(p.type),
+                    size: 26,
+                    color: typeColor(p.type),
                   ),
                 ),
                 const SizedBox(width: T.s12),
@@ -5128,13 +6107,27 @@ class _PlaceSheetState extends State<PlaceSheet> {
                 }
                 return Padding(
                   padding: const EdgeInsets.only(top: T.s8),
-                  child: Text(
-                    [
-                      if (p.address.isNotEmpty) '📍 ${p.address}',
-                      if (dist != null) trf('km_from_you', {'d': fmtKm(dist)}),
-                    ].join(' '),
-                    textAlign: TextAlign.center,
-                    style: T.body(12.5, color: T.muted),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (p.address.isNotEmpty) ...[
+                        const TiradIcon(TIGlyph.mapPin,
+                            size: 13, color: T.iconGray),
+                        const SizedBox(width: 4),
+                      ],
+                      Flexible(
+                        child: Text(
+                          [
+                            if (p.address.isNotEmpty) p.address,
+                            if (dist != null)
+                              trf('km_from_you', {'d': fmtKm(dist)}),
+                          ].join(' · '),
+                          textAlign: TextAlign.center,
+                          style: T.body(12.5, color: T.muted),
+                        ),
+                      ),
+                    ],
                   ),
                 );
               },
@@ -5190,6 +6183,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
             GhostButton(
               text: _uploading ? tr('uploading') : tr('add_photo'),
               small: true,
+              icon: TIGlyph.camera,
               onPressed: _uploading ? () {} : _addPhoto,
             ),
             const SizedBox(height: T.s12),
@@ -5199,6 +6193,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
                   child: FireButton(
                     text: tr('route_here'),
                     small: true,
+                    icon: TIGlyph.navArrow,
                     onPressed: _directionsHere,
                   ),
                 ),
@@ -5214,7 +6209,8 @@ class _PlaceSheetState extends State<PlaceSheet> {
             ),
             if (_photos.isNotEmpty) ...[
               const SizedBox(height: T.s20),
-              sectionLabel(tr('ghost_photos_here'), color: T.salmon),
+              sectionLabel(tr('ghost_photos_here'),
+                  color: T.salmon, glyph: TIGlyph.camera),
               SizedBox(
                 height: 92,
                 child: ListView.builder(
@@ -5241,7 +6237,10 @@ class _PlaceSheetState extends State<PlaceSheet> {
                               cacheWidth: 220,
                               errorBuilder: (_, __, ___) => Container(
                                 color: T.surfaceHi,
-                                child: const Center(child: Text('👻')),
+                                child: const Center(
+                                  child: TiradIcon(TIGlyph.ghost,
+                                      size: 26, color: T.iconGray),
+                                ),
                               ),
                             ),
                           ),
@@ -5258,13 +6257,23 @@ class _PlaceSheetState extends State<PlaceSheet> {
                                       : Colors.black.withOpacity(0.65),
                                   borderRadius: BorderRadius.circular(999),
                                 ),
-                                child: Text(
-                                  '🔥 $fires',
-                                  style: const TextStyle(
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
-                                  ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const TiradIcon(TIGlyph.flame,
+                                        size: 11,
+                                        color: Colors.white,
+                                        filled: true),
+                                    const SizedBox(width: 3),
+                                    Text(
+                                      '$fires',
+                                      style: const TextStyle(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
@@ -5283,7 +6292,8 @@ class _PlaceSheetState extends State<PlaceSheet> {
             ],
             // ---- ghost reviews ----
             const SizedBox(height: T.s20),
-            sectionLabel(tr('ghost_reviews'), color: T.salmon),
+            sectionLabel(tr('ghost_reviews'),
+                color: T.salmon, glyph: TIGlyph.chat),
             if (_reviews.isEmpty)
               Text(
                 tr('reviews_empty'),
@@ -5312,7 +6322,8 @@ class _PlaceSheetState extends State<PlaceSheet> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('👻', style: TextStyle(fontSize: 15)),
+                      const TiradIcon(TIGlyph.ghost,
+                          size: 17, color: T.iconGray),
                       const SizedBox(width: T.s8),
                       Expanded(
                         child: Column(
@@ -5325,9 +6336,19 @@ class _PlaceSheetState extends State<PlaceSheet> {
                                   style: T.body(12.5, w: FontWeight.w700),
                                 ),
                                 const SizedBox(width: T.s8),
-                                Text(
-                                  '⭐' * ((r['rating'] as num?)?.toInt() ?? 0),
-                                  style: const TextStyle(fontSize: 10),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    for (var s = 0;
+                                        s <
+                                            (((r['rating'] as num?)?.toInt() ??
+                                                0));
+                                        s++)
+                                      const TiradIcon(TIGlyph.star,
+                                          size: 11,
+                                          color: T.gold,
+                                          filled: true),
+                                  ],
                                 ),
                               ],
                             ),
@@ -5352,12 +6373,13 @@ class _PlaceSheetState extends State<PlaceSheet> {
                       onTap: () => setState(() => _myRating = i),
                       child: Padding(
                         padding: const EdgeInsets.only(right: 2),
-                        child: Icon(
-                          Icons.star_rounded,
-                          size: 26,
+                        child: TiradIcon(
+                          TIGlyph.star,
+                          size: 24,
                           color: i <= _myRating
                               ? T.gold
                               : T.faint.withOpacity(0.5),
+                          filled: i <= _myRating,
                         ),
                       ),
                     ),
@@ -5390,7 +6412,8 @@ class _PlaceSheetState extends State<PlaceSheet> {
               ),
             if (similar.isNotEmpty) ...[
               const SizedBox(height: T.s20),
-              sectionLabel(tr('similar_places'), color: T.salmon),
+              sectionLabel(tr('similar_places'),
+                  color: T.salmon, glyph: TIGlyph.mapPin),
               SizedBox(
                 height: 42,
                 child: ListView.builder(
@@ -5413,8 +6436,14 @@ class _PlaceSheetState extends State<PlaceSheet> {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              TiradIcon(
+                                typeGlyph(sp.type),
+                                size: 14,
+                                color: T.iconGray,
+                              ),
+                              const SizedBox(width: 6),
                               Text(
-                                '${kTypeEmoji[sp.type] ?? '📍'} ${sp.name}',
+                                sp.name,
                                 style: T.body(13, w: FontWeight.w600),
                               ),
                               const SizedBox(width: 7),
@@ -5577,14 +6606,17 @@ class _MapTabState extends State<MapTab> {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 8,
     );
-    final tp = TextPainter(
-      text: TextSpan(
-        text: kPinEmoji[type] ?? kPinEmoji['other'],
-        style: const TextStyle(fontSize: 80),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+    // v2.0.12: the emblem is a TI vector glyph (monoline, thick
+    // rounded stroke) painted straight onto the disc — no emoji.
+    // Dark slate on the light-gray disc keeps it readable; the glyph
+    // box is ~96 px of the 192 px bitmap.
+    TIPaint.paint(
+      canvas,
+      typeGlyph(type),
+      Rect.fromCenter(center: center, width: 98, height: 98),
+      const Color(0xFF2E3238),
+      strokeScale: 1.25,
+    );
     final pic = recorder.endRecording();
     final img = await pic.toImage(size.toInt(), size.toInt());
     final data = await img.toByteData(format: ui.ImageByteFormat.png);
@@ -5597,13 +6629,38 @@ class _MapTabState extends State<MapTab> {
     final ctl = _ctl;
     if (ctl == null || _pinsRegistered) return;
     _pinsRegistered = true;
-    for (final type in kPinEmoji.keys) {
+    for (final type in kPinTypes) {
       await ctl.addImage('pin-$type', await _placePin(type, hot: false));
       await ctl.addImage('pin-$type-hot', await _placePin(type, hot: true));
     }
   }
 
   bool _drawingPlaces = false;
+
+  /* v2.0.12: how many place pins the last _drawPlaces pass actually
+     put on the map — the verifiable completion count (target:
+     widget.allPlaces.length, 5,212). */
+  int _placesDrawnCount = 0;
+
+  /* v2.0.12 root-cause fix for «не все места видны»: the plugin's
+     SymbolManager creates its symbol layer with icon-allow-overlap /
+     icon-ignore-placement = false, so MapLibre COLLISION-CULLED any
+     annotation symbol overlapping an already-drawn one. With 5,212
+     chunky pins, a large share of places in dense areas was silently
+     hidden at city zoom even though every symbol had been added.
+     The flags are manager-level: one call covers place pins, friend
+     avatars and the «me» marker alike. Set once per style load,
+     before the first draw. */
+  Future<void> _prepareSymbolLayer() async {
+    try {
+      final sm = _ctl?.symbolManager;
+      if (sm != null) {
+        await sm.setIconAllowOverlap(true);
+        await sm.setIconIgnorePlacement(true);
+      }
+    } catch (_) {}
+    _drawPlaces();
+  }
 
   /* v2.0.10: the pin layer is COUNTRY-WIDE by the owner's word — every
      place in the database (allPlaces, 5,212 pins), not just the
@@ -5628,25 +6685,48 @@ class _MapTabState extends State<MapTab> {
       }
       final all = widget.allPlaces;
       const chunk = 400;
+      var failedChunks = 0;
       for (var i = 0; i < all.length; i += chunk) {
         if (!mounted || _ctl != ctl) return;
         final part = all.sublist(i, math.min(i + chunk, all.length));
         final opts = <SymbolOptions>[];
         for (final p in part) {
           final hot = vibeOf(p) >= 70;
-          final type = kPinEmoji.containsKey(p.type) ? p.type : 'other';
+          final type = kPinTypes.contains(p.type) ? p.type : 'other';
           opts.add(SymbolOptions(
             geometry: LatLng(p.lat, p.lng),
             iconImage: hot ? 'pin-$type-hot' : 'pin-$type',
             iconSize: 0.5, // 192 px bitmap → ≈96 px on screen (was ≈54)
           ));
         }
-        final syms = await ctl.addSymbols(opts);
-        for (var j = 0; j < syms.length; j++) {
+        // v2.0.12: a failed chunk must NOT abort the rest of the draw
+        // (previously one try wrapped the WHOLE loop, so a single
+        // platform hiccup silently dropped every later chunk). Each
+        // chunk gets one retry, then is skipped — never fatal.
+        List<Symbol>? syms;
+        for (var attempt = 0; attempt < 2 && syms == null; attempt++) {
+          try {
+            syms = await ctl.addSymbols(opts);
+          } catch (_) {
+            if (attempt == 0) {
+              await Future<void>.delayed(const Duration(milliseconds: 250));
+            }
+          }
+        }
+        if (syms == null) {
+          failedChunks++;
+          continue;
+        }
+        for (var j = 0; j < syms.length && j < part.length; j++) {
           _symbolPlace[syms[j].id] = part[j];
           _placeSymbols.add(syms[j]);
         }
       }
+      // Verifiable completion: the draw ends only when every chunk has
+      // been attempted; the count proves how many pins are on the map.
+      _placesDrawnCount = _placeSymbols.length;
+      debugPrint('TiradA pins: $_placesDrawnCount/${all.length} drawn'
+          '${failedChunks > 0 ? ' · $failedChunks chunk(s) failed' : ''}');
     } catch (_) {
       // Pins are best-effort: a platform hiccup must not kill the map.
     } finally {
@@ -5905,18 +6985,44 @@ class _MapTabState extends State<MapTab> {
                     ),
                   ),
                   const SizedBox(width: T.s8),
+                  // v2.0.12: a real «Delete route» button replaces the
+                  // tiny ✕. Directions lines clear right here; a ROUTE
+                  // line goes through the RouteTab, which owns the
+                  // tracking state (confirm sheet if progress exists,
+                  // then stops/done/counted are wiped there).
                   GestureDetector(
-                    onTap: () => MapRouteBus.clear(),
+                    onTap: () {
+                      if (data.kind == 'route') {
+                        MapRouteBus.requestDeleteRoute();
+                      } else {
+                        MapRouteBus.clear();
+                      }
+                    },
                     child: Container(
-                      width: 26,
-                      height: 26,
-                      alignment: Alignment.center,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: T.surfaceHi,
-                        border: Border.all(color: T.stroke),
+                        color: T.fire.withOpacity(0.16),
+                        borderRadius: BorderRadius.circular(T.rPill),
+                        border:
+                            Border.all(color: T.fire.withOpacity(0.6)),
                       ),
-                      child: Text('✕', style: T.body(12, color: T.muted)),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const TiradIcon(
+                            TIGlyph.trash,
+                            size: 13,
+                            color: T.salmon,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            tr('delete_route'),
+                            style: T.body(11.5,
+                                color: T.salmon, w: FontWeight.w800),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -5981,14 +7087,32 @@ class _MapTabState extends State<MapTab> {
       canvas.restore();
     } else {
       canvas.drawCircle(center, 72, Paint()..color = kSurface2);
-      final tp = TextPainter(
-        text: TextSpan(
-          text: f.mode == 'ghost' ? '👻' : (f.avatar ?? '👤'),
-          style: const TextStyle(fontSize: 75),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+      // v2.0.12: the ghost-mode and default fallbacks are the TI ghost
+      // glyph (vector). A friend's CHOSEN avatar emoji stays text —
+      // that is their identity data, not app iconography.
+      final chosen = f.avatar;
+      final isDefault = chosen == null ||
+          chosen.isEmpty ||
+          chosen == '👤' ||
+          chosen == '👻';
+      if (f.mode == 'ghost' || isDefault) {
+        TIPaint.paint(
+          canvas,
+          TIGlyph.ghost,
+          Rect.fromCenter(center: center, width: 96, height: 96),
+          T.iconGray,
+          strokeScale: 1.1,
+        );
+      } else {
+        final tp = TextPainter(
+          text: TextSpan(
+            text: chosen,
+            style: const TextStyle(fontSize: 75),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+      }
     }
     // Status ring: bright green (#22C55E) while the friend is online —
     // the same profiles.online / presence signal the friends list
@@ -6110,10 +7234,12 @@ class _MapTabState extends State<MapTab> {
   }
 
   /* Keeps the big «you are here» symbol glued to myLocationNotifier —
-     the same position feed presence and distances already use. The
-     native puck stays enabled underneath; this marker is the one the
-     eye is meant to catch. Serialised via _meSyncing so rapid stream
-     updates can never stack duplicate symbols. */
+     the same position feed presence and distances already use. Since
+     v2.0.12 the native puck is DISABLED: its LocationComponent disc
+     rendered above annotation symbols and sat on top of this marker's
+     avatar photo. This symbol is now the only «you are here» on the
+     map. Serialised via _meSyncing so rapid stream updates can never
+     stack duplicate symbols. */
   Future<void> _updateMeMarker() async {
     if (_meSyncing) {
       _meAgain = true;
@@ -6207,9 +7333,15 @@ class _MapTabState extends State<MapTab> {
   }
 
   /* 176 px round marker: brand-red outer ring + white ring, then the
-     avatar photo (or 👻 on the dark surface) — «you are here» reads
-     instantly, and it can't be confused with a friend (green/gray
-     ring) or a place pin (gray disc). */
+     avatar photo (or the TI ghost on the dark surface) — «you are
+     here» reads instantly, and it can't be confused with a friend
+     (green/gray ring) or a place pin (gray disc).
+     v2.0.12 (Part A): this bitmap is verified clean — rings at r86
+     (fire) and r77 (white), the photo clipped to r68, NOTHING painted
+     after or over the photo. The «кружок поверх аватарки» the owner
+     saw was the native MapLibre location puck drawn above annotation
+     symbols; the puck's rendering is now off (myLocationEnabled:
+     false on the map), so this symbol is the only me-marker. */
   Future<Uint8List> _meMarkerBitmap() async {
     const cacheKey = 'me-marker-bitmap';
     final cached = _markerCache[cacheKey];
@@ -6242,14 +7374,14 @@ class _MapTabState extends State<MapTab> {
       canvas.restore();
     } else {
       canvas.drawCircle(center, 68, Paint()..color = kSurface2);
-      final tp = TextPainter(
-        text: const TextSpan(
-          text: '👻',
-          style: TextStyle(fontSize: 76),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+      // v2.0.12: TI ghost glyph fallback (vector, no emoji).
+      TIPaint.paint(
+        canvas,
+        TIGlyph.ghost,
+        Rect.fromCenter(center: center, width: 92, height: 92),
+        T.iconGray,
+        strokeScale: 1.1,
+      );
     }
     final pic = recorder.endRecording();
     final img = await pic.toImage(size.toInt(), size.toInt());
@@ -6330,12 +7462,18 @@ class _MapTabState extends State<MapTab> {
   }
 
   Future<void> _presence() async {
-    final ctl = _ctl;
-    if (ctl == null) return;
     try {
-      final pos = await ctl.requestMyLocationLatLng();
+      // v2.0.12: the position comes from the geolocator-fed
+      // myLocationNotifier (LocationService), NOT from MapLibre's
+      // requestMyLocationLatLng() — that API only works while the
+      // native location puck is enabled, and the puck's own disc was
+      // drawn by the native LocationComponent ON TOP of the custom
+      // «me» avatar symbol (owner: «кружок поверх моей аватарки»).
+      // The puck is now disabled (myLocationEnabled: false); nothing
+      // else read position from MapLibre — centring, distances and
+      // presence all already flow through the notifier.
+      final pos = myLocationNotifier.value;
       if (pos == null) return;
-      myLocationNotifier.value = pos; // shared with the «Я в деле» sheet
       final uid = myUidOrNull;
       if (uid == null) return; // guest: nowhere to write presence
       await supa.from('profile_locations').upsert({
@@ -6408,7 +7546,13 @@ class _MapTabState extends State<MapTab> {
               backgroundImage:
                   f.avatarUrl != null ? NetworkImage(f.avatarUrl!) : null,
               child: f.avatarUrl == null
-                  ? Text(f.avatar ?? '👤', style: const TextStyle(fontSize: 26))
+                  ? (f.avatar != null &&
+                          f.avatar != '👻' &&
+                          f.avatar != '👤'
+                      ? Text(f.avatar!,
+                          style: const TextStyle(fontSize: 26))
+                      : const TiradIcon(TIGlyph.ghost,
+                          size: 28, color: T.iconGray))
                   : null,
             ),
             const SizedBox(width: 14),
@@ -6454,7 +7598,7 @@ class _MapTabState extends State<MapTab> {
       onMapCreated: _onMapCreated,
       onStyleLoadedCallback: () {
         _styleReady = true;
-        _drawPlaces();
+        _prepareSymbolLayer(); // overlap flags first, then draws places
         _drawRouteLine();
         _refreshFriends();
         _updateMeMarker();
@@ -6475,7 +7619,10 @@ class _MapTabState extends State<MapTab> {
           _presence();
         });
       },
-          myLocationEnabled: true,
+          // v2.0.12: native puck OFF — its disc rendered above the
+          // annotation symbols and covered the «me» avatar marker.
+          // Position still flows via LocationService → myLocationNotifier.
+          myLocationEnabled: false,
           myLocationTrackingMode: MyLocationTrackingMode.none,
           compassEnabled: false,
           attributionButtonMargins: const math.Point(-100, -100),
@@ -6523,14 +7670,14 @@ class _MapTabState extends State<MapTab> {
 
 /* ---------------- places tab ---------------- */
 
-/* Map pin emblems (v2.0.8): gray discs carry one glyph per place type.
-   Separate from kTypeEmoji (list/card glyphs) — the pin set follows the
-   owner's exact picks: бокал 🍷, чашка кофе ☕, дерево 🌳… */
-const kPinEmoji = <String, String>{
-  'restaurant': '🍽️', 'cafe': '☕', 'bar': '🍷', 'park': '🌳',
-  'beach': '🏖️', 'culture': '🎭', 'sport': '⚽', 'club': '🎵',
-  'view': '🌆', 'market': '🛍️', 'other': '📍',
-};
+/* Map pin types (v2.0.12): the gray pin discs carry a TI vector
+   glyph per type (see typeGlyph) — the v2.0.8 owner's picks (бокал,
+   чашка кофе, дерево…) redrawn in the monoline icon set; the emoji
+   map is gone. */
+const kPinTypes = <String>[
+  'restaurant', 'cafe', 'bar', 'park', 'beach', 'culture', 'sport',
+  'club', 'view', 'market', 'other',
+];
 
 /* Type id → kStr key (display names resolve through tr()). */
 const kTypeNames = <String, String>{
@@ -6660,6 +7807,7 @@ class _PlacesTabState extends State<PlacesTab> {
       child: PillButton(
         text: label,
         selected: sel,
+        icon: type == null ? null : typeGlyph(type),
         onTap: () => setState(() => _type = sel ? null : type),
       ),
     );
@@ -6674,7 +7822,7 @@ class _PlacesTabState extends State<PlacesTab> {
         ? 0
         : (all.map(vibeOf).reduce((a, b) => a + b) / all.length).round();
     final top3 = [...all]..sort((a, b) => vibeOf(b).compareTo(vibeOf(a)));
-    final typesPresent = kTypeEmoji.keys.where(
+    final typesPresent = kPinTypes.where(
       (t) => all.any((p) => p.type == t),
     );
     final aiTasks = (_drop?['tasks'] as List?) ?? [];
@@ -6705,7 +7853,8 @@ class _PlacesTabState extends State<PlacesTab> {
                       color: T.surface,
                       border: Border.all(color: T.stroke),
                     ),
-                    child: const Text('🎲', style: TextStyle(fontSize: 17)),
+                    child: const TiradIcon(TIGlyph.dice,
+                        size: 19, color: T.iconGray),
                   ),
                 ),
                 const SizedBox(width: T.s8),
@@ -6714,6 +7863,7 @@ class _PlacesTabState extends State<PlacesTab> {
                   child: PressButton(
                     text: tr('tasks_book'),
                     small: true,
+                    icon: TIGlyph.target,
                     onPressed: widget.onOpenTasks,
                   ),
                 ),
@@ -6741,10 +7891,20 @@ class _PlacesTabState extends State<PlacesTab> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  sectionLabel(tr('ai_day'), color: T.salmon),
-                                  Text(
-                                    '🌙 ${aiText(routeTheme['title'])}',
-                                    style: T.head(16),
+                                  sectionLabel(tr('ai_day'),
+                                      color: T.salmon, glyph: TIGlyph.star),
+                                  Row(
+                                    children: [
+                                      const TiradIcon(TIGlyph.moon,
+                                          size: 17, color: T.ember),
+                                      const SizedBox(width: 7),
+                                      Flexible(
+                                        child: Text(
+                                          aiText(routeTheme['title']),
+                                          style: T.head(16),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   if (aiTasks.isNotEmpty) ...[
                                     const SizedBox(height: T.s4),
@@ -6791,9 +7951,10 @@ class _PlacesTabState extends State<PlacesTab> {
                                         vertical: T.s4),
                                     child: Row(
                                       children: [
-                                        Text(
-                                          kTypeEmoji[p.type] ?? '📍',
-                                          style: const TextStyle(fontSize: 16),
+                                        TiradIcon(
+                                          typeGlyph(p.type),
+                                          size: 17,
+                                          color: T.iconGray,
                                         ),
                                         const SizedBox(width: T.s8),
                                         Expanded(
@@ -6834,7 +7995,7 @@ class _PlacesTabState extends State<PlacesTab> {
                             for (final t in typesPresent)
                               _filterChip(
                                 t,
-                                '${kTypeEmoji[t]} ${tr(kTypeNames[t] ?? t)}',
+                                tr(kTypeNames[t] ?? t),
                               ),
                           ],
                         ),
@@ -6873,6 +8034,7 @@ class _PlacesTabState extends State<PlacesTab> {
                             PillButton(
                               text: tr('only_hot'),
                               selected: _hotOnly,
+                              icon: TIGlyph.flame,
                               onTap: () =>
                                   setState(() => _hotOnly = !_hotOnly),
                             ),
@@ -6886,7 +8048,7 @@ class _PlacesTabState extends State<PlacesTab> {
                       ),
                       if (list.isEmpty)
                         EmptyState(
-                          emoji: '👻',
+                          glyph: TIGlyph.ghost,
                           title: tr('empty_title'),
                           hint: tr('empty_hint'),
                         ),
@@ -6921,9 +8083,10 @@ class _PlacesTabState extends State<PlacesTab> {
                                 ),
                               ],
                             ),
-                            child: Text(
-                              kTypeEmoji[p.type] ?? '📍',
-                              style: const TextStyle(fontSize: 21),
+                            child: TiradIcon(
+                              typeGlyph(p.type),
+                              size: 24,
+                              color: typeColor(p.type),
                             ),
                           ),
                           const SizedBox(width: T.s12),
@@ -6945,20 +8108,37 @@ class _PlacesTabState extends State<PlacesTab> {
                                         ? null
                                         : haversineKm(origin.latitude,
                                             origin.longitude, p.lat, p.lng);
-                                    return Text(
-                                      [
-                                        if (p.rating != null)
-                                          '⭐ ${p.rating!.toStringAsFixed(1)}'
-                                        else
-                                          tr('new_short'),
-                                        if (priceText(p).isNotEmpty)
-                                          priceText(p),
-                                        if (d != null) trf('dist_badge', {'d': fmtKm(d)}),
-                                        if (p.address.isNotEmpty) p.address,
-                                      ].join(' · '),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: T.body(12.5, color: T.muted),
+                                    return Row(
+                                      children: [
+                                        if (p.rating != null) ...[
+                                          const TiradIcon(TIGlyph.star,
+                                              size: 12,
+                                              color: T.gold,
+                                              filled: true),
+                                          const SizedBox(width: 3),
+                                        ],
+                                        Expanded(
+                                          child: Text(
+                                            [
+                                              if (p.rating != null)
+                                                p.rating!.toStringAsFixed(1)
+                                              else
+                                                tr('new_short'),
+                                              if (priceText(p).isNotEmpty)
+                                                priceText(p),
+                                              if (d != null)
+                                                trf('dist_badge',
+                                                    {'d': fmtKm(d)}),
+                                              if (p.address.isNotEmpty)
+                                                p.address,
+                                            ].join(' · '),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: T.body(12.5,
+                                                color: T.muted),
+                                          ),
+                                        ),
+                                      ],
                                     );
                                   },
                                 ),
@@ -7114,7 +8294,8 @@ class _RouteTabState extends State<RouteTab> {
   Set<String> _readyCounted = {};
 
   static const _speeds = {'walk': 5.0, 'bus': 18.0, 'car': 30.0};
-  static const _icons = {'walk': '🚶', 'bus': '🚌', 'car': '🚗'};
+  /* v2.0.12: transport marks are TI glyphs (walk/bus/car), resolved
+     inline at the render sites — the emoji map is gone. */
   static const _checkInRadiusKm = 0.15; // «Я здесь» opens within ~150 m
 
   @override
@@ -7122,6 +8303,89 @@ class _RouteTabState extends State<RouteTab> {
     super.initState();
     _seed = dayIndex();
     _load();
+    // The map chip's delete button asks HERE to wipe route tracking —
+    // this tab owns the active-route state (stops/done/counted).
+    MapRouteBus.deleteRequestTick.addListener(_onDeleteRequested);
+  }
+
+  @override
+  void dispose() {
+    MapRouteBus.deleteRequestTick.removeListener(_onDeleteRequested);
+    super.dispose();
+  }
+
+  void _onDeleteRequested() {
+    if (!mounted) return;
+    _requestDeleteRoute();
+  }
+
+  /* «Удалить маршрут» (v2.0.12): stops tracking the active route.
+     Nothing completed yet → wipe immediately, no dialog. Some stops
+     already done → one confirm sheet in the app's style first. XP
+     already credited (tasks/routes stats) is NEVER revoked — only
+     the tracking state (stops/done/counted + persisted copy) goes. */
+  Future<void> _requestDeleteRoute() async {
+    if (_stops.isEmpty) {
+      if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
+      return;
+    }
+    if (_done.isNotEmpty) {
+      final ok = await showModalBottomSheet<bool>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (_) => SheetShell(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(T.s20, T.s4, T.s20, T.s20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(tr('delete_route_title'), style: T.head(17)),
+                const SizedBox(height: T.s8),
+                Text(
+                  tr('delete_route_progress'),
+                  style: T.body(13.5, color: T.muted),
+                ),
+                const SizedBox(height: T.s16),
+                FireButton(
+                  text: tr('btn_delete'),
+                  icon: TIGlyph.trash,
+                  small: true,
+                  onPressed: () => Navigator.of(context).pop(true),
+                ),
+                const SizedBox(height: T.s8),
+                GhostButton(
+                  text: tr('btn_cancel'),
+                  small: true,
+                  onPressed: () => Navigator.of(context).pop(false),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (ok != true || !mounted) return;
+    }
+    _deleteActiveRoute();
+  }
+
+  void _deleteActiveRoute() {
+    if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
+    _done.clear();
+    _counted = false;
+    _stops = [];
+    _road = null;
+    _roadSig = '';
+    // The tab's resting state is a fresh, untouched evening route for
+    // the selected city (exactly what first open builds): it replaces
+    // the persisted active_route_v1, so the deleted route's stops,
+    // done set and counted flag are gone everywhere. The builder and
+    // the ready routes below are visible again.
+    _buildEvening();
+    if (mounted) {
+      setState(() {});
+      snack(context, tr('route_deleted'));
+    }
   }
 
   @override
@@ -7735,9 +8999,24 @@ class _RouteTabState extends State<RouteTab> {
               ? [BoxShadow(color: kRed.withOpacity(0.45), blurRadius: 14)]
               : null,
         ),
-        child: Text(
-          label,
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TiradIcon(
+              id == 'walk'
+                  ? TIGlyph.walk
+                  : (id == 'bus' ? TIGlyph.bus : TIGlyph.car),
+              size: 15,
+              color: sel ? Colors.white : T.iconGray,
+              filled: sel,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style:
+                  const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+            ),
+          ],
         ),
       ),
     );
@@ -7765,8 +9044,16 @@ class _RouteTabState extends State<RouteTab> {
           ),
         ),
         const SizedBox(width: 10),
+        TiradIcon(
+          _transport == 'walk'
+              ? TIGlyph.walk
+              : (_transport == 'bus' ? TIGlyph.bus : TIGlyph.car),
+          size: 14,
+          color: T.iconGray,
+        ),
+        const SizedBox(width: 5),
         Text(
-          '${fromLabel != null ? '$fromLabel · ' : ''}${_icons[_transport]} ${_fmtDist(km)} · ${trf('mins_short', {'n': mins})}',
+          '${fromLabel != null ? '$fromLabel · ' : ''}${_fmtDist(km)} · ${trf('mins_short', {'n': mins})}',
           style: const TextStyle(color: kMuted, fontSize: 12.5),
         ),
       ],
@@ -7824,12 +9111,26 @@ class _RouteTabState extends State<RouteTab> {
                   ),
                 ),
                 const SizedBox(height: 5),
-                Text(
-                  '${kTypeEmoji[p.type] ?? '📍'} ${p.name}',
-                  style: const TextStyle(
-                    fontSize: 16.5,
-                    fontWeight: FontWeight.w900,
-                  ),
+                Row(
+                  children: [
+                    TiradIcon(
+                      typeGlyph(p.type),
+                      size: 18,
+                      color: T.iconGray,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        p.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 5),
                 Text(
@@ -7837,9 +9138,22 @@ class _RouteTabState extends State<RouteTab> {
                   style: const TextStyle(color: kMuted, fontSize: 13),
                 ),
                 const SizedBox(height: 7),
-                Text(
-                  '🎯 $task',
-                  style: const TextStyle(fontSize: 13.5, height: 1.35),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2),
+                      child:
+                          TiradIcon(TIGlyph.target, size: 15, color: T.ember),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        task,
+                        style: const TextStyle(fontSize: 13.5, height: 1.35),
+                      ),
+                    ),
+                  ],
                 ),
                 // Live distance to this stop + whether check-in is open.
                 ValueListenableBuilder<LatLng?>(
@@ -7936,9 +9250,17 @@ class _RouteTabState extends State<RouteTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '🌙 ${aiText(r.name)}${counted ? tr('route_counted_suffix') : ''}',
-              style: T.body(13.5, w: FontWeight.w800),
+            Row(
+              children: [
+                const TiradIcon(TIGlyph.moon, size: 15, color: T.ember),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    '${aiText(r.name)}${counted ? tr('route_counted_suffix') : ''}',
+                    style: T.body(13.5, w: FontWeight.w800),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 3),
             Text(
@@ -8011,6 +9333,7 @@ class _RouteTabState extends State<RouteTab> {
           PressButton(
             text: tr('route_reshuffle'),
             primary: false,
+            icon: TIGlyph.dice,
             onPressed: _reshuffle,
           ),
           const SizedBox(height: T.s12),
@@ -8020,6 +9343,7 @@ class _RouteTabState extends State<RouteTab> {
                 child: GhostButton(
                   text: tr('route_show_map'),
                   small: true,
+                  icon: TIGlyph.routePath,
                   onPressed: _showOnMap,
                 ),
               ),
@@ -8028,6 +9352,7 @@ class _RouteTabState extends State<RouteTab> {
                 child: GhostButton(
                   text: tr('route_save'),
                   small: true,
+                  icon: TIGlyph.check,
                   onPressed: _saveRoute,
                 ),
               ),
@@ -8038,6 +9363,7 @@ class _RouteTabState extends State<RouteTab> {
             GhostButton(
               text: tr('route_back_evening'),
               small: true,
+              icon: TIGlyph.moon,
               onPressed: () {
                 _seed++;
                 _buildEvening();
@@ -8047,7 +9373,8 @@ class _RouteTabState extends State<RouteTab> {
           ],
           if (_savedRoutes.isNotEmpty) ...[
             const SizedBox(height: T.s20),
-            sectionLabel(tr('my_routes'), color: T.salmon),
+            sectionLabel(tr('my_routes'),
+                color: T.salmon, glyph: TIGlyph.routePath),
             for (final e in _savedRoutes)
               Pressable(
                 onTap: () => _activateSaved(e),
@@ -8067,9 +9394,25 @@ class _RouteTabState extends State<RouteTab> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        '${_icons[e['transport']] ?? '🚗'} ${e['cityName']} · ${e['day']}${e['counted'] == true ? tr('route_counted_suffix') : ''}',
-                        style: T.body(13, w: FontWeight.w700),
+                      Row(
+                        children: [
+                          TiradIcon(
+                            e['transport'] == 'walk'
+                                ? TIGlyph.walk
+                                : (e['transport'] == 'bus'
+                                    ? TIGlyph.bus
+                                    : TIGlyph.car),
+                            size: 15,
+                            color: T.iconGray,
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              '${e['cityName']} · ${e['day']}${e['counted'] == true ? tr('route_counted_suffix') : ''}',
+                              style: T.body(13, w: FontWeight.w700),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 3),
                       Text(
@@ -8087,7 +9430,8 @@ class _RouteTabState extends State<RouteTab> {
           ],
           if (groups.isNotEmpty) ...[
             const SizedBox(height: T.s20),
-            sectionLabel(tr('ready_routes'), color: T.salmon),
+            sectionLabel(tr('ready_routes'),
+                color: T.salmon, glyph: TIGlyph.routePath),
             for (final g in groups) ...[
               Padding(
                 padding: const EdgeInsets.only(bottom: T.s8, top: T.s4),
@@ -8114,6 +9458,16 @@ class _RouteTabState extends State<RouteTab> {
             if (i < _stops.length - 1)
               _legRow(LatLng(_stops[i].lat, _stops[i].lng), _stops[i + 1],
                   leg: i + 1),
+          ],
+          // v2.0.12: stop tracking this route — danger action under
+          // the route card, in the app's button language.
+          if (_stops.isNotEmpty) ...[
+            const SizedBox(height: T.s24),
+            DangerButton(
+              text: tr('delete_route'),
+              small: true,
+              onPressed: _requestDeleteRoute,
+            ),
           ],
         ],
       ),
@@ -8166,6 +9520,8 @@ class StepsCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
+                    const TiradIcon(TIGlyph.bolt, size: 17, color: T.ember),
+                    const SizedBox(width: 8),
                     Text(tr('steps_title'), style: T.head(15)),
                     const Spacer(),
                     Text(
@@ -8257,6 +9613,8 @@ class _CityQuestCardState extends State<CityQuestCard> {
         children: [
           Row(
             children: [
+              const TiradIcon(TIGlyph.mapPin, size: 17, color: T.ember),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   trf('cq_title', {'city': widget.city!.name}),
@@ -8273,9 +9631,20 @@ class _CityQuestCardState extends State<CityQuestCard> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    st['done'] == true ? '✅ ' : '⬜ ',
-                    style: const TextStyle(fontSize: 13),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 1, right: 7),
+                    child: st['done'] == true
+                        ? const TiradIcon(TIGlyph.check,
+                            size: 15, color: T.online)
+                        : Container(
+                            width: 13,
+                            height: 13,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                  color: T.faint, width: 1.6),
+                            ),
+                          ),
                   ),
                   Expanded(
                     child: Text(
@@ -8471,7 +9840,13 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(tr('tour_title'), style: T.head(15)),
+          Row(
+            children: [
+              const TiradIcon(TIGlyph.trophy, size: 17, color: T.ember),
+              const SizedBox(width: 8),
+              Text(tr('tour_title'), style: T.head(15)),
+            ],
+          ),
           const SizedBox(height: T.s4),
           Text(
             tr('tour_sub'),
@@ -8518,7 +9893,10 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
                             width: 54,
                             height: 54,
                             color: T.surface,
-                            child: const Center(child: Text('👻')),
+                            child: const Center(
+                              child: TiradIcon(TIGlyph.ghost,
+                                  size: 24, color: T.iconGray),
+                            ),
                           ),
                         ),
                       ),
@@ -8527,11 +9905,23 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              '${leader ? '👑 ' : ''}${_placeName(ph['place_id'].toString())}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: T.body(13.5, w: FontWeight.w700),
+                            Row(
+                              children: [
+                                if (leader) ...[
+                                  const TiradIcon(TIGlyph.trophy,
+                                      size: 14, color: T.gold, filled: true),
+                                  const SizedBox(width: 5),
+                                ],
+                                Flexible(
+                                  child: Text(
+                                    _placeName(ph['place_id'].toString()),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        T.body(13.5, w: FontWeight.w700),
+                                  ),
+                                ),
+                              ],
                             ),
                             Text(
                               leader
@@ -8555,10 +9945,20 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
                             border: Border.all(
                                 color: mine ? T.fire : T.stroke),
                           ),
-                          child: Text(
-                            '🔥 $fires',
-                            style: T.num(12.5,
-                                color: mine ? T.ember : T.text),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TiradIcon(TIGlyph.flame,
+                                  size: 13,
+                                  color: mine ? T.ember : T.iconGray,
+                                  filled: mine),
+                              const SizedBox(width: 4),
+                              Text(
+                                '$fires',
+                                style: T.num(12.5,
+                                    color: mine ? T.ember : T.text),
+                              ),
+                            ],
                           ),
                         ),
                       ),
@@ -8696,7 +10096,8 @@ class _TasksPageState extends State<TasksPage> {
               ),
               if (_drop != null && aiTasks.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                sectionLabel(tr('ai_day'), color: const Color(0xFFFF8A7A)),
+                sectionLabel(tr('ai_day'),
+                    color: const Color(0xFFFF8A7A), glyph: TIGlyph.star),
                 for (final t in aiTasks)
                   _taskCard(
                     Row(
@@ -8734,7 +10135,7 @@ class _TasksPageState extends State<TasksPage> {
                   ),
                 if (_drop!['quest'] != null) ...[
                   sectionLabel(trf('ai_quest_label', {'t': aiText(_drop!['quest']['title'])}),
-                      color: const Color(0xFFFF8A7A)),
+                      color: const Color(0xFFFF8A7A), glyph: TIGlyph.routePath),
                   Text(
                     aiText(_drop!['quest']['desc']),
                     style: const TextStyle(color: kMuted),
@@ -8744,7 +10145,7 @@ class _TasksPageState extends State<TasksPage> {
                 if (_drop!['route_theme'] != null) ...[
                   sectionLabel(
                       trf('ai_route_theme_label', {'t': aiText(_drop!['route_theme']['title'])}),
-                      color: const Color(0xFFFF8A7A)),
+                      color: const Color(0xFFFF8A7A), glyph: TIGlyph.moon),
                   Text(
                     aiText(_drop!['route_theme']['desc']),
                     style: const TextStyle(color: kMuted),
@@ -8759,7 +10160,8 @@ class _TasksPageState extends State<TasksPage> {
               ),
               const StepsCard(),
               const SizedBox(height: 10),
-              sectionLabel(tr('daily_task_label'), color: const Color(0xFFFF8A7A)),
+              sectionLabel(tr('daily_task_label'),
+                  color: const Color(0xFFFF8A7A), glyph: TIGlyph.target),
               _taskCard(
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -8784,14 +10186,24 @@ class _TasksPageState extends State<TasksPage> {
               if (weekQuest != null) ...[
                 sectionLabel(
                     trf('week_quest_label', {'t': aiText(weekQuest['theme'])}),
-                    color: const Color(0xFFFF8A7A)),
+                    color: const Color(0xFFFF8A7A), glyph: TIGlyph.calendar),
                 for (final s in (weekQuest['steps'] as List? ?? []))
                   Padding(
                     padding: const EdgeInsets.only(bottom: 6, left: 4),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('🔴 ', style: TextStyle(fontSize: 10)),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 5, right: 7),
+                          child: Container(
+                            width: 7,
+                            height: 7,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: T.fire,
+                            ),
+                          ),
+                        ),
                         Expanded(child: Text(aiText(s))),
                       ],
                     ),
@@ -8808,9 +10220,11 @@ class _TasksPageState extends State<TasksPage> {
 /* ---------------- badges, titles, levels, leaderboard ---------------- */
 
 class BadgeDef {
-  final String emoji, name, condition;
+  /* v2.0.12: the badge mark is a TI glyph, not an emoji. */
+  final TIGlyph glyph;
+  final String name, condition;
   final int current, threshold;
-  const BadgeDef(this.emoji, this.name, this.condition, this.current, this.threshold);
+  const BadgeDef(this.glyph, this.name, this.condition, this.current, this.threshold);
   bool get unlocked => current >= threshold;
   double get progress =>
       threshold <= 0 ? 1 : (current / threshold).clamp(0.0, 1.0);
@@ -8820,18 +10234,18 @@ List<BadgeDef> badgesOf(Map<String, dynamic> stats) {
   final places = (stats['places'] as List?)?.length ?? 0;
   final streak = math.max(statInt(stats, 'streak'), statInt(stats, 'bestStreak'));
   return [
-    BadgeDef('🌙', tr('b_first_night'), tr('c_1_night'), statInt(stats, 'nights'), 1),
-    BadgeDef('🎉', tr('lv_partier'), tr('c_5_nights'), statInt(stats, 'nights'), 5),
-    BadgeDef('🧭', tr('b_explorer'), tr('c_10_places'), places, 10),
-    BadgeDef('📸', tr('b_photographer'), tr('c_1_photo'), statInt(stats, 'photos'), 1),
-    BadgeDef('👁️', tr('b_eye'), tr('c_5_photos'), statInt(stats, 'photos'), 5),
-    BadgeDef('🗺️', tr('b_router'), tr('c_3_routes'), statInt(stats, 'routes'), 3),
-    BadgeDef('🏛️', tr('b_architect'), tr('c_10_routes'), statInt(stats, 'routes'), 10),
-    BadgeDef('🔥', tr('b_streak3'), tr('c_streak3'), streak, 3),
-    BadgeDef('☄️', tr('b_streak7'), tr('c_streak7'), streak, 7),
-    BadgeDef('🗳️', tr('b_voice'), tr('c_10_votes'), statInt(stats, 'votes'), 10),
-    BadgeDef('🎯', tr('b_quester'), tr('c_1_quest'), statInt(stats, 'quests'), 1),
-    BadgeDef('👑', tr('b_legend'), '1500 XP', xpOfStats(stats), 1500),
+    BadgeDef(TIGlyph.moon, tr('b_first_night'), tr('c_1_night'), statInt(stats, 'nights'), 1),
+    BadgeDef(TIGlyph.star, tr('lv_partier'), tr('c_5_nights'), statInt(stats, 'nights'), 5),
+    BadgeDef(TIGlyph.compass, tr('b_explorer'), tr('c_10_places'), places, 10),
+    BadgeDef(TIGlyph.camera, tr('b_photographer'), tr('c_1_photo'), statInt(stats, 'photos'), 1),
+    BadgeDef(TIGlyph.eye, tr('b_eye'), tr('c_5_photos'), statInt(stats, 'photos'), 5),
+    BadgeDef(TIGlyph.routePath, tr('b_router'), tr('c_3_routes'), statInt(stats, 'routes'), 3),
+    BadgeDef(TIGlyph.landmark, tr('b_architect'), tr('c_10_routes'), statInt(stats, 'routes'), 10),
+    BadgeDef(TIGlyph.flame, tr('b_streak3'), tr('c_streak3'), streak, 3),
+    BadgeDef(TIGlyph.bolt, tr('b_streak7'), tr('c_streak7'), streak, 7),
+    BadgeDef(TIGlyph.voteBox, tr('b_voice'), tr('c_10_votes'), statInt(stats, 'votes'), 10),
+    BadgeDef(TIGlyph.target, tr('b_quester'), tr('c_1_quest'), statInt(stats, 'quests'), 1),
+    BadgeDef(TIGlyph.trophy, tr('b_legend'), '1500 XP', xpOfStats(stats), 1500),
   ];
 }
 
@@ -8987,9 +10401,11 @@ class _BadgesPageState extends State<BadgesPage> {
                             ),
                             child: Opacity(
                               opacity: b.unlocked ? 1 : 0.45,
-                              child: Text(
-                                b.emoji,
-                                style: const TextStyle(fontSize: 24),
+                              child: TiradIcon(
+                                b.glyph,
+                                size: 26,
+                                color: b.unlocked ? Colors.white : T.iconGray,
+                                filled: b.unlocked,
                               ),
                             ),
                           ),
@@ -9024,7 +10440,8 @@ class _BadgesPageState extends State<BadgesPage> {
                 },
               ),
               const SizedBox(height: T.s20),
-              sectionLabel(tr('city_titles'), color: T.salmon),
+              sectionLabel(tr('city_titles'),
+                  color: T.salmon, glyph: TIGlyph.landmark),
               GlassCard(
                 padding: const EdgeInsets.symmetric(
                     horizontal: T.s16, vertical: T.s8),
@@ -9036,9 +10453,15 @@ class _BadgesPageState extends State<BadgesPage> {
                         padding: const EdgeInsets.symmetric(vertical: T.s8),
                         child: Row(
                           children: [
-                            Text(
-                              titles[i].unlocked ? '👑' : '🔒',
-                              style: const TextStyle(fontSize: 15),
+                            TiradIcon(
+                              titles[i].unlocked
+                                  ? TIGlyph.trophy
+                                  : TIGlyph.lock,
+                              size: 17,
+                              color: titles[i].unlocked
+                                  ? T.gold
+                                  : T.faint,
+                              filled: titles[i].unlocked,
                             ),
                             const SizedBox(width: T.s12),
                             Expanded(
@@ -9085,7 +10508,8 @@ class _BadgesPageState extends State<BadgesPage> {
                 ),
               ),
               const SizedBox(height: T.s20),
-              sectionLabel(tr('level_ladder'), color: T.salmon),
+              sectionLabel(tr('level_ladder'),
+                  color: T.salmon, glyph: TIGlyph.bolt),
               GlassCard(
                 padding: const EdgeInsets.symmetric(
                     horizontal: T.s16, vertical: T.s8),
@@ -9148,13 +10572,15 @@ class _BadgesPageState extends State<BadgesPage> {
                 ),
               ),
               const SizedBox(height: T.s20),
-              sectionLabel(tr('top_ghosts'), color: T.salmon),
+              sectionLabel(tr('top_ghosts'),
+                  color: T.salmon, glyph: TIGlyph.trophy),
               if (!_signedIn)
                 GlassCard(
                   gradientBorder: true,
                   child: Column(
                     children: [
-                      const Text('👑', style: TextStyle(fontSize: 34)),
+                      const TiradIcon(TIGlyph.trophy,
+                          size: 36, color: T.gold),
                       const SizedBox(height: T.s8),
                       Text(
                         tr('top_signin_title'),
@@ -9171,6 +10597,7 @@ class _BadgesPageState extends State<BadgesPage> {
                       FireButton(
                         text: tr('sign_in'),
                         small: true,
+                        icon: TIGlyph.bolt,
                         onPressed: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
                             builder: (_) => const LoginPage(),
@@ -9192,7 +10619,7 @@ class _BadgesPageState extends State<BadgesPage> {
                 )
               else if (_boardFailed || (_board?.isEmpty ?? true))
                 EmptyState(
-                  emoji: '👻',
+                  glyph: TIGlyph.ghost,
                   title: tr('top_empty_title'),
                   hint: tr('top_empty_hint'),
                 )
@@ -9327,6 +10754,28 @@ class _ProfileTabState extends State<ProfileTab> {
     ('steps', 'notif_steps'),
   ];
 
+  /* v2.0.12: one TI glyph per notification kind (settings rows). */
+  static TIGlyph _notifGlyph(String kind) {
+    switch (kind) {
+      case 'quest':
+        return TIGlyph.mapPin;
+      case 'friends':
+        return TIGlyph.ghost;
+      case 'votes':
+        return TIGlyph.voteBox;
+      case 'photos':
+        return TIGlyph.camera;
+      case 'streak':
+        return TIGlyph.flame;
+      case 'rain':
+        return TIGlyph.cloudRain;
+      case 'steps':
+        return TIGlyph.bolt;
+      default:
+        return TIGlyph.bell;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -9415,6 +10864,7 @@ class _ProfileTabState extends State<ProfileTab> {
               FireButton(
                 text: tr('photo_from_gallery'),
                 small: true,
+                icon: TIGlyph.photo,
                 onPressed: () {
                   Navigator.of(context).pop();
                   _pickGalleryAvatar();
@@ -9527,7 +10977,7 @@ class _ProfileTabState extends State<ProfileTab> {
         ),
       );
 
-  Widget _socialButton(String glyph, String url) => GestureDetector(
+  Widget _socialButton(TIGlyph glyph, String url) => GestureDetector(
         onTap: () {
           HapticFeedback.selectionClick();
           openLink(url);
@@ -9544,27 +10994,33 @@ class _ProfileTabState extends State<ProfileTab> {
               BoxShadow(color: kRed.withOpacity(0.25), blurRadius: 14),
             ],
           ),
-          child: Text(glyph, style: const TextStyle(fontSize: 23)),
+          child: TiradIcon(glyph, size: 24, color: T.iconGray),
         ),
       );
 
-  Widget _creatorRow(String emoji, String name, String handle,
+  Widget _creatorRow(TIGlyph glyph, String name, String handle,
       {bool main = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 9),
       child: Row(
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: kSurface2,
-              border: Border.all(color: kBorder),
+          // v2.0.12: the main creator's medallion is the spec's active
+          // badge (white filled star on the glowing gradient circle);
+          // the others keep the quiet gray medallion with a TI glyph.
+          if (main)
+            ActiveIconBadge(glyph: glyph, size: 44)
+          else
+            Container(
+              width: 44,
+              height: 44,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: kSurface2,
+                border: Border.all(color: kBorder),
+              ),
+              child: TiradIcon(glyph, size: 21, color: T.iconGray),
             ),
-            child: Text(emoji, style: const TextStyle(fontSize: 20)),
-          ),
           const SizedBox(width: 12),
           Text(
             name,
@@ -9635,7 +11091,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.11',
+                  'TiradA anon · 2.0.12',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -9650,22 +11106,24 @@ class _ProfileTabState extends State<ProfileTab> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _socialButton('✈️', 'https://t.me/anoncarmiel'),
-                    const SizedBox(width: 16),
                     _socialButton(
-                        '📸', 'https://www.instagram.com/black_prince_1.8'),
+                        TIGlyph.paperPlane, 'https://t.me/anoncarmiel'),
                     const SizedBox(width: 16),
-                    _socialButton(
-                        '🎵', 'https://www.tiktok.com/@black_prince_1.8'),
+                    _socialButton(TIGlyph.camera,
+                        'https://www.instagram.com/black_prince_1.8'),
+                    const SizedBox(width: 16),
+                    _socialButton(TIGlyph.musicNote,
+                        'https://www.tiktok.com/@black_prince_1.8'),
                   ],
                 ),
                 const SizedBox(height: 24),
                 sectionLabel(tr('made_by_ghosts')),
-                _creatorRow('👑', 'Яша', '@black_prince_18', main: true),
+                _creatorRow(TIGlyph.star, 'Яша', '@black_prince_18',
+                    main: true),
                 const Divider(color: Color(0xFF26262E), height: 1),
-                _creatorRow('🛠️', 'Вард', '@WardDeveloper'),
+                _creatorRow(TIGlyph.bolt, 'Вард', '@WardDeveloper'),
                 const Divider(color: Color(0xFF26262E), height: 1),
-                _creatorRow('🎨', 'Сева', '@Severarin'),
+                _creatorRow(TIGlyph.heart, 'Сева', '@Severarin'),
               ],
             ),
           ),
@@ -9715,7 +11173,7 @@ class _ProfileTabState extends State<ProfileTab> {
                     ],
                   ),
                   const SizedBox(height: 10),
-                  sectionLabel(tr('language')),
+                  sectionLabel(tr('language'), glyph: TIGlyph.globe),
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: T.s16, vertical: T.s4),
@@ -9759,8 +11217,8 @@ class _ProfileTabState extends State<ProfileTab> {
                       children: [
                         Row(
                           children: [
-                            const Text('📳',
-                                style: TextStyle(fontSize: 17)),
+                            const TiradIcon(TIGlyph.phone,
+                                size: 19, color: T.iconGray),
                             const SizedBox(width: T.s12),
                             Expanded(
                               child: Text(
@@ -9783,7 +11241,8 @@ class _ProfileTabState extends State<ProfileTab> {
                     ),
                   ),
                   const SizedBox(height: T.s24),
-                  sectionLabel(tr('notif_section'), color: T.salmon),
+                  sectionLabel(tr('notif_section'),
+                      color: T.salmon, glyph: TIGlyph.bell),
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: T.s16, vertical: T.s4),
@@ -9794,6 +11253,12 @@ class _ProfileTabState extends State<ProfileTab> {
                           if (i > 0) hairline(opacity: 0.6),
                           Row(
                             children: [
+                              TiradIcon(
+                                _notifGlyph(_notifKinds[i].$1),
+                                size: 18,
+                                color: T.iconGray,
+                              ),
+                              const SizedBox(width: T.s12),
                               Expanded(
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -9949,13 +11414,21 @@ class _ProfileTabState extends State<ProfileTab> {
                   borderRadius: BorderRadius.circular(T.rPill),
                   boxShadow: T.glowEmber,
                 ),
-                child: Text(
-                  '👑 $title',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const TiradIcon(TIGlyph.trophy,
+                        size: 12, color: Colors.white, filled: true),
+                    const SizedBox(width: 5),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -10010,12 +11483,28 @@ class _ProfileTabState extends State<ProfileTab> {
                               : kRed.withOpacity(0.35),
                         ),
                       ),
-                      child: Text(
-                        label,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TiradIcon(
+                            v == 'visible'
+                                ? TIGlyph.eye
+                                : (v == 'ghost'
+                                    ? TIGlyph.ghost
+                                    : TIGlyph.lock),
+                            size: 14,
+                            color: mode == v ? Colors.white : T.iconGray,
+                            filled: mode == v,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            label,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -10025,6 +11514,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ] else ...[
             PressButton(
               text: tr('signin_create'),
+              icon: TIGlyph.bolt,
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: (_) => const LoginPage()),
               ),
@@ -10113,6 +11603,9 @@ class _ProfileTabState extends State<ProfileTab> {
                 children: [
                   Row(
                     children: [
+                      const TiradIcon(TIGlyph.flame,
+                          size: 17, color: T.ember, filled: true),
+                      const SizedBox(width: 7),
                       Text(trf('streak_line', {'n': streak}),
                           style: T.head(15)),
                       const Spacer(),
@@ -10150,13 +11643,18 @@ class _ProfileTabState extends State<ProfileTab> {
                                       ]
                                     : null,
                               ),
-                              child: Text(
-                                filled(i) ? '🔥' : '·',
-                                style: TextStyle(
-                                  fontSize: filled(i) ? 14 : 16,
-                                  color: T.faint,
-                                ),
-                              ),
+                              child: filled(i)
+                                  ? const TiradIcon(TIGlyph.flame,
+                                      size: 15,
+                                      color: Colors.white,
+                                      filled: true)
+                                  : const Text(
+                                      '·',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        color: T.faint,
+                                      ),
+                                    ),
                             ),
                             const SizedBox(height: T.s4),
                             Text(
@@ -10183,6 +11681,7 @@ class _ProfileTabState extends State<ProfileTab> {
               Expanded(
                 child: FireButton(
                   text: tr('tasks_book'),
+                  icon: TIGlyph.target,
                   onPressed: widget.onOpenTasks,
                 ),
               ),
@@ -10190,6 +11689,7 @@ class _ProfileTabState extends State<ProfileTab> {
               Expanded(
                 child: GhostButton(
                   text: tr('badges_title'),
+                  icon: TIGlyph.trophy,
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => BadgesPage(
@@ -10203,7 +11703,8 @@ class _ProfileTabState extends State<ProfileTab> {
             ],
           ),
           const SizedBox(height: 20),
-          sectionLabel(tr('favorites_label'), color: const Color(0xFFFF8A7A)),
+          sectionLabel(tr('favorites_label'),
+              color: const Color(0xFFFF8A7A), glyph: TIGlyph.heart),
           if (favPlaces.isEmpty)
             Text(
               tr('favorites_empty'),
@@ -10220,8 +11721,7 @@ class _ProfileTabState extends State<ProfileTab> {
               ),
               child: Row(
                 children: [
-                  Text(kTypeEmoji[fp.type] ?? '📍',
-                      style: const TextStyle(fontSize: 18)),
+                  TiradIcon(typeGlyph(fp.type), size: 19, color: T.iconGray),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -10277,12 +11777,14 @@ class _ProfileTabState extends State<ProfileTab> {
                         ],
                       ),
                     ),
-                    const Text('👻', style: TextStyle(fontSize: 26)),
+                    const TiradIcon(TIGlyph.ghost,
+                        size: 28, color: T.iconGray),
                   ],
                 ),
                 const SizedBox(height: T.s12),
                 GhostButton(
                   text: tr('share_card'),
+                  icon: TIGlyph.share,
                   small: true,
                   onPressed: () => shareWithXp(
                     context,
@@ -10301,7 +11803,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.11',
+            'TiradA anon · 2.0.12',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
@@ -10315,6 +11817,7 @@ class _ProfileTabState extends State<ProfileTab> {
             text: tr('settings_btn'),
             small: true,
             primary: false,
+            icon: TIGlyph.gear,
             onPressed: _openSettings,
           ),
           const SizedBox(height: 10),
@@ -10322,6 +11825,7 @@ class _ProfileTabState extends State<ProfileTab> {
             text: tr('creators_btn'),
             small: true,
             primary: false,
+            icon: TIGlyph.ghost,
             onPressed: _openCreators,
           ),
         ],
