@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.13.
+// TiradA anon — native app (Flutter), v2.0.14.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -18,6 +18,7 @@ import 'package:flutter/services.dart'
     show rootBundle, HapticFeedback;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
@@ -890,37 +891,69 @@ class CityQuest {
     return quest;
   }
 
-  /* Mark the step matching (kind, place). Returns true exactly once —
-     when this call completes the whole quest and the bonus is due. */
-  static Future<bool> mark(
+  /* Persist a mutated steps list; returns true exactly once — when
+     this call completes the whole quest and the bonus is due. */
+  static Future<bool> _applyDone(
+      Map<String, dynamic> quest, List<Map<String, dynamic>> steps) async {
+    quest['steps'] = steps;
+    final prefs = await SharedPreferences.getInstance();
+    final allDone = steps.isNotEmpty && steps.every((st) => st['done'] == true);
+    var bonusDue = false;
+    if (allDone && quest['bonus'] != true) {
+      quest['bonus'] = true;
+      bonusDue = true;
+      await prefs.setBool('cityquest_done', true);
+    }
+    await prefs.setString('cityquest_steps', jsonEncode(quest));
+    revision.value++;
+    return bonusDue;
+  }
+
+  /* Mark the step matching (kind, place) from a real action.
+     Returns (newly completed steps, bonus due) — v2.0.14: callers
+     feed stats.questSteps / stats.quests from these, exactly once
+     per step (the done flag is the guard). */
+  static Future<(int, bool)> mark(
       String kind, Place place, List<Place> places, City city) async {
     try {
       final quest = await ensure(places, city);
       final steps = (quest['steps'] as List)
           .map((e) => (e as Map).cast<String, dynamic>())
           .toList();
-      var changed = false;
+      var newly = 0;
       for (final st in steps) {
         if (st['kind'] == kind && st['place'] == place.id && st['done'] != true) {
           st['done'] = true;
-          changed = true;
+          newly++;
         }
       }
-      if (!changed) return false;
-      quest['steps'] = steps;
-      final prefs = await SharedPreferences.getInstance();
-      final allDone = steps.every((st) => st['done'] == true);
-      var bonusDue = false;
-      if (allDone && quest['bonus'] != true) {
-        quest['bonus'] = true;
-        bonusDue = true;
-        await prefs.setBool('cityquest_done', true);
-      }
-      await prefs.setString('cityquest_steps', jsonEncode(quest));
-      revision.value++;
-      return bonusDue;
+      if (newly == 0) return (0, false);
+      final bonusDue = await _applyDone(quest, steps);
+      return (newly, bonusDue);
     } catch (_) {
-      return false;
+      return (0, false);
+    }
+  }
+
+  /* Manual tick (v2.0.14, Item 7): the owner asked for a checkbox —
+     «нету где поставить галочку». Ticking step [index] by hand goes
+     through the same done-flag guard and bonus gate as a real
+     action, so a step can never be credited twice however it was
+     completed. One-way: there is no un-tick. */
+  static Future<(bool, bool)> markStep(
+      int index, List<Place> places, City city) async {
+    try {
+      final quest = await ensure(places, city);
+      final steps = (quest['steps'] as List)
+          .map((e) => (e as Map).cast<String, dynamic>())
+          .toList();
+      if (index < 0 || index >= steps.length) return (false, false);
+      if (steps[index]['done'] == true) return (false, false);
+      steps[index]['done'] = true;
+      final bonusDue = await _applyDone(quest, steps);
+      return (true, bonusDue);
+    } catch (_) {
+      return (false, false);
     }
   }
 }
@@ -987,8 +1020,93 @@ class StepsTracker {
   }
 }
 
+/* Local notification display (v2.0.14). FCM does NOT display
+   notification messages while the app is in the foreground — before
+   2.0.14 a foreground push only became an in-app snackbar, which is
+   half of why «уведомления не приходят». This helper shows real
+   system notifications (foreground pushes + the Settings self-test)
+   through flutter_local_notifications on a single app channel. */
+class LocalNotify {
+  static final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
+  static bool _ready = false;
+
+  static const _channel = AndroidNotificationChannel(
+    'tirada_general',
+    'TiradA anon',
+    description: 'Городские уведомления TiradA anon',
+    importance: Importance.high,
+  );
+
+  static Future<bool> ensureInit() async {
+    if (_ready) return true;
+    try {
+      const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+      await _plugin.initialize(
+        const InitializationSettings(android: android),
+      );
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(_channel);
+      _ready = true;
+    } catch (e) {
+      debugPrint('TiradA LocalNotify init failed: $e');
+    }
+    return _ready;
+  }
+
+  /* Show a system notification now. Returns false when the display
+     path is unavailable so callers can fall back to a snackbar. */
+  static Future<bool> show(String title, String body) async {
+    if (!await ensureInit()) return false;
+    try {
+      await _plugin.show(
+        DateTime.now().millisecondsSinceEpoch & 0x7fffffff,
+        title,
+        body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'tirada_general',
+            'TiradA anon',
+            channelDescription: 'Городские уведомления TiradA anon',
+            importance: Importance.high,
+            priority: Priority.high,
+            icon: '@mipmap/ic_launcher',
+          ),
+        ),
+      );
+      return true;
+    } catch (e) {
+      debugPrint('TiradA LocalNotify show failed: $e');
+      return false;
+    }
+  }
+
+  /* Android 13+ runtime permission for notifications, via the plugin
+     (the same system dialog FCM's requestPermission drives). */
+  static Future<bool> requestPermission() async {
+    try {
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (android == null) return true; // non-Android: nothing to ask
+      return await android.requestNotificationsPermission() ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
 /* FCM pushes: permission, device token registration into device_tokens,
-   foreground messages surfaced to HomePage through [foreground]. */
+   foreground messages surfaced to HomePage through [foreground].
+   v2.0.14 hardening (owner: «уведомления скорее всего не приходят»):
+   the token is (re)registered at init, after every sign-in (auth
+   listener below — the common case was: app first launched as a
+   guest, token fetched then had no user to attach to and was dropped
+   forever), on every app start with a session, and on token refresh;
+   the Android 13+ permission is re-asked after sign-in and from the
+   «Ты в деле» sheet, not only once at first launch. Server-side
+   triggers are a separate wiring (send-fcm) — this is the client. */
 class PushService {
   static final ValueNotifier<RemoteMessage?> foreground =
       ValueNotifier<RemoteMessage?>(null);
@@ -1002,7 +1120,32 @@ class PushService {
       await m.requestPermission();
       FirebaseMessaging.onMessage.listen((msg) => foreground.value = msg);
       m.onTokenRefresh.listen(_saveToken);
+      // A sign-in after a guest first launch is exactly when the
+      // token must land in device_tokens — and when the permission
+      // deserves a second ask if the first one was dismissed.
+      supa.auth.onAuthStateChange.listen((state) {
+        if (state.event == AuthChangeEvent.signedIn ||
+            state.event == AuthChangeEvent.tokenRefreshed) {
+          ensurePermission();
+          registerCurrent();
+        }
+      });
       await registerCurrent();
+    } catch (_) {}
+  }
+
+  /* Ask for the notification permission if it is not granted yet.
+     Safe to call repeatedly (post-login, first «Ты в деле», Settings
+     self-test): Android shows the dialog only while it still can. */
+  static Future<void> ensurePermission() async {
+    try {
+      final settings =
+          await FirebaseMessaging.instance.getNotificationSettings();
+      if (settings.authorizationStatus == AuthorizationStatus.authorized ||
+          settings.authorizationStatus == AuthorizationStatus.provisional) {
+        return;
+      }
+      await FirebaseMessaging.instance.requestPermission();
     } catch (_) {}
   }
 
@@ -1023,13 +1166,48 @@ class PushService {
         'platform': 'android',
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
-    } catch (_) {}
+    } catch (e) {
+      // Was a silent catch — a failed registration must at least be
+      // visible in the log; the Settings self-test surfaces it in UI.
+      debugPrint('TiradA device_tokens upsert failed: $e');
+    }
   }
+
+  /* Settings self-test data: is a token row registered for the
+     current user, and when was it last refreshed? Null uid = guest. */
+  static Future<({int count, DateTime? last})> tokenStatus() async {
+    final uid = myUidOrNull;
+    if (uid == null) return (count: 0, last: null);
+    final rows = await supa
+        .from('device_tokens')
+        .select('token, updated_at')
+        .eq('user_id', uid)
+        .order('updated_at', ascending: false);
+    DateTime? last;
+    for (final r in rows as List) {
+      final t = DateTime.tryParse((r['updated_at'] ?? '').toString());
+      if (t != null && (last == null || t.isAfter(last))) last = t;
+    }
+    return (count: (rows as List).length, last: last);
+  }
+}
+
+/* A pick/processing failure, as opposed to a user cancel. Before
+   2.0.14 pickAndProcessImage swallowed EVERY error into the same
+   null as a cancel, so a denied camera permission or a picker
+   failure made «Добавить фото» silently do nothing (owner: «отправка
+   фото не работает»). Callers now catch this and say what happened. */
+class ImagePickException implements Exception {
+  final Object cause;
+  ImagePickException(this.cause);
+  @override
+  String toString() => 'ImagePickException: $cause';
 }
 
 /* Pick an image and re-encode it as JPEG. Decoding + re-encoding strips
    EXIF (GPS coordinates included) — the same privacy trick as the web
-   app's canvas re-encode. Returns null when the user cancels. */
+   app's canvas re-encode. Returns null ONLY when the user cancels;
+   failures throw ImagePickException. */
 Future<Uint8List?> pickAndProcessImage(ImageSource source) async {
   try {
     final x = await ImagePicker().pickImage(
@@ -1043,8 +1221,8 @@ Future<Uint8List?> pickAndProcessImage(ImageSource source) async {
     final decoded = img.decodeImage(bytes);
     if (decoded == null) return bytes;
     return Uint8List.fromList(img.encodeJpg(decoded, quality: 88));
-  } catch (_) {
-    return null;
+  } catch (e) {
+    throw ImagePickException(e);
   }
 }
 
@@ -1103,10 +1281,96 @@ int xpOfStats(Map<String, dynamic> raw) {
 
 int dayIndex() => DateTime.now().millisecondsSinceEpoch ~/ 86400000;
 
-String dayKey() {
-  final d = DateTime.now();
+String dayKeyOf(DateTime d) {
   String p(int n) => n < 10 ? '0$n' : '$n';
   return '${d.year}-${p(d.month)}-${p(d.day)}';
+}
+
+String dayKey() => dayKeyOf(DateTime.now());
+
+/* ============================ STREAK (v2.0.14) ============================
+   ROOT CAUSE of «серия дней не работает»: before 2.0.14 NOTHING in the
+   app ever wrote stats['streak'] / stats['bestStreak'] — the counters
+   existed in normStats, were read by the profile display, the badges
+   and the XP formula, but no code path incremented them (the check-in
+   comment even said "streak is left to its own logic" — that logic did
+   not exist). The streak therefore sat at 0 forever.
+
+   This service owns the truth in prefs (streak_count, streak_best,
+   streak_last_day — LOCAL calendar dates via dayKeyOf, never UTC):
+   a day counts as active when HomePage funnels a meaningful action
+   through markActive() (any Item-7 completion toggle, a photo
+   check-in/upload, a place or route check-in). First activity of a
+   new day: last active yesterday → streak+1; older/none → streak=1;
+   same day → unchanged. best = max(best, streak), never decreases.
+   HomePage mirrors the returned values into stats (the single source
+   the profile, badges and xpOfStats read) and persists them with the
+   rest of stats, so the streak survives restarts for guests (prefs +
+   local_stats) and signed-in users (cloud profile) alike. */
+class StreakService {
+  static const _kCount = 'streak_count';
+  static const _kBest = 'streak_best';
+  static const _kLast = 'streak_last_day';
+
+  /* Record activity for today; returns the (streak, best) to display. */
+  static Future<(int, int)> markActive() async {
+    final prefs = await SharedPreferences.getInstance();
+    final today = dayKey();
+    final last = prefs.getString(_kLast) ?? '';
+    var streak = prefs.getInt(_kCount) ?? 0;
+    var best = prefs.getInt(_kBest) ?? 0;
+    if (last != today) {
+      final yesterday = dayKeyOf(DateTime.now().subtract(
+          const Duration(days: 1)));
+      streak = (last == yesterday && streak > 0) ? streak + 1 : 1;
+      await prefs.setString(_kLast, today);
+      await prefs.setInt(_kCount, streak);
+    }
+    if (streak > best) {
+      best = streak;
+      await prefs.setInt(_kBest, best);
+    }
+    return (streak, best);
+  }
+
+  /* Read-only view for display: a streak whose last active day is
+     older than yesterday is broken and reads 0 (best is kept). */
+  static Future<(int, int)> current() async {
+    final prefs = await SharedPreferences.getInstance();
+    final last = prefs.getString(_kLast) ?? '';
+    final best = prefs.getInt(_kBest) ?? 0;
+    if (last == dayKey() ||
+        last == dayKeyOf(DateTime.now().subtract(const Duration(days: 1)))) {
+      return (prefs.getInt(_kCount) ?? 0, best);
+    }
+    return (0, best);
+  }
+
+  /* One-time reconciliation at load: seed prefs from the stats copy
+     (cloud profile / local_stats) when prefs have never seen a streak
+     (fresh install, reinstall), then persist a broken streak as 0 so
+     every reader agrees. Returns the values stats should show. */
+  static Future<(int, int)> reconcile(Map<String, dynamic> stats) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getString(_kLast) == null) {
+      final sStreak = statInt(stats, 'streak');
+      final sBest = math.max(sStreak, statInt(stats, 'bestStreak'));
+      if (sBest > 0) {
+        // Adopt the stored record; treat it as "active yesterday" so
+        // it displays today and continues if today becomes active.
+        await prefs.setInt(_kCount, sStreak);
+        await prefs.setInt(_kBest, sBest);
+        await prefs.setString(
+            _kLast,
+            dayKeyOf(DateTime.now().subtract(const Duration(days: 1))));
+      }
+    }
+    final cur = await current();
+    if (cur.$1 == 0 && (prefs.getInt(_kCount) ?? 0) != 0) {
+      await prefs.setInt(_kCount, 0); // broken — persist the reset
+    }
+    return cur;
+  }
 }
 
 /* ============================ I18N ============================
@@ -1578,6 +1842,77 @@ const Map<String, (String, String, String)> kStr = {
   'loading': ('Загрузка…', 'טוען…', 'Loading…'),
   'week_quest_label': ('Квест недели: {t}', 'קווסט השבוע: {t}', 'Quest of the week: {t}'),
   'daily_task_label': ('Задание дня', 'משימת היום', 'Daily task'),
+  /* v2.0.14: staged failure messages (photo/review), progress lines,
+     route-task section and the notification self-test. */
+  'progress_of': ('{a} из {b}', '{a} מתוך {b}', '{a} of {b}'),
+  'photo_pick_fail': (
+    'Не удалось открыть фото — попробуй ещё раз',
+    'לא ניתן לפתוח את התמונה — נסה שוב',
+    "Couldn't open the photo — try again"
+  ),
+  'photo_upload_fail': (
+    'Фото не загрузилось — проверь интернет и попробуй ещё раз',
+    'התמונה לא עלתה — בדוק את החיבור ונסה שוב',
+    "The photo didn't upload — check your connection and try again"
+  ),
+  'photo_save_fail': (
+    'Фото загрузилось, но не сохранилось в галерее места',
+    'התמונה עלתה אך לא נשמרה בגלריית המקום',
+    'The photo uploaded but was not saved to the place gallery'
+  ),
+  'review_save_fail': (
+    'Отзыв не отправился — проверь интернет и попробуй ещё раз',
+    'הביקורת לא נשלחה — בדוק את החיבור ונסה שוב',
+    "The review didn't send — check your connection and try again"
+  ),
+  'route_tasks_title': ('Задания маршрута', 'משימות המסלול', 'Route tasks'),
+  'route_stops_title': ('Точки маршрута', 'נקודות המסלול', 'Route stops'),
+  'route_task_done': (
+    'Задание маршрута выполнено · +20 XP',
+    'משימת המסלול הושלמה · +20 XP',
+    'Route task complete · +20 XP'
+  ),
+  'week_quest_done': (
+    'Квест недели выполнен! · +100 XP',
+    'קווסט השבוע הושלם! · +100 XP',
+    'Weekly quest complete! · +100 XP'
+  ),
+  'notif_check_title': (
+    'Проверка уведомлений',
+    'בדיקת התראות',
+    'Notification check'
+  ),
+  'notif_check_btn': (
+    'Проверить уведомления',
+    'בדיקת התראות',
+    'Test notifications'
+  ),
+  'notif_checking': ('Проверяю…', 'בודק…', 'Checking…'),
+  'notif_test_title': (
+    'Тестовое уведомление',
+    'התראת בדיקה',
+    'Test notification'
+  ),
+  'notif_test_body': (
+    'Уведомления работают — так будут приходить новости города',
+    'ההתראות עובדות — כך יגיעו חדשות העיר',
+    'Notifications work — this is how city news will arrive'
+  ),
+  'notif_token_ok': (
+    'Токен зарегистрирован · обновлён {t}',
+    'הטוקן רשום · עודכן {t}',
+    'Token registered · updated {t}'
+  ),
+  'notif_token_none': (
+    'Токен не зарегистрирован на сервере — нажми проверку',
+    'הטוקן לא רשום בשרת — לחץ על בדיקה',
+    'No token registered on the server — run the check'
+  ),
+  'notif_guest_push': (
+    'Гостю пуши не приходят: серверу некуда их слать. Войди в аккаунт — и нажми проверку',
+    'לאורח לא מגיעות התראות: לשרת אין לאן לשלוח. היכנס לחשבון — ולחץ על בדיקה',
+    'Guests get no pushes: the server has nowhere to send them. Sign in — then run the check'
+  ),
   'b_first_night': ('Первая ночь', 'הלילה הראשון', 'First Night'),
   'c_1_night': ('1 ночь в деле', 'לילה אחד בפנים', '1 night in'),
   'c_5_nights': ('5 ночей в деле', '5 לילות בפנים', '5 nights in'),
@@ -2431,41 +2766,91 @@ class GradientProgress extends StatelessWidget {
   final double height;
   const GradientProgress({super.key, required this.value, this.height = 10});
 
+  /* v2.0.14 (Item 8) — knob geometry, measured before/after.
+     BEFORE: the knob (height+3 = 13 dp at the default height 10)
+     lived in an Align inside a ClipRRect stack only `height` tall —
+     so the clip sliced 1.5 dp off its top and bottom (it rendered
+     as a squashed pill, never a circle), and Align's (W−k)·v + k/2
+     centring put the knob centre at v·W + k·(0.5−v): exact only at
+     v=0.5, drifting up to ±6.5 dp away from the fill boundary
+     toward the ends.
+     AFTER: the box is knobD = height+6 tall; the track (height) is
+     vertically centred in it and inset by knobR on both sides —
+     the Material-slider layout — the fill boundary sits at
+     knobR + v·(W−2·knobR) and the knob (diameter knobD) is
+     Positioned with its centre EXACTLY on that boundary and on the
+     track's vertical centre. Nothing clips the knob. This one
+     widget backs the level/XP scale and the steps scale (and the
+     badge rows), so both are fixed consistently. */
   @override
   Widget build(BuildContext context) {
+    final knobD = height + 6;
+    final knobR = knobD / 2;
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: value.clamp(0, 1)),
       duration: T.dEpic,
       curve: T.cOut,
-      builder: (_, v, __) => ClipRRect(
-        borderRadius: BorderRadius.circular(height),
-        child: Stack(
-          children: [
-            Container(height: height, color: T.surfaceHi),
-            FractionallySizedBox(
-              widthFactor: v,
-              child: Container(
-                height: height,
-                decoration: const BoxDecoration(gradient: T.fireGrad),
-              ),
-            ),
-            if (v > 0.02)
-              Align(
-                alignment: Alignment(v * 2 - 1, 0),
-                child: Container(
-                  width: height + 3,
-                  height: height + 3,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: T.gold,
-                    boxShadow: [
-                      BoxShadow(color: T.ember.withOpacity(0.9), blurRadius: 8),
-                    ],
+      builder: (_, v, __) => LayoutBuilder(
+        builder: (context, constraints) {
+          final w = constraints.maxWidth;
+          final trackW = math.max(0.0, w - knobD);
+          final fillW = trackW * v;
+          return SizedBox(
+            height: knobD,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // Track, vertically centred, inset by the knob radius.
+                Positioned(
+                  left: knobR,
+                  right: knobR,
+                  top: (knobD - height) / 2,
+                  child: Container(
+                    height: height,
+                    decoration: BoxDecoration(
+                      color: T.surfaceHi,
+                      borderRadius: BorderRadius.circular(height),
+                    ),
                   ),
                 ),
-              ),
-          ],
-        ),
+                // Fill, ending exactly where the knob centre sits.
+                if (v > 0)
+                  Positioned(
+                    left: knobR,
+                    top: (knobD - height) / 2,
+                    child: Container(
+                      width: fillW,
+                      height: height,
+                      decoration: BoxDecoration(
+                        gradient: T.fireGrad,
+                        borderRadius: BorderRadius.circular(height),
+                      ),
+                    ),
+                  ),
+                // Knob: centre = (knobR + fillW, knobD/2) — exactly the
+                // fill boundary, exactly the track's mid-height.
+                if (v > 0.02)
+                  Positioned(
+                    left: fillW,
+                    top: 0,
+                    child: Container(
+                      width: knobD,
+                      height: knobD,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: T.gold,
+                        border: Border.all(color: T.bg, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                              color: T.ember.withOpacity(0.9), blurRadius: 8),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -2712,7 +3097,7 @@ enum TIGlyph {
   x, chevronBack, plus, minus, navArrow, compass, cloud, sun, moon,
   cloudRain, snow, fog, storm, phone, globe, trash, users, voteBox,
   target, calendar, link, share, lock, trophy, dice, walk, car, bus,
-  pencil, chat,
+  pencil, chat, clock,
 }
 
 /* Place type → TI glyph (map pins, chips, cards — replaces the old
@@ -3085,6 +3470,12 @@ class TIPaint {
               ..strokeCap = StrokeCap.round
               ..strokeJoin = StrokeJoin.round)
             : stroke);
+      case TIGlyph.clock:
+        // v2.0.14: added for the route hero's time chip — same
+        // 24-grid monoline language as the rest of the set.
+        circle(12, 12, 8.4);
+        line(12, 7.6, 12, 12);
+        line(12, 12, 15.4, 14.2);
       case TIGlyph.x:
         line(6, 6, 18, 18);
         line(18, 6, 6, 18);
@@ -4364,7 +4755,14 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     final title = msg.notification?.title ?? 'TiradA anon';
     final body = msg.notification?.body ?? '';
-    snack(context, body.isEmpty ? '🔔 $title' : '🔔 $title — $body');
+    // v2.0.14: a foreground push becomes a REAL system notification —
+    // FCM never displays foreground messages itself, and the old
+    // snackbar-only path is half of why pushes «не приходили». The
+    // snackbar remains as a fallback when the display path is down.
+    final shown = await LocalNotify.show(title, body);
+    if (!shown && mounted) {
+      snack(context, body.isEmpty ? title : '$title — $body');
+    }
   }
 
   Future<void> _load() async {
@@ -4426,6 +4824,19 @@ class _HomePageState extends State<HomePage> {
         _persistLocal();
         PushService.registerCurrent(); // FCM token → device_tokens
       }
+      // v2.0.14: reconcile the streak with its prefs-owned truth
+      // (seed from stats on first run, zero a broken streak) and
+      // mirror the result into stats so profile/badges/XP agree.
+      final sv = await StreakService.reconcile(_stats);
+      if (mounted &&
+          (statInt(_stats, 'streak') != sv.$1 ||
+              statInt(_stats, 'bestStreak') != sv.$2)) {
+        setState(() {
+          _stats['streak'] = sv.$1;
+          _stats['bestStreak'] = sv.$2;
+        });
+        _saveStats();
+      }
       if (_city != null) _fetchTemp(_city!);
       _loadFriends();
       // A fix may already exist by the time the data lands — judge
@@ -4483,6 +4894,25 @@ class _HomePageState extends State<HomePage> {
   void _bumpStat(String key, int delta) {
     setState(() => _stats[key] = statInt(_stats, key) + delta);
     _saveStats();
+    // Every stat bump in this app is a meaningful action (task /
+    // quest step / quest / route / photo completion) — it feeds the
+    // daily streak (v2.0.14; before, nothing ever incremented it).
+    _touchStreak();
+  }
+
+  /* Mirror StreakService's verdict into stats (profile display,
+     badges and the xpOfStats streak bonus all read stats). */
+  Future<void> _touchStreak() async {
+    final r = await StreakService.markActive();
+    if (!mounted) return;
+    if (statInt(_stats, 'streak') != r.$1 ||
+        statInt(_stats, 'bestStreak') != r.$2) {
+      setState(() {
+        _stats['streak'] = r.$1;
+        _stats['bestStreak'] = r.$2;
+      });
+      _saveStats();
+    }
   }
 
   void _addAiXp(int xp) {
@@ -4567,8 +4997,15 @@ class _HomePageState extends State<HomePage> {
   Future<void> _cityQuestMark(String kind, Place p) async {
     final city = _city;
     if (city == null) return;
-    final bonusDue = await CityQuest.mark(kind, p, _cityPlaces, city);
-    if (bonusDue && mounted) {
+    final (steps, bonusDue) = await CityQuest.mark(kind, p, _cityPlaces, city);
+    if (!mounted) return;
+    // v2.0.14: quest steps and finished quests finally feed the
+    // stats counters xpOfStats has always priced (questSteps ×15,
+    // quests ×100) — before, only the flat +50 aiXp bonus existed
+    // and the counters stayed 0 forever.
+    if (steps > 0) _bumpStat('questSteps', steps);
+    if (bonusDue) {
+      _bumpStat('quests', 1);
       _addAiXp(50);
       fireConfetti(context);
       snack(context, tr('quest_done_snack'));
@@ -4599,6 +5036,7 @@ class _HomePageState extends State<HomePage> {
     if (changed) {
       setState(() {});
       _saveStats();
+      _touchStreak(); // a place check-in is a meaningful day action
     }
     _cityQuestMark('checkin', p);
   }
@@ -4668,6 +5106,8 @@ class _HomePageState extends State<HomePage> {
           stats: _stats,
           onTaskDone: () => _bumpStat('tasks', 1),
           onAiXp: _addAiXp,
+          onQuestStep: () => _bumpStat('questSteps', 1),
+          onQuestDone: () => _bumpStat('quests', 1),
           cityPlaces: _cityPlaces,
           city: _city,
         ),
@@ -4677,6 +5117,9 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _openDeal() async {
     HapticFeedback.mediumImpact();
+    // v2.0.14: first «Ты в деле» is a sensible moment to (re)ask the
+    // notification permission — «друг в деле» pushes are its point.
+    PushService.ensurePermission();
     await _loadFriends();
     if (!mounted || _city == null) return;
     await showModalBottomSheet<void>(
@@ -5884,24 +6327,64 @@ class _PlaceSheetState extends State<PlaceSheet> {
     } catch (_) {}
   }
 
+  bool _reviewSending = false;
+
   Future<void> _submitReview() async {
     final uid = myUidOrNull;
-    if (uid == null) return;
+    if (uid == null) {
+      // v2.0.14 (Item 3): this was a SILENT `return` — the form is
+      // rendered from a build-time auth check, so with an expired
+      // session the visible «Оставить отзыв» button did literally
+      // nothing. Now it explains and routes to sign-in, exactly
+      // like the photo flow.
+      snack(context, tr('signin_to_review'));
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const LoginPage()),
+      );
+      return;
+    }
+    if (_reviewSending) return;
+    setState(() => _reviewSending = true);
+    final text = _reviewCtl.text.trim();
+    final rating = _myRating;
+    final ghost = ghostLabelFor(uid);
     try {
       await supa.from('place_reviews').insert({
         'place_id': _place.id,
         'user_id': uid,
-        'ghost': ghostLabelFor(uid),
-        'rating': _myRating,
-        'text': _reviewCtl.text.trim(),
+        'ghost': ghost,
+        'rating': rating,
+        'text': text,
       });
-      _reviewCtl.clear();
-      if (!mounted) return;
-      snack(context, tr('review_posted'));
-      _loadReviews();
-    } catch (_) {
-      if (mounted) snack(context, tr('review_fail'));
+    } catch (e) {
+      // Was: catch(_) → one generic snackbar, real error swallowed.
+      debugPrint('TiradA place_reviews insert failed: $e');
+      if (mounted) {
+        snack(context, tr('review_save_fail'));
+        setState(() => _reviewSending = false);
+      }
+      return;
     }
+    _reviewCtl.clear();
+    if (!mounted) return;
+    // Optimistic prepend: the new review and the average rating move
+    // immediately; the authoritative reload follows right behind.
+    setState(() {
+      _reviews = [
+        {
+          'place_id': _place.id,
+          'user_id': uid,
+          'ghost': ghost,
+          'rating': rating,
+          'text': text,
+          'created_at': DateTime.now().toIso8601String(),
+        },
+        ..._reviews,
+      ];
+      _reviewSending = false;
+    });
+    snack(context, tr('review_posted'));
+    _loadReviews();
   }
 
   /* Publish a photo to this place: pick → EXIF-stripped re-encode →
@@ -5940,7 +6423,16 @@ class _PlaceSheetState extends State<PlaceSheet> {
       ),
     );
     if (source == null || !mounted) return;
-    final bytes = await pickAndProcessImage(source);
+    final Uint8List? bytes;
+    try {
+      bytes = await pickAndProcessImage(source);
+    } on ImagePickException catch (e) {
+      // Was: every picker failure collapsed into the same null as a
+      // cancel and the flow died silently (v2.0.14, Item 2).
+      debugPrint('TiradA photo pick failed: $e');
+      if (mounted) snack(context, tr('photo_pick_fail'));
+      return;
+    }
     if (bytes == null || !mounted) return;
     final vis = await showModalBottomSheet<String>(
       context: context,
@@ -5980,9 +6472,16 @@ class _PlaceSheetState extends State<PlaceSheet> {
     );
     if (vis == null || !mounted) return; // «Не показывать» = cancel
     setState(() => _uploading = true);
+    // v2.0.14 (Item 2): uid-FIRST storage path — the bucket layout
+    // proven by the working avatars bucket ('<uid>/avatar.jpg'). The
+    // old '<place_id>/<uid>-…' path put the place id in the owner
+    // segment of the path, which a folder-ownership storage policy
+    // rejects for every single upload. Failures are now staged: the
+    // snackbar names the stage that broke instead of one generic
+    // «не получилось», and the real error goes to the log.
+    final path =
+        '$uid/${_place.id}-${DateTime.now().millisecondsSinceEpoch}.jpg';
     try {
-      final path =
-          '${_place.id}/$uid-${DateTime.now().millisecondsSinceEpoch}.jpg';
       await supa.storage.from('place-photos').uploadBinary(
             path,
             bytes,
@@ -5991,21 +6490,35 @@ class _PlaceSheetState extends State<PlaceSheet> {
               upsert: true,
             ),
           );
-      final url = supa.storage.from('place-photos').getPublicUrl(path);
+    } catch (e) {
+      debugPrint('TiradA place-photo upload failed: $e');
+      if (mounted) {
+        snack(context, tr('photo_upload_fail'));
+        setState(() => _uploading = false);
+      }
+      return;
+    }
+    final url = supa.storage.from('place-photos').getPublicUrl(path);
+    try {
       await supa.from('place_photos').insert({
         'place_id': _place.id,
         'user_id': uid,
         'url': url,
         'visibility': vis,
       });
-      widget.onPhotoUploaded?.call(_place);
-      if (!mounted) return;
-      fireConfetti(context);
-      snack(context, tr('photo_posted'));
-      _loadPhotos();
-    } catch (_) {
-      if (mounted) snack(context, tr('photo_fail'));
+    } catch (e) {
+      debugPrint('TiradA place_photos insert failed: $e');
+      if (mounted) {
+        snack(context, tr('photo_save_fail'));
+        setState(() => _uploading = false);
+      }
+      return;
     }
+    widget.onPhotoUploaded?.call(_place);
+    if (!mounted) return;
+    fireConfetti(context);
+    snack(context, tr('photo_posted'));
+    _loadPhotos();
     if (mounted) setState(() => _uploading = false);
   }
 
@@ -7420,13 +7933,26 @@ class _MapTabState extends State<MapTab> {
     return bytes;
   }
 
-  /* ---------------- side zoom panels (v2.0.10) ----------------
-     «Как в Бампе»: invisible tap strips along both screen edges —
-     upper half zooms in, lower half zooms out, hold to keep zooming.
-     Fully transparent by the owner's word: no fill, no border, only
-     faint + / − glyphs so the zones stay discoverable. They sit
-     between the route chip and the bottom pulse chip and intercept
-     touches only on their own 48 dp strip. */
+  /* ---------------- side zoom panels (v2.0.10, rebuilt v2.0.14) ----
+     «Как в Бампе»: tap strips along both screen edges — upper half
+     zooms in, lower half zooms out, hold to keep zooming. Only faint
+     + / − glyphs at 28% so the zones stay discoverable.
+     v2.0.14 ROOT CAUSE (owner: «на карте нету приближения и
+     отдаления по бокам»): the zones were GestureDetectors over a
+     fully transparent Container, stacked over the MapLibre platform
+     view. A tap/long-press recogniser has to WIN the gesture arena
+     against the native view's own touch handling before it fires —
+     over an Android platform view that contest is exactly where
+     these recognisers starved: the strips rendered (the glyphs were
+     there) but taps never became zoom steps, unchanged since
+     v2.0.10. The rebuild listens to RAW pointer events with a
+     Listener (HitTestBehavior.opaque): a pointer-down is delivered
+     in the hit-test phase, before any arena exists, so the strip
+     claims its 48 dp first and the map never sees the touch. The
+     zone also paints a real (4% white) box instead of a transparent
+     one, so the hit region is an actual painted render object on
+     every renderer. Each step calls the same animateCamera path
+     that demonstrably works for map centring, plus a haptic tick. */
 
   void _zoomStep(bool zoomIn) {
     final ctl = _ctl;
@@ -7452,14 +7978,18 @@ class _MapTabState extends State<MapTab> {
 
   Widget _zoomZone(bool zoomIn) {
     return Expanded(
-      child: GestureDetector(
+      child: Listener(
         behavior: HitTestBehavior.opaque,
-        onTap: () => _zoomStep(zoomIn),
-        onLongPressStart: (_) => _startZoomRepeat(zoomIn),
-        onLongPressEnd: (_) => _stopZoomRepeat(),
-        onLongPressCancel: _stopZoomRepeat,
+        onPointerDown: (_) {
+          tick();
+          _startZoomRepeat(zoomIn);
+        },
+        onPointerUp: (_) => _stopZoomRepeat(),
+        onPointerCancel: (_) => _stopZoomRepeat(),
         child: Container(
-          color: Colors.transparent,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.04),
+          ),
           alignment: Alignment.center,
           child: Text(
             zoomIn ? '+' : '−',
@@ -7744,7 +8274,7 @@ class _PlacesTabState extends State<PlacesTab> {
   String? _type;
   String _sort = 'vibe';
   bool _hotOnly = false;
-  Map<String, dynamic>? _drop;
+  dynamic _dailyEntry;
 
   static const _sortLabels = {
     'vibe': 'sort_vibe',
@@ -7757,22 +8287,25 @@ class _PlacesTabState extends State<PlacesTab> {
   @override
   void initState() {
     super.initState();
-    _loadDrop();
+    _loadDaily();
   }
 
-  /* AI day banner data — same daily_drops read as the Tasks page. */
-  Future<void> _loadDrop() async {
+  /* «Задание дня» banner data (v2.0.14, Item 6 — replaces the
+     «ИИ дня» banner): today's entry of the daily pool in tasks.json —
+     the same deterministic pick the Tasks page card shows. The
+     daily_drops pipeline stays untouched server-side; the client
+     no longer presents it. */
+  Future<void> _loadDaily() async {
     try {
-      final row = await supa
-          .from('daily_drops')
-          .select('data')
-          .eq('day', dayKey())
-          .maybeSingle();
-      if (row != null && row['data'] is Map && mounted) {
-        setState(() => _drop = (row['data'] as Map).cast<String, dynamic>());
+      final raw = await rootBundle.loadString('assets/tasks.json');
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final daily = (data['daily'] as List?) ?? [];
+      if (daily.isNotEmpty && mounted) {
+        setState(() => _dailyEntry = daily[dayIndex() % daily.length]);
       }
     } catch (_) {}
   }
+
 
   void _openPlace(Place p) {
     showPlaceSheet(
@@ -7854,8 +8387,6 @@ class _PlacesTabState extends State<PlacesTab> {
     final typesPresent = kPinTypes.where(
       (t) => all.any((p) => p.type == t),
     );
-    final aiTasks = (_drop?['tasks'] as List?) ?? [];
-    final routeTheme = _drop?['route_theme'];
 
     return GlowBackground(
       child: Column(
@@ -7908,7 +8439,7 @@ class _PlacesTabState extends State<PlacesTab> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      if (_drop != null && routeTheme != null)
+                      if (_dailyEntry != null)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(
                               T.s16, T.s8, T.s16, T.s4),
@@ -7920,28 +8451,12 @@ class _PlacesTabState extends State<PlacesTab> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  sectionLabel(tr('ai_day'),
-                                      color: T.salmon, glyph: TIGlyph.star),
-                                  Row(
-                                    children: [
-                                      const TiradIcon(TIGlyph.moon,
-                                          size: 17, color: T.ember),
-                                      const SizedBox(width: 7),
-                                      Flexible(
-                                        child: Text(
-                                          aiText(routeTheme['title']),
-                                          style: T.head(16),
-                                        ),
-                                      ),
-                                    ],
+                                  sectionLabel(tr('daily_task_label'),
+                                      color: T.salmon, glyph: TIGlyph.target),
+                                  Text(
+                                    aiText(_dailyEntry),
+                                    style: T.body(14.5, w: FontWeight.w600),
                                   ),
-                                  if (aiTasks.isNotEmpty) ...[
-                                    const SizedBox(height: T.s4),
-                                    Text(
-                                      trf('first_task', {'t': aiText((aiTasks.first as Map)['title'])}),
-                                      style: T.body(13, color: T.muted),
-                                    ),
-                                  ],
                                   const SizedBox(height: T.s4),
                                   Text(
                                     tr('open_tasks'),
@@ -8318,6 +8833,14 @@ class _RouteTabState extends State<RouteTab> {
   final Set<int> _done = {};
   bool _counted = false;
 
+  /* Route theme tasks ticked for the ACTIVE route (v2.0.14, Item 7):
+     prefs 'route_tasks_done_<routeKey>' — a JSON list of stop
+     indices whose _taskFor(i) task is ticked. Deliberately separate
+     from the ≤150 m check-ins (_done): a task is ticked when done,
+     a check-in still requires actually being there. One-way —
+     a ticked task cannot be un-ticked (anti-farm). */
+  final Set<int> _routeTasksDone = {};
+
   List<Map<String, dynamic>> _savedRoutes = [];
   final Map<String, List<ReadyRoute>> _readyCache = {};
   Set<String> _readyCounted = {};
@@ -8476,8 +8999,43 @@ class _RouteTabState extends State<RouteTab> {
       if (ar != null) _restoreActive(jsonDecode(ar));
     } catch (_) {}
     if (_stops.isEmpty) _buildEvening();
+    _loadRouteTasksDone();
     _refreshRoad();
     if (mounted) setState(() {});
+  }
+
+  Future<void> _loadRouteTasksDone() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('route_tasks_done_$_routeKey');
+      final loaded = <int>{};
+      if (raw != null) {
+        loaded.addAll(
+            (jsonDecode(raw) as List).map((e) => (e as num).toInt()));
+      }
+      _routeTasksDone
+        ..clear()
+        ..addAll(loaded);
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  Future<void> _toggleRouteTask(int i) async {
+    if (_routeTasksDone.contains(i)) return; // one-way, anti-farm
+    setState(() => _routeTasksDone.add(i));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'route_tasks_done_$_routeKey',
+        jsonEncode(_routeTasksDone.toList()),
+      );
+    } catch (_) {}
+    widget.onTaskDone(); // stats.tasks +1, exactly once per task
+    if (!mounted) return;
+    snack(context, tr('route_task_done'));
+    if (_stops.isNotEmpty && _routeTasksDone.length >= _stops.length) {
+      fireConfetti(context);
+    }
   }
 
   void _restoreActive(dynamic raw) {
@@ -8540,31 +9098,94 @@ class _RouteTabState extends State<RouteTab> {
 
   /* ---------------- evening builder (from real geolocation) -------- */
 
-  /* Nearest-neighbour chain: for each slot type-set take the unused
-     place of those types closest to the current point; a hot vibe
-     shaves up to ~1 km off the score, so a slightly farther but much
-     livelier place can win the slot. */
-  List<Place> _chain(
-      LatLng from, List<Place> candidates, List<Set<String>> slots) {
+  /* Stop quality, priced in «kilometres of walking we trade for
+     it» (v2.0.14, Item 4a). The old chain scored d − vibe/100 only:
+     no rating weight at all, and a greedy nearest-per-slot walk
+     that happily zig-zagged back across the start. Now vibe still
+     dominates, a real rating adds (a poor one subtracts), and a
+     place with an actual review footprint beats an unrated one.
+     Bounded, so quality bends the choice — never teleports it. */
+  double _qualityOf(Place p) {
+    var q = vibeOf(p) / 100.0 * 1.6; // 0 .. 1.6
+    final r = p.rating;
+    if (r != null) {
+      q += (r - 3.5).clamp(-1.0, 1.5) * 0.5; // −0.5 .. +0.75
+      if ((p.reviews ?? 0) >= 20) q += 0.25; // people actually go here
+    }
+    return q;
+  }
+
+  /* Per slot, take the unused place of the slot types with the best
+     (distance − quality) score from the current point. When a
+     walking cap is given, candidates that keep the running total
+     under the cap win over a marginally better-scoring one that
+     would blow it. */
+  List<Place> _chain(LatLng from, List<Place> candidates,
+      List<Set<String>> slots,
+      {double capKm = double.infinity}) {
     final picks = <Place>[];
     var cur = from;
+    var total = 0.0;
     for (final types in slots) {
       Place? best;
       var bestScore = double.infinity;
+      Place? bestCapped;
+      var bestCappedScore = double.infinity;
       for (final p in candidates) {
         if (picks.contains(p) || !types.contains(p.type)) continue;
         final d = haversineKm(cur.latitude, cur.longitude, p.lat, p.lng);
-        final score = d - vibeOf(p) / 100.0;
+        final score = d - _qualityOf(p);
         if (score < bestScore) {
           bestScore = score;
           best = p;
         }
+        if (total + d <= capKm && score < bestCappedScore) {
+          bestCappedScore = score;
+          bestCapped = p;
+        }
       }
-      if (best == null) break;
-      picks.add(best);
-      cur = LatLng(best.lat, best.lng);
+      final pick = bestCapped ?? best;
+      if (pick == null) break;
+      picks.add(pick);
+      total += haversineKm(cur.latitude, cur.longitude, pick.lat, pick.lng);
+      cur = LatLng(pick.lat, pick.lng);
     }
     return picks;
+  }
+
+  /* Order improvement (v2.0.14): with 3 stops there are only 6
+     orders — score them all by true walking length from the start
+     and keep the shortest; ties keep the slot order (the evening
+     arc). Kills the greedy chain's backtracking without changing
+     WHICH places the slots picked. */
+  List<Place> _improveOrder(LatLng start, List<Place> stops) {
+    if (stops.length < 2) return stops;
+    var best = stops;
+    var bestKm = _chainKm(start, stops);
+    final a = List.generate(stops.length, (i) => i);
+    void permute(int l) {
+      if (l == a.length) {
+        final cand = [for (final i in a) stops[i]];
+        final km = _chainKm(start, cand);
+        if (km < bestKm - 0.001) {
+          bestKm = km;
+          best = cand;
+        }
+        return;
+      }
+      for (var i = l; i < a.length; i++) {
+        final t = a[l];
+        a[l] = a[i];
+        a[i] = t;
+        permute(l + 1);
+        final u = a[l];
+        a[l] = a[i];
+        a[i] = u;
+      }
+    }
+
+    permute(0);
+    return best;
   }
 
   List<Place> _buildStops(LatLng start, {Set<String> exclude = const {}}) {
@@ -8580,8 +9201,13 @@ class _RouteTabState extends State<RouteTab> {
       'cafe', 'restaurant', 'bar', 'view', 'park', 'culture',
       'beach', 'club', 'market', 'sport', 'other',
     };
-    // Radius is measured from the start point and widened until the
-    // three slots can be filled: 2.5 km → 5 km → the whole city.
+    // A sane evening walk, start → last stop (v2.0.14): radius tiers
+    // are tried as before, but a tier only «wins» outright when its
+    // improved order stays within the cap; otherwise the shortest
+    // complete chain found is kept.
+    const capKm = 6.0;
+    List<Place>? best;
+    var bestKm = double.infinity;
     for (final radius in [2.5, 5.0, double.infinity]) {
       final inR = pool
           .where((p) =>
@@ -8589,18 +9215,29 @@ class _RouteTabState extends State<RouteTab> {
               haversineKm(start.latitude, start.longitude, p.lat, p.lng) <=
                   radius)
           .toList();
-      final picks = _chain(start, inR, slots);
-      if (picks.length == 3) return picks;
+      final picks = _chain(start, inR, slots, capKm: capKm);
+      if (picks.length == 3) {
+        final ordered = _improveOrder(start, picks);
+        final km = _chainKm(start, ordered);
+        if (km <= capKm) return ordered;
+        if (km < bestKm) {
+          bestKm = km;
+          best = ordered;
+        }
+      }
     }
+    if (best != null) return best;
     if (exclude.isNotEmpty) {
-      final picks = _chain(start, pool, slots);
-      if (picks.length == 3) return picks;
+      final picks = _chain(start, pool, slots, capKm: capKm);
+      if (picks.length == 3) return _improveOrder(start, picks);
     }
     // Exotic city where the type slots can't be filled at all:
-    // a plain nearest-neighbour chain over everything there is.
+    // a plain chain over everything there is, order-improved.
     final anyPool = pool.where((p) => !exclude.contains(p.id)).toList();
-    return _chain(start, anyPool.isEmpty ? pool : anyPool,
-        [allTypes, allTypes, allTypes]);
+    return _improveOrder(
+        start,
+        _chain(start, anyPool.isEmpty ? pool : anyPool,
+            [allTypes, allTypes, allTypes]));
   }
 
   void _buildEvening({Set<String> exclude = const {}}) {
@@ -8627,6 +9264,7 @@ class _RouteTabState extends State<RouteTab> {
     _counted = false;
     if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
     _persistActive();
+    _loadRouteTasksDone();
     _refreshRoad();
   }
 
@@ -8775,6 +9413,7 @@ class _RouteTabState extends State<RouteTab> {
     _startIsCenter = origin == null;
     _done.clear();
     _counted = _readyCounted.contains(r.id);
+    _loadRouteTasksDone();
     if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
     _persistActive();
     _refreshRoad();
@@ -8814,6 +9453,7 @@ class _RouteTabState extends State<RouteTab> {
     if (tr != null && _speeds.containsKey(tr)) _transport = tr;
     _done.clear();
     _counted = e['counted'] == true;
+    _loadRouteTasksDone();
     if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
     _persistActive();
     _refreshRoad();
@@ -9004,6 +9644,26 @@ class _RouteTabState extends State<RouteTab> {
 
   /* ---------------- UI ---------------- */
 
+  /* Summary chip for the route hero card (v2.0.14). */
+  Widget _summaryChip(TIGlyph glyph, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: T.s12, vertical: T.s8),
+      decoration: BoxDecoration(
+        color: T.surfaceHi,
+        borderRadius: BorderRadius.circular(T.rPill),
+        border: Border.all(color: T.stroke),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TiradIcon(glyph, size: 13, color: T.iconGray),
+          const SizedBox(width: 6),
+          Text(text, style: T.body(12, w: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+
   Widget _transportPill(String id, String label) {
     final sel = _transport == id;
     return GestureDetector(
@@ -9126,18 +9786,20 @@ class _RouteTabState extends State<RouteTab> {
           child: Container(
             margin: const EdgeInsets.only(bottom: 4),
             padding: const EdgeInsets.all(15),
-            decoration: cardDecoration(),
+            // v2.0.14 (Item 4b): token typography throughout and a
+            // green edge once the stop is checked in, so the card
+            // reads as part of the same system as the hero above it.
+            decoration: cardDecoration().copyWith(
+              border: Border.all(
+                color: done ? T.online.withOpacity(0.55) : T.stroke,
+              ),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   '${_timeFor(i)} · $_routeCityName',
-                  style: const TextStyle(
-                    color: kRed,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.6,
-                  ),
+                  style: T.micro(color: T.salmon),
                 ),
                 const SizedBox(height: 5),
                 Row(
@@ -9153,10 +9815,7 @@ class _RouteTabState extends State<RouteTab> {
                         p.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16.5,
-                          fontWeight: FontWeight.w900,
-                        ),
+                        style: T.head(16),
                       ),
                     ),
                   ],
@@ -9164,7 +9823,7 @@ class _RouteTabState extends State<RouteTab> {
                 const SizedBox(height: 5),
                 Text(
                   _descFor(i),
-                  style: const TextStyle(color: kMuted, fontSize: 13),
+                  style: T.body(13, color: T.muted),
                 ),
                 const SizedBox(height: 7),
                 Row(
@@ -9179,7 +9838,7 @@ class _RouteTabState extends State<RouteTab> {
                     Expanded(
                       child: Text(
                         task,
-                        style: const TextStyle(fontSize: 13.5, height: 1.35),
+                        style: T.body(13.5),
                       ),
                     ),
                   ],
@@ -9316,90 +9975,162 @@ class _RouteTabState extends State<RouteTab> {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
         children: [
-          if (_kind == 'evening')
-            Text.rich(
-              TextSpan(children: [
-                TextSpan(text: tr('route_title_a')),
-                TextSpan(text: tr('route_title_b'), style: T.display(20, color: T.ember)),
-              ]),
-              style: T.display(20),
-            )
-          else
-            Text(_titleText, style: T.display(20)),
-          const SizedBox(height: 6),
-          Text(
-            _kind == 'evening'
-                ? trf('route_intro_evening', {'city': _routeCityName})
-                : _kind == 'ready'
-                    ? trf('route_intro_ready', {'city': _routeCityName})
-                    : trf('route_intro_saved', {'city': _routeCityName}),
-            style: const TextStyle(color: kMuted, fontSize: 13.5),
-          ),
-          if (_stops.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              _startIsCenter ? tr('route_start_center') : tr('route_start_you'),
-              style: T.body(12.5, color: T.salmon, w: FontWeight.w600),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              trf('route_summary', {'n': _stops.length, 'd': _fmtDist(_displayTotalKm)}) +
-                  (_counted ? tr('route_summary_done') : ''),
-              style: T.body(12.5, color: T.muted, w: FontWeight.w600),
-            ),
-          ],
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              _transportPill('walk', tr('tp_walk')),
-              const SizedBox(width: 8),
-              _transportPill('bus', tr('tp_bus')),
-              const SizedBox(width: 8),
-              _transportPill('car', tr('tp_car')),
-            ],
-          ),
-          const SizedBox(height: 14),
-          PressButton(
-            text: tr('route_reshuffle'),
-            primary: false,
-            icon: TIGlyph.dice,
-            onPressed: _reshuffle,
-          ),
-          const SizedBox(height: T.s12),
-          Row(
-            children: [
-              Expanded(
-                child: GhostButton(
-                  text: tr('route_show_map'),
-                  small: true,
-                  icon: TIGlyph.routePath,
-                  onPressed: _showOnMap,
+          /* v2.0.14 (Item 4b): the tab head is a proper hero card
+             in the design system — gradient border, brand glyph,
+             summary chips, controls grouped inside — instead of the
+             flat stack of raw texts the owner called «без стиля». */
+          GlassCard(
+            gradientBorder: true,
+            padding: const EdgeInsets.all(T.s16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: T.specGrad,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Color(0x66E8301E),
+                            blurRadius: 14,
+                            offset: Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: const TiradIcon(TIGlyph.routePath,
+                          size: 22, color: Colors.white, filled: true),
+                    ),
+                    const SizedBox(width: T.s12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_kind == 'evening')
+                            Text.rich(
+                              TextSpan(children: [
+                                TextSpan(text: tr('route_title_a')),
+                                TextSpan(
+                                    text: tr('route_title_b'),
+                                    style:
+                                        T.display(19, color: T.ember)),
+                              ]),
+                              style: T.display(19),
+                            )
+                          else
+                            Text(_titleText, style: T.display(19)),
+                          const SizedBox(height: T.s4),
+                          Text(
+                            _kind == 'evening'
+                                ? trf('route_intro_evening',
+                                    {'city': _routeCityName})
+                                : _kind == 'ready'
+                                    ? trf('route_intro_ready',
+                                        {'city': _routeCityName})
+                                    : trf('route_intro_saved',
+                                        {'city': _routeCityName}),
+                            style: T.body(13, color: T.muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: T.s8),
-              Expanded(
-                child: GhostButton(
-                  text: tr('route_save'),
-                  small: true,
-                  icon: TIGlyph.check,
-                  onPressed: _saveRoute,
+                if (_stops.isNotEmpty) ...[
+                  const SizedBox(height: T.s12),
+                  Wrap(
+                    spacing: T.s8,
+                    runSpacing: T.s8,
+                    children: [
+                      _summaryChip(
+                        TIGlyph.mapPin,
+                        _startIsCenter
+                            ? tr('route_start_center')
+                            : tr('route_start_you'),
+                      ),
+                      _summaryChip(
+                        TIGlyph.routePath,
+                        trf('route_summary', {
+                              'n': _stops.length,
+                              'd': _fmtDist(_displayTotalKm),
+                            }) +
+                            (_counted ? tr('route_summary_done') : ''),
+                      ),
+                      _summaryChip(
+                        TIGlyph.clock,
+                        trf('mins_short', {
+                          'n': _road?.totalMins.round() ??
+                              (_displayTotalKm /
+                                      (_speeds[_transport] ?? 5) *
+                                      60)
+                                  .round(),
+                        }),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: T.s16),
+                hairline(),
+                const SizedBox(height: T.s16),
+                Row(
+                  children: [
+                    _transportPill('walk', tr('tp_walk')),
+                    const SizedBox(width: 8),
+                    _transportPill('bus', tr('tp_bus')),
+                    const SizedBox(width: 8),
+                    _transportPill('car', tr('tp_car')),
+                  ],
                 ),
-              ),
-            ],
-          ),
-          if (_kind != 'evening') ...[
-            const SizedBox(height: T.s12),
-            GhostButton(
-              text: tr('route_back_evening'),
-              small: true,
-              icon: TIGlyph.moon,
-              onPressed: () {
-                _seed++;
-                _buildEvening();
-                setState(() {});
-              },
+                const SizedBox(height: T.s12),
+                PressButton(
+                  text: tr('route_reshuffle'),
+                  primary: false,
+                  icon: TIGlyph.dice,
+                  onPressed: _reshuffle,
+                ),
+                const SizedBox(height: T.s12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: GhostButton(
+                        text: tr('route_show_map'),
+                        small: true,
+                        icon: TIGlyph.routePath,
+                        onPressed: _showOnMap,
+                      ),
+                    ),
+                    const SizedBox(width: T.s8),
+                    Expanded(
+                      child: GhostButton(
+                        text: tr('route_save'),
+                        small: true,
+                        icon: TIGlyph.check,
+                        onPressed: _saveRoute,
+                      ),
+                    ),
+                  ],
+                ),
+                if (_kind != 'evening') ...[
+                  const SizedBox(height: T.s12),
+                  GhostButton(
+                    text: tr('route_back_evening'),
+                    small: true,
+                    icon: TIGlyph.moon,
+                    onPressed: () {
+                      _seed++;
+                      _buildEvening();
+                      setState(() {});
+                    },
+                  ),
+                ],
+              ],
             ),
-          ],
+          ),
           if (_savedRoutes.isNotEmpty) ...[
             const SizedBox(height: T.s20),
             sectionLabel(tr('my_routes'),
@@ -9478,6 +10209,11 @@ class _RouteTabState extends State<RouteTab> {
               tr('route_no_places'),
               style: TextStyle(color: kMuted),
             ),
+          if (_stops.isNotEmpty) ...[
+            const SizedBox(height: T.s20),
+            sectionLabel(tr('route_stops_title'),
+                color: T.salmon, glyph: TIGlyph.routePath),
+          ],
           if (_stops.isNotEmpty && _start != null)
             _legRow(_start!, _stops.first,
                 fromLabel: _startIsCenter ? tr('from_center') : tr('from_you'),
@@ -9487,6 +10223,64 @@ class _RouteTabState extends State<RouteTab> {
             if (i < _stops.length - 1)
               _legRow(LatLng(_stops[i].lat, _stops[i].lng), _stops[i + 1],
                   leg: i + 1),
+          ],
+          /* v2.0.14 (Item 7): the route's theme tasks as a real
+             checklist — before, they were only printed inside the
+             stop cards with nowhere to tick them. Persisted per
+             route key, one-way, each tick = stats.tasks +1. */
+          if (_stops.isNotEmpty) ...[
+            const SizedBox(height: T.s20),
+            Row(
+              children: [
+                Expanded(
+                  child: sectionLabel(tr('route_tasks_title'),
+                      color: T.salmon, glyph: TIGlyph.target),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    trf('progress_of',
+                        {'a': _routeTasksDone.length, 'b': _stops.length}),
+                    style: T.num(12.5, color: T.salmon),
+                  ),
+                ),
+              ],
+            ),
+            Container(
+              padding: const EdgeInsets.all(T.s16),
+              decoration: cardDecoration(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < _stops.length; i++) ...[
+                    if (i > 0) const SizedBox(height: T.s12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        DoneToggle(
+                          done: _routeTasksDone.contains(i),
+                          onComplete: () => _toggleRouteTask(i),
+                        ),
+                        const SizedBox(width: T.s12),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              _taskFor(i),
+                              style: T.body(14,
+                                  w: FontWeight.w600,
+                                  color: _routeTasksDone.contains(i)
+                                      ? T.muted
+                                      : T.text),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ],
           // v2.0.12: stop tracking this route — danger action under
           // the route card, in the app's button language.
@@ -9500,6 +10294,67 @@ class _RouteTabState extends State<RouteTab> {
           ],
         ],
       ),
+    );
+  }
+}
+
+/* One-way completion control (v2.0.14, Item 7) — THE checkbox the
+   owner asked for («нету где поставить галочку»): daily task, city
+   quest steps, weekly quest steps and route tasks all use this one
+   control. One-way by design (anti-farm): once done it renders the
+   filled state and takes no taps, so a completion can never be
+   un-ticked and re-ticked for double XP; every parent persists the
+   done state (day / ISO-bucket week / route key) and credits stats
+   exactly once behind the same flag. */
+class DoneToggle extends StatelessWidget {
+  final bool done;
+  final VoidCallback? onComplete;
+  const DoneToggle({super.key, required this.done, this.onComplete});
+
+  @override
+  Widget build(BuildContext context) {
+    final box = AnimatedContainer(
+      duration: T.dMed,
+      curve: T.cOut,
+      width: 27,
+      height: 27,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(9),
+        gradient: done
+            ? const LinearGradient(
+                colors: [Color(0xFF2BD465), Color(0xFF16A34A)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              )
+            : null,
+        color: done ? null : T.surfaceHi,
+        border: Border.all(
+          color: done ? Colors.transparent : T.faint,
+          width: 1.6,
+        ),
+        boxShadow: done
+            ? [
+                BoxShadow(
+                  color: T.online.withOpacity(0.45),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ]
+            : null,
+      ),
+      child: done
+          ? const TiradIcon(TIGlyph.check,
+              size: 15, color: Colors.white, filled: true)
+          : null,
+    );
+    if (done || onComplete == null) return box;
+    return Pressable(
+      onTap: () {
+        tickSelect();
+        onComplete!();
+      },
+      child: box,
     );
   }
 }
@@ -9582,7 +10437,17 @@ class StepsCard extends StatelessWidget {
 class CityQuestCard extends StatefulWidget {
   final List<Place> places;
   final City? city;
-  const CityQuestCard({super.key, required this.places, required this.city});
+  /* v2.0.14: manual step ticks report into stats (questSteps per
+     step, quests + the +50 bonus on completion) through these. */
+  final VoidCallback? onStepDone;
+  final VoidCallback? onQuestComplete;
+  const CityQuestCard({
+    super.key,
+    required this.places,
+    required this.city,
+    this.onStepDone,
+    this.onQuestComplete,
+  });
 
   @override
   State<CityQuestCard> createState() => _CityQuestCardState();
@@ -9611,6 +10476,25 @@ class _CityQuestCardState extends State<CityQuestCard> {
     if (mounted) setState(() => _quest = q);
   }
 
+  /* Manual tick of a step (the checkbox the owner asked for). The
+     done-flag guard inside CityQuest.markStep makes double credit
+     impossible; real actions (check-in/photo/fav) complete the same
+     steps through CityQuest.mark. */
+  Future<void> _tick(int i) async {
+    final city = widget.city;
+    if (city == null) return;
+    final (changed, bonusDue) =
+        await CityQuest.markStep(i, widget.places, city);
+    if (!changed || !mounted) return;
+    widget.onStepDone?.call();
+    if (bonusDue) {
+      widget.onQuestComplete?.call();
+      fireConfetti(context);
+      snack(context, tr('quest_done_snack'));
+    }
+    _reload();
+  }
+
   String _stepLabel(Map<String, dynamic> st) {
     switch (st['kind']) {
       case 'checkin':
@@ -9633,6 +10517,7 @@ class _CityQuestCardState extends State<CityQuestCard> {
         .toList();
     if (steps.isEmpty) return const SizedBox.shrink();
     final allDone = steps.every((st) => st['done'] == true);
+    final doneCount = steps.where((st) => st['done'] == true).length;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(15),
@@ -9650,38 +10535,40 @@ class _CityQuestCardState extends State<CityQuestCard> {
                   style: T.head(15),
                 ),
               ),
-              if (allDone) const DonePill(),
+              Text(
+                trf('progress_of', {'a': doneCount, 'b': steps.length}),
+                style: T.num(12.5, color: T.salmon),
+              ),
+              if (allDone) ...[
+                const SizedBox(width: T.s8),
+                const DonePill(),
+              ],
             ],
           ),
           const SizedBox(height: T.s8),
-          for (final st in steps)
+          for (var i = 0; i < steps.length; i++)
             Padding(
-              padding: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.only(bottom: 8),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.only(top: 1, right: 7),
-                    child: st['done'] == true
-                        ? const TiradIcon(TIGlyph.check,
-                            size: 15, color: T.online)
-                        : Container(
-                            width: 13,
-                            height: 13,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(
-                                  color: T.faint, width: 1.6),
-                            ),
-                          ),
+                    padding: const EdgeInsets.only(top: 1, right: 9),
+                    child: DoneToggle(
+                      done: steps[i]['done'] == true,
+                      onComplete: () => _tick(i),
+                    ),
                   ),
                   Expanded(
-                    child: Text(
-                      _stepLabel(st),
-                      style: T.body(
-                        14,
-                        color: st['done'] == true ? T.muted : T.text,
-                        w: FontWeight.w600,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(
+                        _stepLabel(steps[i]),
+                        style: T.body(
+                          14,
+                          color: steps[i]['done'] == true ? T.muted : T.text,
+                          w: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
@@ -10005,6 +10892,10 @@ class TasksPage extends StatefulWidget {
   final Map<String, dynamic> stats;
   final VoidCallback onTaskDone;
   final void Function(int xp) onAiXp;
+  /* v2.0.14: quest completions feed stats.questSteps / stats.quests
+     (city quest steps + ticks, weekly quest steps + finish). */
+  final VoidCallback? onQuestStep;
+  final VoidCallback? onQuestDone;
   final List<Place> cityPlaces;
   final City? city;
   const TasksPage({
@@ -10012,6 +10903,8 @@ class TasksPage extends StatefulWidget {
     required this.stats,
     required this.onTaskDone,
     required this.onAiXp,
+    this.onQuestStep,
+    this.onQuestDone,
     required this.cityPlaces,
     required this.city,
   });
@@ -10023,10 +10916,17 @@ class TasksPage extends StatefulWidget {
 class _TasksPageState extends State<TasksPage> {
   List<dynamic> _daily = [];
   List<dynamic> _week = [];
-  Map<String, dynamic>? _drop;
-  final Set<String> _aiDone = {};
   bool _dailyDone = false;
+  /* Weekly quest ticks (v2.0.14, Item 7): persisted per rotation
+     bucket — the same dayIndex()~/7 bucket that selects this week's
+     quest — as 'week_done_<bucket>' (JSON step indices) plus a
+     'week_counted_<bucket>' flag so the finish credits stats.quests
+     exactly once. One-way ticks: no un-tick, no XP farming. */
+  final Set<int> _weekDone = {};
+  bool _weekCounted = false;
   SharedPreferences? _prefs;
+
+  int get _weekBucket => dayIndex() ~/ 7;
 
   @override
   void initState() {
@@ -10039,20 +10939,14 @@ class _TasksPageState extends State<TasksPage> {
     final raw = await rootBundle.loadString('assets/tasks.json');
     final data = jsonDecode(raw) as Map<String, dynamic>;
     _prefs = await SharedPreferences.getInstance();
-    final saved = _prefs!.getString('ai_done_${dayKey()}');
-    if (saved != null) {
-      _aiDone.addAll((jsonDecode(saved) as List).map((e) => e.toString()));
-    }
     _dailyDone = _prefs!.getString('daily_done_day') == dayKey();
     try {
-      final row = await supa
-          .from('daily_drops')
-          .select('data')
-          .eq('day', dayKey())
-          .maybeSingle();
-      if (row != null && row['data'] is Map) {
-        _drop = (row['data'] as Map).cast<String, dynamic>();
+      final savedWeek = _prefs!.getString('week_done_$_weekBucket');
+      if (savedWeek != null) {
+        _weekDone.addAll(
+            (jsonDecode(savedWeek) as List).map((e) => (e as num).toInt()));
       }
+      _weekCounted = _prefs!.getBool('week_counted_$_weekBucket') ?? false;
     } catch (_) {}
     if (!mounted) return;
     setState(() {
@@ -10061,21 +10955,24 @@ class _TasksPageState extends State<TasksPage> {
     });
   }
 
-  Future<void> _completeAi(Map<String, dynamic> task) async {
-    final id = task['id'].toString();
-    if (_aiDone.contains(id)) return;
-    setState(() => _aiDone.add(id));
+  Future<void> _completeWeekStep(int i, int total) async {
+    if (_weekDone.contains(i)) return;
+    setState(() => _weekDone.add(i));
     await _prefs?.setString(
-      'ai_done_${dayKey()}',
-      jsonEncode(_aiDone.toList()),
+      'week_done_$_weekBucket',
+      jsonEncode(_weekDone.toList()),
     );
-    final xp = (task['xp'] as num?)?.toInt() ?? 0;
-    widget.onAiXp(xp);
-    if (mounted) {
-      fireConfetti(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(trf('ai_task_done', {'xp': xp}))),
-      );
+    widget.onQuestStep?.call();
+    if (total > 0 && _weekDone.length >= total && !_weekCounted) {
+      _weekCounted = true;
+      await _prefs?.setBool('week_counted_$_weekBucket', true);
+      widget.onQuestDone?.call();
+      if (mounted) {
+        fireConfetti(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(tr('week_quest_done'))),
+        );
+      }
     }
   }
 
@@ -10107,7 +11004,6 @@ class _TasksPageState extends State<TasksPage> {
     final weekQuest = _week.isEmpty
         ? null
         : (_week[(dayIndex() ~/ 7) % _week.length] as Map).cast<String, dynamic>();
-    final aiTasks = (_drop?['tasks'] as List?) ?? [];
     return Scaffold(
       body: GlowBackground(
         child: SafeArea(
@@ -10123,120 +11019,115 @@ class _TasksPageState extends State<TasksPage> {
                   Text(tr('tasks_book'), style: T.display(20)),
                 ],
               ),
-              if (_drop != null && aiTasks.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                sectionLabel(tr('ai_day'),
-                    color: const Color(0xFFFF8A7A), glyph: TIGlyph.star),
-                for (final t in aiTasks)
-                  _taskCard(
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${aiText(t['title'])}  ·  +${(t['xp'] as num?)?.toInt() ?? 0} XP',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                aiText(t['desc']),
-                                style: const TextStyle(color: kMuted),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        _aiDone.contains(t['id'].toString())
-                            ? const DonePill()
-                            : PressButton(
-                                text: tr('done_btn'),
-                                small: true,
-                                onPressed: () =>
-                                    _completeAi(t as Map<String, dynamic>),
-                              ),
-                      ],
-                    ),
-                  ),
-                if (_drop!['quest'] != null) ...[
-                  sectionLabel(trf('ai_quest_label', {'t': aiText(_drop!['quest']['title'])}),
-                      color: const Color(0xFFFF8A7A), glyph: TIGlyph.routePath),
-                  Text(
-                    aiText(_drop!['quest']['desc']),
-                    style: const TextStyle(color: kMuted),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-                if (_drop!['route_theme'] != null) ...[
-                  sectionLabel(
-                      trf('ai_route_theme_label', {'t': aiText(_drop!['route_theme']['title'])}),
-                      color: const Color(0xFFFF8A7A), glyph: TIGlyph.moon),
-                  Text(
-                    aiText(_drop!['route_theme']['desc']),
-                    style: const TextStyle(color: kMuted),
-                  ),
-                  const SizedBox(height: 10),
-                ],
-              ],
-              CityQuestCard(places: widget.cityPlaces, city: widget.city),
-              PhotoTournamentCard(
-                places: widget.cityPlaces,
-                onAiXp: widget.onAiXp,
-              ),
-              const StepsCard(),
-              const SizedBox(height: 10),
+              /* v2.0.14 (Item 6): the «ИИ дня» block is GONE from the
+                 presentation — in its place, the first-class
+                 «Задание дня» card: today's task from the daily pool
+                 in tasks.json, deterministic by date (same task all
+                 day, rotating), completed with the shared DoneToggle.
+                 The daily_drops pipeline itself (table + morning
+                 cron) is untouched server-side; the client simply
+                 presents «Задание дня» now. */
               sectionLabel(tr('daily_task_label'),
                   color: const Color(0xFFFF8A7A), glyph: TIGlyph.target),
               _taskCard(
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    DoneToggle(done: _dailyDone, onComplete: _completeDaily),
+                    const SizedBox(width: T.s12),
                     Expanded(
-                      child: Text(
-                        dailyTask ?? tr('loading'),
-                        style: const TextStyle(fontSize: 15),
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          dailyTask ?? tr('loading'),
+                          style: T.body(15,
+                              w: FontWeight.w600,
+                              color: _dailyDone ? T.muted : T.text),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    _dailyDone
-                        ? const DonePill()
-                        : PressButton(
-                            text: tr('done_btn'),
-                            small: true,
-                            onPressed: _completeDaily,
-                          ),
                   ],
                 ),
               ),
+              CityQuestCard(
+                places: widget.cityPlaces,
+                city: widget.city,
+                onStepDone: widget.onQuestStep,
+                onQuestComplete: () {
+                  widget.onQuestDone?.call();
+                  widget.onAiXp(50); // same bonus as the action path
+                },
+              ),
+              PhotoTournamentCard(
+                places: widget.cityPlaces,
+                onAiXp: widget.onAiXp,
+              ),
+              const StepsCard(),
               if (weekQuest != null) ...[
-                sectionLabel(
-                    trf('week_quest_label', {'t': aiText(weekQuest['theme'])}),
-                    color: const Color(0xFFFF8A7A), glyph: TIGlyph.calendar),
-                for (final s in (weekQuest['steps'] as List? ?? []))
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 6, left: 4),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.only(top: 5, right: 7),
-                          child: Container(
-                            width: 7,
-                            height: 7,
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: T.fire,
-                            ),
-                          ),
-                        ),
-                        Expanded(child: Text(aiText(s))),
-                      ],
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: sectionLabel(
+                          trf('week_quest_label',
+                              {'t': aiText(weekQuest['theme'])}),
+                          color: const Color(0xFFFF8A7A),
+                          glyph: TIGlyph.calendar),
                     ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        trf('progress_of', {
+                          'a': _weekDone.length,
+                          'b': (weekQuest['steps'] as List? ?? []).length,
+                        }),
+                        style: T.num(12.5, color: T.salmon),
+                      ),
+                    ),
+                  ],
+                ),
+                /* v2.0.14 (Item 7): weekly steps were plain text with
+                   a red dot — nowhere to tick them. Now each step has
+                   the shared DoneToggle, persisted for this rotation
+                   bucket; the last tick credits the quest. */
+                _taskCard(
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (var i = 0;
+                          i < (weekQuest['steps'] as List? ?? []).length;
+                          i++) ...[
+                        if (i > 0) const SizedBox(height: T.s12),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            DoneToggle(
+                              done: _weekDone.contains(i),
+                              onComplete: () => _completeWeekStep(
+                                  i,
+                                  (weekQuest['steps'] as List? ?? [])
+                                      .length),
+                            ),
+                            const SizedBox(width: T.s12),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  aiText((weekQuest['steps'] as List)[i]),
+                                  style: T.body(14,
+                                      w: FontWeight.w600,
+                                      color: _weekDone.contains(i)
+                                          ? T.muted
+                                          : T.text),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
                   ),
+                ),
               ],
             ],
           ),
@@ -10845,6 +11736,54 @@ class _ProfileTabState extends State<ProfileTab> {
     } catch (_) {}
   }
 
+  /* Notification self-test state (v2.0.14, Item 5). */
+  String? _pushCheckResult;
+  bool _pushChecking = false;
+
+  /* Settings → «Проверить уведомления»: (1) re-ask the Android 13+
+     permission, (2) re-register the FCM token for the signed-in
+     user, (3) read back what the server actually holds in
+     device_tokens, (4) fire a real local test notification so the
+     display path is proven on screen, not just believed. */
+  Future<void> _runPushCheck(void Function(VoidCallback) setPageState) async {
+    if (_pushChecking) return;
+    setPageState(() {
+      _pushChecking = true;
+      _pushCheckResult = null;
+    });
+    await PushService.ensurePermission();
+    await LocalNotify.requestPermission();
+    await PushService.registerCurrent();
+    String status;
+    if (myUidOrNull == null) {
+      status = tr('notif_guest_push');
+    } else {
+      try {
+        final s = await PushService.tokenStatus();
+        if (s.count > 0) {
+          final t = s.last?.toLocal();
+          final when = t == null
+              ? ''
+              : '${t.day.toString().padLeft(2, '0')}.${t.month.toString().padLeft(2, '0')} '
+                  '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+          status = trf('notif_token_ok', {'t': when});
+        } else {
+          status = tr('notif_token_none');
+        }
+      } catch (e) {
+        debugPrint('TiradA device_tokens status failed: $e');
+        status = tr('notif_token_none');
+      }
+    }
+    final shown =
+        await LocalNotify.show(tr('notif_test_title'), tr('notif_test_body'));
+    if (!mounted) return;
+    setPageState(() {
+      _pushChecking = false;
+      _pushCheckResult = shown ? status : tr('notif_token_none');
+    });
+  }
+
   /* Avatar editor: emoji grid + «Фото из галереи». Signed-in users
      upload to the avatars bucket (<uid>/avatar.jpg) and set
      profiles.avatar_url; guests keep the picked photo on-device. */
@@ -10934,7 +11873,14 @@ class _ProfileTabState extends State<ProfileTab> {
   }
 
   Future<void> _pickGalleryAvatar() async {
-    final bytes = await pickAndProcessImage(ImageSource.gallery);
+    final Uint8List? bytes;
+    try {
+      bytes = await pickAndProcessImage(ImageSource.gallery);
+    } on ImagePickException catch (e) {
+      debugPrint('TiradA avatar pick failed: $e');
+      if (mounted) snack(context, tr('photo_pick_fail'));
+      return;
+    }
     if (bytes == null) return;
     final uid = myUidOrNull;
     if (uid == null) {
@@ -11120,7 +12066,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.13',
+                  'TiradA anon · 2.0.14',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -11310,6 +12256,44 @@ class _ProfileTabState extends State<ProfileTab> {
                             ],
                           ),
                         ],
+                      ],
+                    ),
+                  ),
+                  /* v2.0.14 (Item 5): notification self-test — is a
+                     device token registered for this user on the
+                     server, and does the display path work? Fires a
+                     real local notification so the owner SEES it. */
+                  const SizedBox(height: T.s24),
+                  sectionLabel(tr('notif_check_title'),
+                      color: T.salmon, glyph: TIGlyph.bell),
+                  Container(
+                    padding: const EdgeInsets.all(T.s16),
+                    decoration: cardDecoration(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (myUidOrNull == null)
+                          Text(
+                            tr('notif_guest_push'),
+                            style: T.body(13, color: T.muted),
+                          )
+                        else if (_pushCheckResult != null)
+                          Text(
+                            _pushCheckResult!,
+                            style: T.body(13, color: T.muted),
+                          ),
+                        if (myUidOrNull == null || _pushCheckResult != null)
+                          const SizedBox(height: T.s12),
+                        GhostButton(
+                          text: _pushChecking
+                              ? tr('notif_checking')
+                              : tr('notif_check_btn'),
+                          small: true,
+                          icon: TIGlyph.bell,
+                          onPressed: _pushChecking
+                              ? () {}
+                              : () => _runPushCheck(setPageState),
+                        ),
                       ],
                     ),
                   ),
@@ -11832,7 +12816,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.13',
+            'TiradA anon · 2.0.14',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
