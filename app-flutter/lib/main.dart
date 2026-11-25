@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.9.
+// TiradA anon — native app (Flutter), v2.0.10.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -272,11 +272,9 @@ class LocationService {
           _deniedHintShown = true;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text(
-                'Геолокация выключена для приложения — без неё карта тебя не видит',
-              ),
+              content: Text(tr('svc_loc_denied')),
               action: SnackBarAction(
-                label: 'Настройки',
+                label: tr('settings'),
                 onPressed: () {
                   openAppSettings();
                 },
@@ -295,7 +293,7 @@ class LocationService {
           _gpsOffHintShown = true;
           snack(
             context,
-            'Включи геолокацию на телефоне — тогда карта покажет, где ты',
+            tr('svc_gps_off'),
           );
         }
         return;
@@ -343,7 +341,16 @@ class MapRouteLine {
   final List<Place> stops;
   final Place? target; // directions only
   final bool fromCityCenter; // start fell back to the city center
-  final double totalKm;
+  final double totalKm; // straight-line estimate (the fallback)
+  /* Real road route from OSRM (v2.0.10), filled in asynchronously by
+     RoutingService.enrich after the line is shown. While these are
+     null the overlay is exactly the v2.0.9 straight line. */
+  final String profile; // OSRM profile: 'foot' · 'driving'
+  final List<LatLng>? roadGeometry;
+  final double? roadKm;
+  final double? roadMins; // duration for [profile]
+  final List<double>? legKm;
+  final List<double>? legMins;
   const MapRouteLine({
     required this.kind,
     required this.title,
@@ -352,10 +359,39 @@ class MapRouteLine {
     this.target,
     this.fromCityCenter = false,
     required this.totalKm,
+    this.profile = 'foot',
+    this.roadGeometry,
+    this.roadKm,
+    this.roadMins,
+    this.legKm,
+    this.legMins,
   });
 
-  int get walkMins => (totalKm / 5.0 * 60).round();
-  int get driveMins => (totalKm / 30.0 * 60).round();
+  MapRouteLine copyWithRoad(RoadRoute r) => MapRouteLine(
+        kind: kind,
+        title: title,
+        points: points,
+        stops: stops,
+        target: target,
+        fromCityCenter: fromCityCenter,
+        totalKm: totalKm,
+        profile: profile,
+        roadGeometry: r.geometry,
+        roadKm: r.totalKm,
+        roadMins: r.totalMins,
+        legKm: r.legKm,
+        legMins: r.legMins,
+      );
+
+  /* What the UI shows: road values when OSRM answered, straight-line
+     estimates until then (and forever when it can't). */
+  double get displayKm => roadKm ?? totalKm;
+  int get walkMins => profile == 'foot' && roadMins != null
+      ? roadMins!.round()
+      : (displayKm / 5.0 * 60).round();
+  int get driveMins => profile == 'driving' && roadMins != null
+      ? roadMins!.round()
+      : (displayKm / 30.0 * 60).round();
 }
 
 class MapRouteBus {
@@ -366,10 +402,115 @@ class MapRouteBus {
   static void show(MapRouteLine l) {
     line.value = l;
     showTick.value++;
+    // Straight line appears instantly; the road geometry swaps in
+    // when OSRM answers (silently never, when it can't).
+    RoutingService.enrich(l);
   }
 
   static void clear() {
     line.value = null;
+  }
+}
+
+/* One real road route from OSRM: full geometry plus per-leg values. */
+class RoadRoute {
+  final List<LatLng> geometry;
+  final double totalKm;
+  final double totalMins;
+  final List<double> legKm;
+  final List<double> legMins;
+  const RoadRoute({
+    required this.geometry,
+    required this.totalKm,
+    required this.totalMins,
+    required this.legKm,
+    required this.legMins,
+  });
+}
+
+/* Real road routing via the free public OSRM demo server — no key,
+   no signup, no paid tier (owner's free-services rule). Every failure
+   (offline, timeout, OSRM error) returns null and the caller keeps
+   the straight-line behaviour of v2.0.9. Results are cached in
+   memory per (profile + rounded waypoints), so re-opening the same
+   route never re-hits the server. */
+class RoutingService {
+  static final Map<String, RoadRoute> _cache = {};
+
+  /* Route-tab transport → OSRM profile. 'bus' uses driving geometry:
+     there is no transit routing here, and we don't pretend otherwise. */
+  static String profileFor(String transport) =>
+      transport == 'walk' ? 'foot' : 'driving';
+
+  static String cacheKey(String profile, List<LatLng> pts) =>
+      '$profile|${pts.map((p) => '${p.latitude.toStringAsFixed(5)},${p.longitude.toStringAsFixed(5)}').join(';')}';
+
+  static Future<RoadRoute?> route(
+      String profile, List<LatLng> waypoints) async {
+    if (waypoints.length < 2) return null;
+    final key = cacheKey(profile, waypoints);
+    final hit = _cache[key];
+    if (hit != null) return hit;
+    final client = HttpClient();
+    try {
+      client.connectionTimeout = const Duration(seconds: 6);
+      final coords =
+          waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
+      final uri = Uri.parse(
+          'https://router.project-osrm.org/route/v1/$profile/$coords'
+          '?overview=full&geometries=geojson&annotations=false');
+      final req = await client.getUrl(uri).timeout(const Duration(seconds: 6));
+      final resp = await req.close().timeout(const Duration(seconds: 6));
+      if (resp.statusCode != 200) return null;
+      final body =
+          await resp.transform(utf8.decoder).join().timeout(const Duration(seconds: 6));
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      if (json['code'] != 'Ok') return null;
+      final routes = json['routes'] as List?;
+      if (routes == null || routes.isEmpty) return null;
+      final r = (routes.first as Map).cast<String, dynamic>();
+      final coordsList =
+          ((r['geometry'] as Map)['coordinates'] as List? ?? []);
+      if (coordsList.length < 2) return null;
+      final geometry = <LatLng>[
+        for (final c in coordsList)
+          LatLng(((c as List)[1] as num).toDouble(),
+              (c[0] as num).toDouble()),
+      ];
+      final legs = (r['legs'] as List?) ?? const [];
+      final result = RoadRoute(
+        geometry: geometry,
+        totalKm: ((r['distance'] as num?)?.toDouble() ?? 0) / 1000,
+        totalMins: ((r['duration'] as num?)?.toDouble() ?? 0) / 60,
+        legKm: [
+          for (final l in legs)
+            (((l as Map)['distance'] as num?)?.toDouble() ?? 0) / 1000
+        ],
+        legMins: [
+          for (final l in legs)
+            (((l as Map)['duration'] as num?)?.toDouble() ?? 0) / 60
+        ],
+      );
+      if (result.totalKm <= 0) return null;
+      _cache[key] = result;
+      return result;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /* Fetch the road version of a shown overlay line and swap it in —
+     but only if that exact line is still the one on the map. */
+  static void enrich(MapRouteLine l) {
+    if (l.roadGeometry != null) return;
+    route(l.profile, l.points).then((r) {
+      if (r == null) return;
+      if (identical(MapRouteBus.line.value, l)) {
+        MapRouteBus.line.value = l.copyWithRoad(r);
+      }
+    });
   }
 }
 
@@ -464,10 +605,10 @@ String priceText(Place p) {
   if (pl == null) {
     // OSM rows carry no price: show the per-type estimate, marked with ≈.
     final est = estPriceLevel(p);
-    if (est == 0) return 'Бесплатно';
+    if (est == 0) return tr('free');
     return '≈${'₪' * est.clamp(1, 4)}';
   }
-  if (pl == 0) return 'Бесплатно';
+  if (pl == 0) return tr('free');
   return '₪' * pl.clamp(1, 4);
 }
 
@@ -502,7 +643,7 @@ int effPriceLevel(Place p) => p.priceLevel ?? estPriceLevel(p);
 String priceRangeText(int level) {
   switch (level.clamp(0, 4)) {
     case 0:
-      return 'бесплатно';
+      return tr('free_lc');
     case 1:
       return '~30–60 ₪';
     case 2:
@@ -517,14 +658,15 @@ String priceRangeText(int level) {
 /* Full price label for the place sheet: shekels + range, estimate marked. */
 String priceDetailText(Place p) {
   final lvl = effPriceLevel(p);
-  if (lvl == 0) return 'Бесплатно';
+  if (lvl == 0) return tr('free');
   final est = p.priceLevel == null ? '≈' : '';
-  return '$est${'₪' * lvl.clamp(1, 4)} · ${priceRangeText(lvl)} на человека';
+  return '$est${'₪' * lvl.clamp(1, 4)} · ${priceRangeText(lvl)} ${tr('per_person')}';
 }
 
 /* Ghost label with the same numbering the profile uses:
    1000 + stableHash(uid) % 9000. */
-String ghostLabelFor(String uid) => 'Призрак #${1000 + stableHash(uid) % 9000}';
+String ghostLabelFor(String uid) =>
+    trf('ghost_label', {'n': 1000 + stableHash(uid) % 9000});
 
 /* «Сколько людей отдыхает сейчас» — a deterministic estimate from the
    place type, the hour and its vibe, seeded by the place id so it does
@@ -577,7 +719,8 @@ int vibeOf(Place p) {
   return v.round().clamp(5, 98);
 }
 
-String vibeWord(int v) => v >= 70 ? 'жарко' : (v >= 45 ? 'средне' : 'спокойно');
+String vibeWord(int v) =>
+    v >= 70 ? tr('vibe_hot') : (v >= 45 ? tr('vibe_mid') : tr('vibe_calm'));
 
 /* Open-Meteo weathercode → condition emoji (night-aware for clear sky). */
 String wxEmojiFor(int? code, int hour) {
@@ -625,6 +768,18 @@ class AiXpBus {
   }
 }
 
+/* A guest's avatar lives only on this phone: a photo file + an emoji,
+   both kept in prefs and owned by ProfileTab's state. ProfileTab mirrors
+   every change here so the header's profile button (which sits above the
+   tab stack, outside ProfileTab) shows the same face the moment it
+   changes — no restart, no tab hop. Signed-in users don't need this:
+   their avatar rides HomePage's live _profile map. */
+class GuestAvatarBus {
+  static final ValueNotifier<String?> photoPath =
+      ValueNotifier<String?>(null);
+  static final ValueNotifier<String?> emoji = ValueNotifier<String?>(null);
+}
+
 /* Share through the system sheet and earn XP: +5 per share, max 10 paid
    shares a day (tracked in prefs so it survives restarts). */
 Future<void> shareWithXp(BuildContext context, String text) async {
@@ -647,9 +802,9 @@ Future<void> shareWithXp(BuildContext context, String text) async {
   if (!context.mounted) return;
   if (granted) {
     AiXpBus.credit(5);
-    snack(context, '🔗 +5 XP за шаринг');
+    snack(context, tr('share_xp_snack'));
   } else {
-    snack(context, 'Лимит шаринга на сегодня исчерпан');
+    snack(context, tr('share_limit_snack'));
   }
 }
 
@@ -873,15 +1028,17 @@ Future<Uint8List?> pickAndProcessImage(ImageSource source) async {
 }
 
 /* XP — the exact formula of the web app (xpOfStats + LEVELS). */
+/* Level thresholds; the name is a kStr key, resolved via tr() so the
+   ladder reads in the current language everywhere it appears. */
 const kLevels = <(int, String)>[
-  (0, 'Новичок'),
-  (100, 'Бродяга'),
-  (250, 'Тусовщик'),
-  (500, 'Призрак района'),
-  (900, 'Призрак города'),
-  (1500, 'Легенда ночей'),
-  (2500, 'Хранитель движа'),
-  (4000, 'Миф'),
+  (0, 'lv_newbie'),
+  (100, 'lv_wanderer'),
+  (250, 'lv_partier'),
+  (500, 'lv_district_ghost'),
+  (900, 'lv_city_ghost'),
+  (1500, 'lv_night_legend'),
+  (2500, 'lv_keeper'),
+  (4000, 'lv_myth'),
 ];
 
 Map<String, dynamic> normStats(dynamic raw) {
@@ -920,7 +1077,7 @@ int xpOfStats(Map<String, dynamic> raw) {
   while (i + 1 < kLevels.length && xp >= kLevels[i + 1].$1) {
     i++;
   }
-  return (i + 1, kLevels[i].$2, i + 1 < kLevels.length ? kLevels[i + 1].$1 : null);
+  return (i + 1, tr(kLevels[i].$2), i + 1 < kLevels.length ? kLevels[i + 1].$1 : null);
 }
 
 int dayIndex() => DateTime.now().millisecondsSinceEpoch ~/ 86400000;
@@ -931,9 +1088,640 @@ String dayKey() {
   return '${d.year}-${p(d.month)}-${p(d.day)}';
 }
 
+/* ============================ I18N ============================
+   App language: 'ru' (default) · 'he' · 'en', persisted in prefs as
+   app_lang and held in a notifier so a switch applies app-wide at
+   once — HomePage rebuilds the shell, pushed pages listen on their
+   own, and MaterialApp's builder flips Directionality for Hebrew.
+   EVERY user-visible UI string goes through tr()/trf() and kStr;
+   proper names (places, nicks, cities) are data and never pass here.
+   Content pools that already carry {ru, he, en} maps (AI daily drop,
+   ready-route names) resolve through aiText() below. */
+final ValueNotifier<String> appLang = ValueNotifier<String>('ru');
+
+Future<void> setAppLang(String lang) async {
+  appLang.value = lang;
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('app_lang', lang);
+  } catch (_) {}
+}
+
+String tr(String key) {
+  final v = kStr[key];
+  if (v == null) return key;
+  return switch (appLang.value) {
+    'he' => v.$2,
+    'en' => v.$3,
+    _ => v.$1,
+  };
+}
+
+/* tr with {placeholder} substitution: trf('x', {'n': 3}). */
+String trf(String key, [Map<String, Object?> args = const {}]) {
+  var s = tr(key);
+  args.forEach((k, v) => s = s.replaceAll('{$k}', '$v'));
+  return s;
+}
+
+const Map<String, (String, String, String)> kStr = {
+  'settings': ('Настройки', 'הגדרות', 'Settings'),
+  'svc_loc_denied': (
+    'Геолокация выключена для приложения — без неё карта тебя не видит',
+    'המיקום כבוי לאפליקציה — בלעדיו המפה לא רואה אותך',
+    "Location is off for the app — the map can't see you without it"
+  ),
+  'svc_gps_off': (
+    'Включи геолокацию на телефоне — тогда карта покажет, где ты',
+    'הפעל את שירותי המיקום בטלפון — ואז המפה תראה איפה אתה',
+    'Turn on location services on your phone — then the map will show where you are'
+  ),
+  'free': ('Бесплатно', 'חינם', 'Free'),
+  'free_lc': ('бесплатно', 'חינם', 'free'),
+  'per_person': ('на человека', 'לאדם', 'per person'),
+  'ghost_label': ('Призрак #{n}', 'רוח #{n}', 'Ghost #{n}'),
+  'ghost': ('Призрак', 'רוח', 'Ghost'),
+  'vibe_hot': ('жарко', 'חם', 'hot'),
+  'vibe_mid': ('средне', 'בינוני', 'moderate'),
+  'vibe_calm': ('спокойно', 'רגוע', 'calm'),
+  'vibe_label': ('движ', 'וייב', 'vibe'),
+  'vibe_of_place': ('движ места', 'הוייב של המקום', 'place vibe'),
+  'share_xp_snack': ('🔗 +5 XP за шаринг', '🔗 +5 XP על שיתוף', '🔗 +5 XP for sharing'),
+  'share_limit_snack': (
+    'Лимит шаринга на сегодня исчерпан',
+    'מגבלת השיתופים להיום נגמרה',
+    "Today's sharing limit is used up"
+  ),
+  'splash_tagline': (
+    'живой радар движа твоего города',
+    'רדאר חי של הבילוי בעיר שלך',
+    "a live radar of your city's scene"
+  ),
+  'lv_newbie': ('Новичок', 'מתחיל', 'Newbie'),
+  'lv_wanderer': ('Бродяга', 'נווד', 'Wanderer'),
+  'lv_partier': ('Тусовщик', 'בליין', 'Partygoer'),
+  'lv_district_ghost': ('Призрак района', 'רוח השכונה', 'District Ghost'),
+  'lv_city_ghost': ('Призрак города', 'רוח העיר', 'City Ghost'),
+  'lv_night_legend': ('Легенда ночей', 'אגדת הלילות', 'Legend of the Nights'),
+  'lv_keeper': ('Хранитель движа', 'שומר הוייב', 'Keeper of the Vibe'),
+  'lv_myth': ('Миф', 'מיתוס', 'Myth'),
+  'err_generic': (
+    'Что-то пошло не так. Проверь интернет.',
+    'משהו השתבש. בדוק את החיבור לאינטרנט.',
+    'Something went wrong. Check your internet connection.'
+  ),
+  'login_tagline': ('твой город · твои правила', 'העיר שלך · החוקים שלך', 'your city · your rules'),
+  'hint_nick': (
+    'Ник (только для нового аккаунта)',
+    'כינוי (רק לחשבון חדש)',
+    'Nickname (only for a new account)'
+  ),
+  'hint_password': ('Пароль', 'סיסמה', 'Password'),
+  'wait': ('Секунду…', 'רגע…', 'One second…'),
+  'sign_in': ('🚀 Войти', '🚀 כניסה', '🚀 Sign in'),
+  'sign_up': ('✨ Создать аккаунт', '✨ יצירת חשבון', '✨ Create account'),
+  'login_web_note': (
+    'Тот же аккаунт, что и на сайте tirada-anon.vercel.app',
+    'אותו חשבון כמו באתר tirada-anon.vercel.app',
+    'The same account as on tirada-anon.vercel.app'
+  ),
+  'browse_guest': ('Смотреть без аккаунта', 'להמשיך בלי חשבון', 'Browse without an account'),
+  'nav_map': ('Карта', 'מפה', 'Map'),
+  'nav_places': ('Места', 'מקומות', 'Places'),
+  'nav_route': ('Маршрут', 'מסלול', 'Route'),
+  'nav_profile': ('Профиль', 'פרופיל', 'Profile'),
+  'pick_city': ('Выбери город', 'בחר עיר', 'Choose a city'),
+  'live_in_city': ('в городе: ', 'בעיר: ', 'in the city: '),
+  'live_hot': ('{n} мест жарких', '{n} מקומות חמים', '{n} hot places'),
+  'live_total': (
+    ' сейчас • всего {n} мест на радаре',
+    ' עכשיו • סך הכול {n} מקומות על הרדאר',
+    ' now • {n} places on the radar in total'
+  ),
+  'tick_radar_on': ('👻 Радар включён…', '👻 הרדאר פועל…', '👻 Radar is on…'),
+  'tick_top': (
+    '🔥 {name} — самый живой движ по радару сейчас…',
+    '🔥 {name} — הוייב הכי חי על הרדאר עכשיו…',
+    '🔥 {name} — the liveliest vibe on the radar right now…'
+  ),
+  'tick_city': (
+    '📍 {city}: {n} мест на радаре, {hot} жарких прямо сейчас',
+    '📍 {city}: {n} מקומות על הרדאר, {hot} חמים ממש עכשיו',
+    '📍 {city}: {n} places on the radar, {hot} hot right now'
+  ),
+  'tick_tap': (
+    '👻 Жми 🔥 внизу — город сам соберёт твою ночь',
+    '👻 לחץ על 🔥 למטה — והעיר תבנה לך את הלילה',
+    '👻 Tap 🔥 below — the city will build your night'
+  ),
+  'quest_done_snack': (
+    '🏙️ Квест города выполнен · +50 XP',
+    '🏙️ קווסט העיר הושלם · +50 XP',
+    '🏙️ City quest complete · +50 XP'
+  ),
+  'you_in_city': ('📍 Ты сейчас в: {city}', '📍 אתה עכשיו בעיר: {city}', '📍 You are now in: {city}'),
+  'fab_in_deal': ('Ты в деле', 'אתה בפנים', "You're in"),
+  'deal_title_a': ('Я в ', 'אני ', "I'm "),
+  'deal_title_b': ('деле', 'בפנים', 'in'),
+  'deal_sub': (
+    'Один тап — и город сам собирает твою ночь.',
+    'טאפ אחד — והעיר בונה לך את הלילה.',
+    'One tap — and the city builds your night.'
+  ),
+  'deal_online_now': ('Сейчас в сети: ', 'מחוברים עכשיו: ', 'Online now: '),
+  'deal_friends_label': (
+    'Друзья сейчас в деле · {n}',
+    'חברים שבפנים עכשיו · {n}',
+    'Friends in right now · {n}'
+  ),
+  'deal_guest_note': (
+    'Ты пока гость 👻 Войди в аккаунт — и здесь будут друзья, которые сейчас в деле.',
+    'אתה אורח בינתיים 👻 היכנס לחשבון — וכאן יופיעו חברים שנמצאים עכשיו בפנים.',
+    "You're a guest for now 👻 Sign in — and friends who are in will show up here."
+  ),
+  'deal_none': (
+    'Пока никто из друзей не в деле. Будь первым 🔥',
+    'אף חבר עוד לא בפנים. תהיה הראשון 🔥',
+    'No friends are in yet. Be the first 🔥'
+  ),
+  'deal_in_city': ('в сети · {city}', 'מחובר · {city}', 'online · {city}'),
+  'deal_in': ('🔥 в деле', '🔥 בפנים', '🔥 in'),
+  'deal_top_pick': ('🏆 Топ выбор радара', '🏆 הבחירה המובילה של הרדאר', "🏆 Radar's top pick"),
+  'deal_already': (
+    '📍 А движ уже есть: {name}',
+    '📍 וכבר יש וייב: {name}',
+    '📍 And the vibe is already on: {name}'
+  ),
+  'deal_rec_text': (
+    'Город {city} · сейчас там {word} (движ {v}%), от тебя · по прямой: {d} км. Можно стартовать отсюда — друзья подтянутся по ссылке.',
+    'העיר {city} · עכשיו {word} שם (וייב {v}%), ממך · בקו ישר: {d} ק״מ. אפשר להתחיל מכאן — חברים יצטרפו דרך הקישור.',
+    '{city} · it is {word} there right now (vibe {v}%), from you · straight line: {d} km. You can start here — friends will join via the link.'
+  ),
+  'deal_route_btn': ('🚗 Маршрут', '🚗 מסלול', '🚗 Route'),
+  'deal_other': ('Другое место', 'מקום אחר', 'Another place'),
+  'deal_poll_title': ('🗳️ Куда идём?', '🗳️ לאן הולכים?', '🗳️ Where are we going?'),
+  'deal_poll_hint': (
+    'Тапни место — это будет твой голос',
+    'הקש על מקום — וזה הקול שלך',
+    'Tap a place — that will be your vote'
+  ),
+  'deal_invite': ('Позвать голосовать 👻', 'להזמין להצביע 👻', 'Invite to vote 👻'),
+  'deal_share_text': (
+    'Голосование за движ в TiradA anon 👻 Присоединяйся: https://tirada-anon.vercel.app',
+    'הצבעה על הוייב ב-TiradA anon 👻 הצטרפו: https://tirada-anon.vercel.app',
+    'Voting for the vibe in TiradA anon 👻 Join in: https://tirada-anon.vercel.app'
+  ),
+  'place_word': ('Место', 'מקום', 'Place'),
+  'signin_to_fire': ('Войди, чтобы ставить 🔥', 'היכנס כדי לתת 🔥', 'Sign in to give 🔥'),
+  'nav_open_fail': (
+    'Не удалось открыть навигатор 😕',
+    'לא הצלחנו לפתוח את הנווט 😕',
+    "Couldn't open the navigator 😕"
+  ),
+  'review_posted': ('Отзыв опубликован 👻', 'הביקורת פורסמה 👻', 'Review posted 👻'),
+  'review_fail': (
+    'Отзыв не отправился — попробуй ещё раз',
+    'הביקורת לא נשלחה — נסה שוב',
+    "The review didn't send — try again"
+  ),
+  'signin_to_photo': ('Войди, чтобы добавлять фото', 'היכנס כדי להוסיף תמונות', 'Sign in to add photos'),
+  'camera': ('Камера', 'מצלמה', 'Camera'),
+  'gallery': ('Галерея', 'גלריה', 'Gallery'),
+  'who_sees_photo': ('Кто увидит фото?', 'מי יראה את התמונה?', 'Who will see the photo?'),
+  'vis_all': ('🌍 Всем', '🌍 לכולם', '🌍 Everyone'),
+  'vis_friends': ('👻 Только друзьям', '👻 רק לחברים', '👻 Friends only'),
+  'vis_none': ('Не показывать', 'לא להציג', "Don't show"),
+  'photo_posted': (
+    'Фото опубликовано 📸 · +25 XP за фото',
+    'התמונה פורסמה 📸 · +25 XP על תמונה',
+    'Photo posted 📸 · +25 XP for the photo'
+  ),
+  'photo_fail': (
+    'Фото не загрузилось — попробуй ещё раз',
+    'התמונה לא עלתה — נסה שוב',
+    "The photo didn't upload — try again"
+  ),
+  'reviews_suffix': (' · {n} отзывов', ' · {n} ביקורות', ' · {n} reviews'),
+  'new_place': ('✨ новое место', '✨ מקום חדש', '✨ new place'),
+  'km_from_you': ('· {d} км от тебя', '· {d} ק״מ ממך', '· {d} km from you'),
+  'crowd_now': ('👥 Сейчас отдыхают: ~{n}', '👥 נחים עכשיו: ~{n}', '👥 Hanging out now: ~{n}'),
+  'crowd_friends': (' · друзья рядом: {n}', ' · חברים בקרבת מקום: {n}', ' · friends nearby: {n}'),
+  'you_here': ('✓ Ты здесь', '✓ אתה כאן', "✓ You're here"),
+  'i_here': ('✓ Я здесь', '✓ אני כאן', "✓ I'm here"),
+  'checkin_snack': (
+    'Чек-ин засчитан · место в твоей статистике 👻',
+    'הצ׳ק-אין נקלט · המקום בסטטיסטיקה שלך 👻',
+    'Check-in counted · the place is in your stats 👻'
+  ),
+  'share': ('Поделиться', 'שיתוף', 'Share'),
+  'share_place_text': (
+    '{name} — движ {v}% в TiradA anon 🔥',
+    '{name} — וייב {v}% ב-TiradA anon 🔥',
+    '{name} — vibe {v}% in TiradA anon 🔥'
+  ),
+  'uploading': ('Загрузка…', 'מעלה…', 'Uploading…'),
+  'add_photo': ('📸 Добавить фото', '📸 הוסף תמונה', '📸 Add a photo'),
+  'route_here': ('🧭 Маршрут сюда', '🧭 מסלול לכאן', '🧭 Route here'),
+  'to_navigator': ('В навигатор', 'לנווט', 'Open navigator'),
+  'ghost_photos_here': ('📸 Фото призраков здесь', '📸 תמונות רוחות כאן', '📸 Ghost photos here'),
+  'tap_photo_fire': (
+    'тап по фото — поставить 🔥',
+    'הקש על תמונה — כדי לתת 🔥',
+    'tap a photo — to give 🔥'
+  ),
+  'ghost_reviews': ('💬 Отзывы призраков', '💬 ביקורות רוחות', '💬 Ghost reviews'),
+  'reviews_empty': (
+    'Пока тихо — стань первым призраком с отзывом.',
+    'שקט בינתיים — תהיה הרוח הראשונה עם ביקורת.',
+    'Quiet for now — be the first ghost to leave a review.'
+  ),
+  'ghost_reviews_count': (
+    '{avg} · {n} отзывов призраков',
+    '{avg} · {n} ביקורות רוחות',
+    '{avg} · {n} ghost reviews'
+  ),
+  'hint_review': ('✍️ Оставить отзыв…', '✍️ כתוב ביקורת…', '✍️ Write a review…'),
+  'leave_review': ('✍️ Оставить отзыв', '✍️ כתוב ביקורת', '✍️ Write a review'),
+  'signin_to_review': (
+    'Войди, чтобы оставить отзыв',
+    'היכנס כדי לכתוב ביקורת',
+    'Sign in to write a review'
+  ),
+  'similar_places': ('Похожие места', 'מקומות דומים', 'Similar places'),
+  'online_now': ('Сейчас в сети', 'מחובר עכשיו', 'Online now'),
+  'seen_recently': ('Был(а) недавно', 'נראה לאחרונה', 'Seen recently'),
+  'pulse_chip': (
+    '{city} · {n} мест · {hot} жарких',
+    '{city} · {n} מקומות · {hot} חמים',
+    '{city} · {n} places · {hot} hot'
+  ),
+  'chip_dir': ('🧭 {name} · {d} · ', '🧭 {name} · {d} · ', '🧭 {name} · {d} · '),
+  'chip_walk': ('≈ {n} мин пешком', '≈ {n} דקות הליכה', '≈ {n} min on foot'),
+  'chip_drive': (' · 🚗 ≈ {n} мин', ' · 🚗 ≈ {n} דקות', ' · 🚗 ≈ {n} min'),
+  'chip_from_center': (' · от центра города', ' · ממרכז העיר', ' · from the city center'),
+  'chip_route': (
+    '🗺️ {title} · {n} точки · {d}',
+    '🗺️ {title} · {n} נקודות · {d}',
+    '🗺️ {title} · {n} stops · {d}'
+  ),
+  'unit_m': ('м', 'מ׳', 'm'),
+  'unit_km': ('км', 'ק״מ', 'km'),
+  'type_park': ('Парки', 'פארקים', 'Parks'),
+  'type_cafe': ('Кафе', 'בתי קפה', 'Cafes'),
+  'type_bar': ('Бары', 'ברים', 'Bars'),
+  'type_restaurant': ('Рестораны', 'מסעדות', 'Restaurants'),
+  'type_club': ('Клубы', 'מועדונים', 'Clubs'),
+  'type_beach': ('Пляжи', 'חופים', 'Beaches'),
+  'type_view': ('Смотровые', 'נקודות תצפית', 'Viewpoints'),
+  'type_sport': ('Спорт', 'ספורט', 'Sports'),
+  'type_culture': ('Культура', 'תרבות', 'Culture'),
+  'type_market': ('Магазины', 'חנויות', 'Shops'),
+  'type_other': ('Разное', 'שונות', 'Misc'),
+  'sort_vibe': ('По движу', 'לפי הוייב', 'By vibe'),
+  'sort_dist': ('📍 Рядом со мной', '📍 קרוב אליי', '📍 Near me'),
+  'sort_rating': ('По рейтингу', 'לפי דירוג', 'By rating'),
+  'sort_price': ('По цене', 'לפי מחיר', 'By price'),
+  'sort_name': ('А–Я', 'א–ת', 'A–Z'),
+  'places_count': ('{n} мест', '{n} מקומות', '{n} places'),
+  'tasks_book': ('🎯 Задачник', '🎯 משימות', '🎯 Tasks'),
+  'ai_day': ('🤖 ИИ дня', '🤖 ה-AI של היום', '🤖 AI of the day'),
+  'first_task': ('Первое задание: {t}', 'המשימה הראשונה: {t}', 'First task: {t}'),
+  'open_tasks': ('Открыть задачник →', 'לפתוח את המשימות ←', 'Open the tasks →'),
+  'city_now': ('Город сейчас', 'העיר עכשיו', 'The city now'),
+  'stat_places_radar': ('мест на радаре', 'מקומות על הרדאר', 'places on the radar'),
+  'stat_hot_now': ('жарких сейчас', 'חמים עכשיו', 'hot now'),
+  'stat_avg_vibe': ('средний движ', 'וייב ממוצע', 'average vibe'),
+  'search_hint': ('Поиск места…', 'חיפוש מקום…', 'Search a place…'),
+  'all': ('Все', 'הכול', 'All'),
+  'only_hot': ('🔥 Только жаркие', '🔥 רק חמים', '🔥 Only hot'),
+  'found_n': ('Найдено: {n}', 'נמצאו: {n}', 'Found: {n}'),
+  'empty_title': ('Здесь пока тихо', 'שקט כאן בינתיים', 'Quiet here for now'),
+  'empty_hint': (
+    'Попробуй другой фильтр, поиск или город.',
+    'נסה מסנן אחר, חיפוש אחר או עיר אחרת.',
+    'Try another filter, search or city.'
+  ),
+  'new_short': ('✨ новое', '✨ חדש', '✨ new'),
+  'dist_badge': ('📍 {d} км', '📍 {d} ק״מ', '📍 {d} km'),
+  'route_evening_title': ('Маршрут на вечер', 'מסלול לערב', 'Evening route'),
+  'route_saved_title': ('Сохранённый маршрут', 'מסלול שמור', 'Saved route'),
+  'route_title_a': ('Маршрут на ', 'מסלול ל', 'Route for the '),
+  'route_title_b': ('вечер', 'ערב', 'evening'),
+  'route_saved_snack': ('Маршрут сохранён 💾', 'המסלול נשמר 💾', 'Route saved 💾'),
+  'route_desc_0': (
+    'Старт — спокойно зайти в вечер.',
+    'מתחילים — נכנסים לערב ברוגע.',
+    'Start — ease into the evening.'
+  ),
+  'route_desc_1': (
+    'Пик ночи — туда, где жарче всего.',
+    'שיא הלילה — איפה שהכי חם.',
+    'Peak of the night — where it is hottest.'
+  ),
+  'route_desc_2': (
+    'Финал — закрепить ночь красиво.',
+    'סיום — לחתום את הלילה יפה.',
+    'Finale — close the night in style.'
+  ),
+  'route_task_fallback': (
+    'Сделай фото, которое расскажет про это место без слов.',
+    'צלם תמונה שמספרת על המקום הזה בלי מילים.',
+    'Take a photo that tells the story of this place without words.'
+  ),
+  'route_too_far': (
+    'Подойди ближе к месту · до него {d} — чек-ин откроется рядом',
+    'התקרב למקום · נותרו {d} — הצ׳ק-אין ייפתח כשתהיה קרוב',
+    'Get closer to the place · {d} to go — check-in opens when you are near'
+  ),
+  'route_done_snack': (
+    'Маршрут пройден целиком · +40 XP 🎉',
+    'המסלול הושלם במלואו · +40 XP 🎉',
+    'Route fully completed · +40 XP 🎉'
+  ),
+  'route_empty_snack': (
+    'Сначала собери маршрут — пока показывать нечего',
+    'קודם בנה מסלול — אין מה להציג בינתיים',
+    'Build a route first — nothing to show yet'
+  ),
+  'mins_short': ('≈ {n} мин', '≈ {n} דקות', '≈ {n} min'),
+  'stop_near': (
+    '📍 Ты рядом — можно чекиниться',
+    '📍 אתה קרוב — אפשר לעשות צ׳ק-אין',
+    "📍 You're nearby — you can check in"
+  ),
+  'stop_far': (
+    '📍 {d} от тебя · чек-ин откроется у места',
+    '📍 {d} ממך · הצ׳ק-אין ייפתח ליד המקום',
+    '📍 {d} from you · check-in opens at the place'
+  ),
+  'done_label': ('Выполнено ✓', 'בוצע ✓', 'Done ✓'),
+  'checkin_task': ('Я здесь · задание выполнено', 'אני כאן · המשימה בוצעה', "I'm here · task done"),
+  'route_counted_suffix': (' · ✓ пройден', ' · ✓ הושלם', ' · ✓ completed'),
+  'ready_card_line': (
+    '{n} точки · ≈ {d} от центра',
+    '{n} נקודות · ≈ {d} מהמרכז',
+    '{n} stops · ≈ {d} from the center'
+  ),
+  'route_intro_evening': (
+    'Три точки, три задания — маршрут строится от тебя по городу {city}. Не нравится расклад — пересобери.',
+    'שלוש נקודות, שלוש משימות — המסלול נבנה ממך ברחבי {city}. לא מתאים? בנה מחדש.',
+    "Three stops, three tasks — the route is built from you across {city}. Don't like the layout? Reshuffle it."
+  ),
+  'route_intro_ready': (
+    'Готовый маршрут по городу {city}: лучшие места, собранные в пешую цепочку. Иди по точкам и чекинься у каждой.',
+    'מסלול מוכן ב{city}: המקומות הטובים ביותר בשרשרת הליכה. עבור בין הנקודות ועשה צ׳ק-אין בכל אחת.',
+    'A ready route across {city}: the best places chained into a walk. Follow the stops and check in at each one.'
+  ),
+  'route_intro_saved': (
+    'Твой сохранённый маршрут по городу {city}.',
+    'המסלול השמור שלך ב{city}.',
+    'Your saved route across {city}.'
+  ),
+  'route_start_center': (
+    '📍 Геолокация выключена — старт от центра города',
+    '📍 המיקום כבוי — מתחילים ממרכז העיר',
+    '📍 Location is off — starting from the city center'
+  ),
+  'route_start_you': ('📍 Старт — от тебя', '📍 מתחילים — ממך', '📍 Start — from you'),
+  'route_summary': (
+    '🗺️ {n} точки · всего ≈ {d}',
+    '🗺️ {n} נקודות · סך הכול ≈ {d}',
+    '🗺️ {n} stops · total ≈ {d}'
+  ),
+  'route_summary_done': (' · ✓ маршрут пройден', ' · ✓ המסלול הושלם', ' · ✓ route completed'),
+  'tp_walk': ('🚶 Пешком', '🚶 ברגל', '🚶 Walking'),
+  'tp_bus': ('🚌 Автобус', '🚌 אוטובוס', '🚌 Bus'),
+  'tp_car': ('🚗 Машина', '🚗 ברכב', '🚗 Car'),
+  'route_reshuffle': ('🎲 Пересобрать маршрут', '🎲 בנה מסלול מחדש', '🎲 Reshuffle route'),
+  'route_show_map': ('🗺️ Показать на карте', '🗺️ הצג במפה', '🗺️ Show on map'),
+  'route_save': ('💾 Сохранить маршрут', '💾 שמור מסלול', '💾 Save route'),
+  'route_back_evening': ('🌙 К маршруту на вечер', '🌙 למסלול הערב', '🌙 Back to the evening route'),
+  'my_routes': ('Мои маршруты', 'המסלולים שלי', 'My routes'),
+  'ready_routes': ('Готовые маршруты', 'מסלולים מוכנים', 'Ready routes'),
+  'route_no_places': (
+    'В этом городе пока нет мест для маршрута.',
+    'בעיר הזו אין עדיין מקומות למסלול.',
+    'This city has no places for a route yet.'
+  ),
+  'from_center': ('🏙️ от центра', '🏙️ מהמרכז', '🏙️ from the center'),
+  'from_you': ('📍 от тебя', '📍 ממך', '📍 from you'),
+  'steps_title': ('👟 Шаги сегодня', '👟 צעדים היום', "👟 Today's steps"),
+  'steps_no_access': (
+    'Нет доступа к шагам — разреши физическую активность, и шаги начнут давать XP',
+    'אין גישה לצעדים — אשר פעילות גופנית, והצעדים יתחילו לתת XP',
+    'No access to steps — allow physical activity and steps will start earning XP'
+  ),
+  'steps_info': (
+    'Каждые 1000 шагов = +5 XP (до +50 в день) · до следующего +5 XP: {n} шагов · сегодня +{xp} XP',
+    'כל 1000 צעדים = +5 XP (עד +50 ביום) · עד ה-+5 XP הבא: {n} צעדים · היום +{xp} XP',
+    'Every 1000 steps = +5 XP (up to +50 a day) · {n} steps to the next +5 XP · today +{xp} XP'
+  ),
+  'cq_title': ('🏙️ Квест города — {city}', '🏙️ קווסט העיר — {city}', '🏙️ City quest — {city}'),
+  'cq_checkin': ('Зачекинься: {name}', 'עשה צ׳ק-אין: {name}', 'Check in: {name}'),
+  'cq_photo': ('Сфотографируй: {name}', 'צלם: {name}', 'Photograph: {name}'),
+  'cq_fav': ('Добавь в избранное: {name}', 'הוסף למועדפים: {name}', 'Add to favorites: {name}'),
+  'cq_done': (
+    'Квест выполнен · +50 XP уже твои 🎉',
+    'הקווסט הושלם · +50 XP כבר שלך 🎉',
+    'Quest complete · +50 XP is yours 🎉'
+  ),
+  'cq_hint': (
+    'Все три шага за день — бонус +50 XP. Шаги засчитываются сами: чек-ин, фото и сердечко у нужных мест.',
+    'שלושת הצעדים ביום — בונוס +50 XP. הצעדים נספרים מעצמם: צ׳ק-אין, תמונה ולב במקומות הנכונים.',
+    'All three steps in a day — a +50 XP bonus. Steps count automatically: a check-in, a photo and a heart at the right places.'
+  ),
+  'tour_title': ('🏆 Фото дня — турнир', '🏆 תמונת היום — טורניר', '🏆 Photo of the day — tournament'),
+  'tour_sub': (
+    'Фото призраков города за сегодня. Больше 🔥 — выше место; лидер дня завтра получит +25 XP.',
+    'תמונות הרוחות של העיר מהיום. יותר 🔥 — מקום גבוה יותר; מוביל היום יקבל מחר +25 XP.',
+    "Today's ghost photos of the city. More 🔥 — higher rank; today's leader gets +25 XP tomorrow."
+  ),
+  'tour_empty': (
+    'Сегодня пока нет фото — открой место и стань первым 📸',
+    'אין תמונות היום עדיין — פתח מקום ותהיה הראשון 📸',
+    'No photos today yet — open a place and be the first 📸'
+  ),
+  'tour_winner_snack': (
+    '🏆 Твоё фото выиграло вчерашний турнир · +25 XP',
+    '🏆 התמונה שלך ניצחה בטורניר של אתמול · +25 XP',
+    "🏆 Your photo won yesterday's tournament · +25 XP"
+  ),
+  'tour_leader': ('🏆 Фото дня · {ghost}', '🏆 תמונת היום · {ghost}', '🏆 Photo of the day · {ghost}'),
+  'ai_task_done': ('Задание ИИ выполнено · +{xp} XP', 'משימת ה-AI הושלמה · +{xp} XP', 'AI task complete · +{xp} XP'),
+  'daily_task_done': ('Задание дня выполнено · +20 XP', 'משימת היום הושלמה · +20 XP', 'Daily task complete · +20 XP'),
+  'ai_quest_label': ('🗺️ Квест дня: {t}', '🗺️ קווסט היום: {t}', '🗺️ Quest of the day: {t}'),
+  'ai_route_theme_label': ('🌙 Тема маршрута: {t}', '🌙 נושא המסלול: {t}', '🌙 Route theme: {t}'),
+  'done_btn': ('Готово ✓', 'בוצע ✓', 'Done ✓'),
+  'loading': ('Загрузка…', 'טוען…', 'Loading…'),
+  'week_quest_label': ('🗓️ Квест недели: {t}', '🗓️ קווסט השבוע: {t}', '🗓️ Quest of the week: {t}'),
+  'daily_task_label': ('🎯 Задание дня', '🎯 משימת היום', '🎯 Daily task'),
+  'b_first_night': ('Первая ночь', 'הלילה הראשון', 'First Night'),
+  'c_1_night': ('1 ночь в деле', 'לילה אחד בפנים', '1 night in'),
+  'c_5_nights': ('5 ночей в деле', '5 לילות בפנים', '5 nights in'),
+  'b_explorer': ('Исследователь', 'חוקר', 'Explorer'),
+  'c_10_places': ('10 мест открыто', '10 מקומות נפתחו', '10 places opened'),
+  'b_photographer': ('Фотограф города', 'צלם העיר', 'City Photographer'),
+  'c_1_photo': ('1 фото в городе', 'תמונה אחת בעיר', '1 photo in the city'),
+  'b_eye': ('Глаз города', 'עין העיר', 'Eye of the City'),
+  'c_5_photos': ('5 фото в городе', '5 תמונות בעיר', '5 photos in the city'),
+  'b_router': ('Маршрутник', 'בונה מסלולים', 'Route Builder'),
+  'c_3_routes': ('3 маршрута построено', '3 מסלולים נבנו', '3 routes built'),
+  'b_architect': ('Архитектор ночей', 'אדריכל הלילות', 'Architect of Nights'),
+  'c_10_routes': ('10 маршрутов', '10 מסלולים', '10 routes'),
+  'b_streak3': ('Серия 3', 'רצף 3', 'Streak 3'),
+  'c_streak3': ('серия 3 дня подряд', 'רצף של 3 ימים', '3-day streak'),
+  'b_streak7': ('Серия 7', 'רצף 7', 'Streak 7'),
+  'c_streak7': ('серия 7 дней подряд', 'רצף של 7 ימים', '7-day streak'),
+  'b_voice': ('Голос города', 'קול העיר', 'Voice of the City'),
+  'c_10_votes': ('10 голосов', '10 קולות', '10 votes'),
+  'b_quester': ('Квестер', 'קווסטר', 'Quester'),
+  'c_1_quest': ('1 квест пройден', 'קווסט אחד הושלם', '1 quest completed'),
+  'b_legend': ('Легенда', 'אגדה', 'Legend'),
+  't_explorer_city': ('Исследователь города', 'חוקר העיר', 'City Explorer'),
+  'c_25_places': ('25 мест открыто', '25 מקומות נפתחו', '25 places opened'),
+  'c_5_routes': ('5 маршрутов', '5 מסלולים', '5 routes'),
+  't_king': ('Король ночей', 'מלך הלילות', 'King of Nights'),
+  'c_10_nights': ('10 ночей в деле', '10 לילות בפנים', '10 nights in'),
+  'badges_title': ('🏆 Награды', '🏆 פרסים', '🏆 Rewards'),
+  'badges_open_count': (
+    'Награды · открыто {n} из {total}',
+    'פרסים · נפתחו {n} מתוך {total}',
+    'Rewards · {n} of {total} unlocked'
+  ),
+  'badge_open': ('открыто ✓', 'נפתח ✓', 'unlocked ✓'),
+  'city_titles': ('Титулы города', 'תוארי העיר', 'City titles'),
+  'your_title': ('твой титул', 'התואר שלך', 'your title'),
+  'title_open': ('открыт', 'פתוח', 'unlocked'),
+  'level_ladder': ('Лестница уровней', 'סולם הרמות', 'Level ladder'),
+  'xp_left': ('осталось {n} XP', 'נותרו {n} XP', '{n} XP to go'),
+  'xp_from': ('от {n} XP', 'מ-{n} XP', 'from {n} XP'),
+  'top_ghosts': ('👑 Топ призраков', '👑 טופ הרוחות', '👑 Top ghosts'),
+  'top_signin_title': (
+    'Войди, чтобы видеть топ города',
+    'היכנס כדי לראות את טופ העיר',
+    'Sign in to see the city top'
+  ),
+  'top_signin_sub': (
+    'Кто самый легендарный призрак района — видно только своим.',
+    'מי הרוח הכי אגדי בשכונה — רואים רק מבפנים.',
+    'Who the most legendary ghost of the district is — visible only to insiders.'
+  ),
+  'top_empty_title': ('Топ пока пуст', 'הטופ ריק בינתיים', 'The top is empty for now'),
+  'top_empty_hint': (
+    'Не удалось загрузить призраков города.',
+    'לא הצלחנו לטעון את רוחות העיר.',
+    "Couldn't load the city's ghosts."
+  ),
+  'you_suffix': (' · ты', ' · אתה', ' · you'),
+  'language': ('Язык', 'שפה', 'Language'),
+  'settings_btn': ('⚙️ Настройки', '⚙️ הגדרות', '⚙️ Settings'),
+  'creators_btn': ('👻 Создатели', '👻 היוצרים', '👻 Creators'),
+  'creators_title': ('Создатели', 'היוצרים', 'Creators'),
+  'main_creator': ('главный создатель', 'היוצר הראשי', 'main creator'),
+  'app_tagline': (
+    'Живой радар движа твоего города.\nАнонимно, честно, прямо сейчас.',
+    'רדאר חי של הבילוי בעיר שלך.\nאנונימי, כן, ממש עכשיו.',
+    "A live radar of your city's scene.\nAnonymous, honest, right now."
+  ),
+  'we_on_air': ('Мы на связи', 'דברו איתנו', 'Get in touch'),
+  'made_by_ghosts': ('Сделали призраки', 'נוצר על ידי רוחות', 'Made by ghosts'),
+  'avatar_sheet_title': ('Аватар призрака', 'האווטאר של הרוח', "The ghost's avatar"),
+  'photo_from_gallery': ('📷 Фото из галереи', '📷 תמונה מהגלריה', '📷 Photo from gallery'),
+  'guest_photo_note': (
+    'Гостю фото сохранится только на этом телефоне. Войди — и аватар будет жить в облаке.',
+    'לאורח התמונה תישמר רק בטלפון הזה. היכנס — והאווטאר יחיה בענן.',
+    'For a guest the photo stays only on this phone. Sign in — and the avatar will live in the cloud.'
+  ),
+  'avatar_updated': ('Аватар обновлён 📷', 'האווטאר עודכן 📷', 'Avatar updated 📷'),
+  'avatar_fail': (
+    'Аватар не загрузился — попробуй ещё раз',
+    'האווטאר לא עלה — נסה שוב',
+    "The avatar didn't upload — try again"
+  ),
+  'guest': ('Гость', 'אורח', 'Guest'),
+  'contrib_tasks': ('задания', 'משימות', 'tasks'),
+  'contrib_quest': ('квест', 'קווסט', 'quest'),
+  'contrib_routes': ('маршруты', 'מסלולים', 'routes'),
+  'contrib_nights': ('ночи', 'לילות', 'nights'),
+  'contrib_photos': ('фото', 'תמונות', 'photos'),
+  'contrib_votes': ('голоса', 'קולות', 'votes'),
+  'contrib_streak': ('серия', 'רצף', 'streak'),
+  'prof_title_a': ('Мой ', 'הרוח ', 'My '),
+  'prof_title_b': ('призрак', 'שלי', 'ghost'),
+  'tap_ghost_hint': (
+    'тап по призраку — выбрать аватарку',
+    'הקש על הרוח — כדי לבחור אווטאר',
+    'tap the ghost — to pick an avatar'
+  ),
+  'no_title_yet': ('Без титула — пока', 'בלי תואר — בינתיים', 'No title — yet'),
+  'city_fallback': ('города', 'העיר', 'the city'),
+  'prof_motto': (
+    'Без настоящего имени. Без лишнего. Только вайб.',
+    'בלי שם אמיתי. בלי מיותר. רק וייב.',
+    'No real name. No extras. Just the vibe.'
+  ),
+  'ghost_nick_label': ('Ник призрака', 'הכינוי של הרוח', "The ghost's nickname"),
+  'map_mode_label': ('Режим на карте', 'מצב במפה', 'Map mode'),
+  'mode_visible': ('👁 Видимый', '👁 גלוי', '👁 Visible'),
+  'mode_ghost': ('👻 Призрак', '👻 רוח', '👻 Ghost'),
+  'mode_offline': ('🚫 Невидимка', '🚫 בלתי נראה', '🚫 Invisible'),
+  'signin_create': ('🚀 Войти / Создать аккаунт', '🚀 כניסה / יצירת חשבון', '🚀 Sign in / Create account'),
+  'account_why': (
+    'Аккаунт нужен для друзей на карте, своего ника и синхронизации. Всё остальное работает и так.',
+    'החשבון נדרש לחברים במפה, לכינוי שלך ולסנכרון. כל השאר עובד גם ככה.',
+    'An account is needed for friends on the map, your own nickname and sync. Everything else works anyway.'
+  ),
+  'stat_nights': ('ночи в деле', 'לילות בפנים', 'nights in'),
+  'stat_places_opened': ('мест открыто', 'מקומות נפתחו', 'places opened'),
+  'stat_routes_built': ('маршрута построено', 'מסלולים נבנו', 'routes built'),
+  'stat_photos_city': ('фото в городе', 'תמונות בעיר', 'photos in the city'),
+  'max_level': ('Максимальный уровень 👑', 'הרמה המקסימלית 👑', 'Maximum level 👑'),
+  'to_level': (
+    'До уровня {n} «{name}» осталось {xp} XP',
+    'עד רמה {n} «{name}» נותרו {xp} XP',
+    '{xp} XP left to level {n} “{name}”'
+  ),
+  'streak_line': ('🔥 серия: {n} дн.', '🔥 רצף: {n} ימים', '🔥 streak: {n} days'),
+  'record': ('рекорд: {n}', 'שיא: {n}', 'record: {n}'),
+  'wd_1': ('Пн', 'ב׳', 'Mon'),
+  'wd_2': ('Вт', 'ג׳', 'Tue'),
+  'wd_3': ('Ср', 'ד׳', 'Wed'),
+  'wd_4': ('Чт', 'ה׳', 'Thu'),
+  'wd_5': ('Пт', 'ו׳', 'Fri'),
+  'wd_6': ('Сб', 'ש׳', 'Sat'),
+  'wd_7': ('Вс', 'א׳', 'Sun'),
+  'favorites_label': ('❤️ Избранное', '❤️ מועדפים', '❤️ Favorites'),
+  'favorites_empty': (
+    'Пока пусто — жми сердечко у мест',
+    'ריק בינתיים — לחץ על הלב ליד מקומות',
+    'Empty for now — tap the heart on places'
+  ),
+  'sign_out': ('Выйти', 'התנתק', 'Sign out'),
+  'ghost_card_label': ('Карточка призрака', 'כרטיס הרוח', 'Ghost card'),
+  'level_line': ('Уровень {n} · {name} · {xp} XP', 'רמה {n} · {name} · {xp} XP', 'Level {n} · {name} · {xp} XP'),
+  'share_card': ('🔗 Поделиться карточкой', '🔗 שיתוף הכרטיס', '🔗 Share the card'),
+  'share_card_text': (
+    '👻 {nick} #{num} — TiradA anon\nУровень {n} · {name} · {xp} XP\nГород: {city} · живой радар движа 🔥',
+    '👻 {nick} #{num} — TiradA anon\nרמה {n} · {name} · {xp} XP\nעיר: {city} · רדאר חי של הבילוי 🔥',
+    '👻 {nick} #{num} — TiradA anon\nLevel {n} · {name} · {xp} XP\nCity: {city} · a live vibe radar 🔥'
+  ),
+  'haptics_label': ('Вибрация кнопок', 'רטט בכפתורים', 'Button vibration'),
+  'notif_section': ('🔔 Уведомления', '🔔 התראות', '🔔 Notifications'),
+  'notif_quest': ('🏙️ Квесты и задания дня', '🏙️ קווסטים ומשימות היום', '🏙️ Quests and daily tasks'),
+  'notif_friends': ('👻 Друзья в деле и онлайн', '👻 חברים בפנים ומחוברים', '👻 Friends in and online'),
+  'notif_votes': ('🗳️ Голосования', '🗳️ הצבעות', '🗳️ Votes'),
+  'notif_photos': ('📸 Фото и турнир дня', '📸 תמונות וטורניר היום', '📸 Photos and the daily tournament'),
+  'notif_streak': ('🔥 Серия под угрозой', '🔥 רצף בסכנה', '🔥 Streak at risk'),
+  'notif_rain': ('🌧️ Дождь в городе', '🌧️ גשם בעיר', '🌧️ Rain in the city'),
+  'notif_steps': ('👟 Цели шагов', '👟 יעדי צעדים', '👟 Step goals'),
+  'in_deal_btn': ('Ты в деле', 'אתה בפנים', "You're in"),
+  // __MORE_KEYS__
+};
+
 String aiText(dynamic o) {
   if (o is Map) {
-    return (o['ru'] ?? o['en'] ?? o['he'] ?? '').toString();
+    final lang = appLang.value;
+    return (o[lang] ?? o['ru'] ?? o['en'] ?? o['he'] ?? '').toString();
   }
   return o?.toString() ?? '';
 }
@@ -1337,7 +2125,7 @@ class VibeBadge extends StatelessWidget {
             ),
           ],
         ),
-        Text('движ', style: T.body(9.5, color: T.faint, w: FontWeight.w600)),
+        Text(tr('vibe_label'), style: T.body(9.5, color: T.faint, w: FontWeight.w600)),
       ],
     );
   }
@@ -1681,7 +2469,7 @@ class VibeGauge extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text('$vibe%', style: T.displayBlack(24, color: vibeColor(vibe))),
-                Text('движ места', style: T.body(11, color: T.faint, w: FontWeight.w600)),
+                Text(tr('vibe_of_place'), style: T.body(11, color: T.faint, w: FontWeight.w600)),
               ],
             ),
           ),
@@ -2120,6 +2908,16 @@ class TiradaApp extends StatelessWidget {
     return MaterialApp(
       title: 'TiradA anon',
       debugShowCheckedModeBanner: false,
+      // Hebrew is RTL: the whole app (shell + pushed routes + sheets)
+      // flips direction the moment the language changes.
+      builder: (context, child) => AnimatedBuilder(
+        animation: appLang,
+        builder: (context, _) => Directionality(
+          textDirection:
+              appLang.value == 'he' ? TextDirection.rtl : TextDirection.ltr,
+          child: child ?? const SizedBox.shrink(),
+        ),
+      ),
       theme: ThemeData(
         brightness: Brightness.dark,
         fontFamily: 'Inter',
@@ -2266,9 +3064,17 @@ class _SplashIntroState extends State<SplashIntro>
                 Interval(0, 0.55, curve: Curves.linear).transform(_c.value),
               );
               final textT = Interval(0.35, 0.85, curve: T.cOut).transform(_c.value);
-              return Stack(
-                alignment: Alignment.center,
-                children: [
+              // SizedBox.expand is load-bearing (v2.0.10 fix): without
+              // it this Stack shrink-wraps to the Column/RadarSweep,
+              // and GlowBackground — whose Stack aligns non-positioned
+              // children top-start — parks the whole intro in the
+              // top-left corner. Expanded, the Stack IS the full
+              // screen, so its center alignment truly centers the
+              // composition and the loader hugs the real bottom.
+              return SizedBox.expand(
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
                   const RadarSweep(size: 300, opacity: 0.16),
                   Column(
                     mainAxisSize: MainAxisSize.min,
@@ -2301,27 +3107,28 @@ class _SplashIntroState extends State<SplashIntro>
                       Opacity(
                         opacity: textT,
                         child: Text(
-                          'живой радар движа твоего города',
+                          tr('splash_tagline'),
                           style: T.body(13, color: T.muted),
                         ),
                       ),
                     ],
                   ),
-                  Positioned(
-                    left: T.s24,
-                    right: T.s24,
-                    bottom: 46,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(2),
-                      child: LinearProgressIndicator(
-                        value: _c.value,
-                        minHeight: 3,
-                        backgroundColor: T.surfaceHi,
-                        valueColor: const AlwaysStoppedAnimation(T.ember),
+                    Positioned(
+                      left: T.s24,
+                      right: T.s24,
+                      bottom: 46,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: LinearProgressIndicator(
+                          value: _c.value,
+                          minHeight: 3,
+                          backgroundColor: T.surfaceHi,
+                          valueColor: const AlwaysStoppedAnimation(T.ember),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               );
             },
           ),
@@ -2412,7 +3219,7 @@ class _LoginPageState extends State<LoginPage> {
     } on AuthException catch (e) {
       setState(() => _error = e.message);
     } catch (_) {
-      setState(() => _error = 'Что-то пошло не так. Проверь интернет.');
+      setState(() => _error = tr('err_generic'));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -2445,16 +3252,14 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'твой город · твои правила',
+                  tr('login_tagline'),
                   textAlign: TextAlign.center,
                   style: T.body(14, color: T.muted),
                 ),
                 const SizedBox(height: 36),
                 TextField(
                   controller: _nick,
-                  decoration: const InputDecoration(
-                    hintText: 'Ник (только для нового аккаунта)',
-                  ),
+                  decoration: InputDecoration(hintText: tr('hint_nick')),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -2466,7 +3271,7 @@ class _LoginPageState extends State<LoginPage> {
                 TextField(
                   controller: _pass,
                   obscureText: true,
-                  decoration: const InputDecoration(hintText: 'Пароль'),
+                  decoration: InputDecoration(hintText: tr('hint_password')),
                 ),
                 if (_error != null) ...[
                   const SizedBox(height: 12),
@@ -2478,18 +3283,18 @@ class _LoginPageState extends State<LoginPage> {
                 ],
                 const SizedBox(height: 24),
                 PressButton(
-                  text: _busy ? 'Секунду…' : '🚀 Войти',
+                  text: _busy ? tr('wait') : tr('sign_in'),
                   onPressed: _busy ? null : () => _go(false),
                 ),
                 const SizedBox(height: 12),
                 PressButton(
-                  text: '✨ Создать аккаунт',
+                  text: tr('sign_up'),
                   primary: false,
                   onPressed: _busy ? null : () => _go(true),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Тот же аккаунт, что и на сайте tirada-anon.vercel.app',
+                Text(
+                  tr('login_web_note'),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: kMuted, fontSize: 12),
                 ),
@@ -2502,8 +3307,8 @@ class _LoginPageState extends State<LoginPage> {
                             Navigator.of(context).pop();
                           }
                         },
-                  child: const Text(
-                    'Смотреть без аккаунта',
+                  child: Text(
+                    tr('browse_guest'),
                     style: TextStyle(color: kMuted),
                   ),
                 ),
@@ -2559,6 +3364,7 @@ class _HomePageState extends State<HomePage> {
   List<Friend> _friends = [];
   int _tickerIdx = 0;
   Timer? _tickerTimer;
+  LatLng? _lastCitySyncPos; // last position the city auto-sync judged
 
   @override
   void initState() {
@@ -2566,7 +3372,12 @@ class _HomePageState extends State<HomePage> {
     _load();
     SharedPreferences.getInstance().then((p) {
       hapticsOn = p.getBool('haptics_on') ?? true;
+      final lang = p.getString('app_lang');
+      if (lang != null && (lang == 'he' || lang == 'en' || lang == 'ru')) {
+        appLang.value = lang;
+      }
     });
+    appLang.addListener(_onLangChanged);
     // v2.0.6 services: bonus-XP bus, steps→XP, FCM pushes.
     AiXpBus.pending.addListener(_drainAiXp);
     StepsTracker.onCredit = (xp) => AiXpBus.credit(xp);
@@ -2575,6 +3386,8 @@ class _HomePageState extends State<HomePage> {
     PushService.foreground.addListener(_onForegroundPush);
     // v2.0.9: «Показать на карте» / «Маршрут сюда» ask for the Map tab.
     MapRouteBus.showTick.addListener(_onShowMapRequest);
+    // v2.0.10: the selected city auto-syncs to the live position.
+    myLocationNotifier.addListener(_syncCityToLocation);
     // v2.0.8: ask for location up front and start the live GPS feed.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) LocationService.ensureLocation(context);
@@ -2584,12 +3397,20 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  /* A language switch rebuilds the whole shell (header, nav, tabs) —
+     every build reads its strings through tr() at build time. */
+  void _onLangChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     _tickerTimer?.cancel();
+    appLang.removeListener(_onLangChanged);
     AiXpBus.pending.removeListener(_drainAiXp);
     PushService.foreground.removeListener(_onForegroundPush);
     MapRouteBus.showTick.removeListener(_onShowMapRequest);
+    myLocationNotifier.removeListener(_syncCityToLocation);
     super.dispose();
   }
 
@@ -2688,6 +3509,9 @@ class _HomePageState extends State<HomePage> {
       }
       if (_city != null) _fetchTemp(_city!);
       _loadFriends();
+      // A fix may already exist by the time the data lands — judge
+      // it once now; later fixes arrive through the listener.
+      _syncCityToLocation();
     } catch (_) {
       if (mounted) setState(() => _loading = false);
     }
@@ -2779,7 +3603,7 @@ class _HomePageState extends State<HomePage> {
           for (final p in profs as List)
             Friend(
               id: p['id'] as String,
-              name: (p['name'] as String?) ?? 'Призрак',
+              name: (p['name'] as String?) ?? tr('ghost'),
               avatar: p['avatar'] as String?,
               avatarUrl: p['avatar_url'] as String?,
               mode: p['mode'] as String?,
@@ -2828,7 +3652,7 @@ class _HomePageState extends State<HomePage> {
     if (bonusDue && mounted) {
       _addAiXp(50);
       fireConfetti(context);
-      snack(context, '🏙️ Квест города выполнен · +50 XP');
+      snack(context, tr('quest_done_snack'));
     }
   }
 
@@ -2875,6 +3699,47 @@ class _HomePageState extends State<HomePage> {
       _temp = null;
     });
     _fetchTemp(c);
+  }
+
+  /* City auto-sync (v2.0.10): the selected city follows the live
+     position. Evaluated on the first fix and again only after a
+     >1 km move, so a jittery GPS can't thrash the selection. A
+     switch happens only when the nearest city is clearly his —
+     its center is < 70% as far as the selected city's center, or
+     the selected city is > 40 km away — and it goes through
+     _onCity, the exact manual-pick path (map recenters, places
+     and routes rescope), plus one subtle snackbar per switch.
+     Manual picks stay possible at any time; with no position,
+     nothing changes at all. */
+  void _syncCityToLocation() {
+    final pos = myLocationNotifier.value;
+    if (pos == null || !mounted || _cities.isEmpty) return;
+    final last = _lastCitySyncPos;
+    if (last != null &&
+        haversineKm(last.latitude, last.longitude, pos.latitude,
+                pos.longitude) <
+            1.0) {
+      return;
+    }
+    _lastCitySyncPos = pos;
+    City? nearest;
+    var nd = double.infinity;
+    for (final c in _cities) {
+      final d = haversineKm(pos.latitude, pos.longitude, c.lat, c.lng);
+      if (d < nd) {
+        nd = d;
+        nearest = c;
+      }
+    }
+    final cur = _city;
+    if (nearest == null || (cur != null && nearest.id == cur.id)) return;
+    final curD = cur == null
+        ? double.infinity
+        : haversineKm(pos.latitude, pos.longitude, cur.lat, cur.lng);
+    if (nd < curD * 0.7 || curD > 40) {
+      _onCity(nearest);
+      snack(context, trf('you_in_city', {'city': nearest.name}));
+    }
   }
 
   void _openTasks() {
@@ -2926,7 +3791,7 @@ class _HomePageState extends State<HomePage> {
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text('Выбери город', style: T.head(18)),
+                child: Text(tr('pick_city'), style: T.head(18)),
               ),
             Flexible(
               child: ListView.builder(
@@ -2965,24 +3830,80 @@ class _HomePageState extends State<HomePage> {
 
   /* ---------- shell pieces: header / LIVE bar / ticker / nav ---------- */
 
+  /* The header's round profile button: the user's own face, kept in sync
+     with the Profile tab. Signed-in → read straight from HomePage's live
+     _profile (the avatar_url photo, else the profile's emoji) — the same
+     map ProfileTab edits through onProfileChanged, so a fresh upload
+     lands here on the same setState (the upload URL carries a ?t=
+     timestamp, which also busts the NetworkImage cache). Guest → the
+     on-phone avatar mirrored through GuestAvatarBus (photo file, else
+     the guest emoji). No avatar anywhere → the branded ghost look.
+     Tap = the Profile tab, identical to the bottom-nav Profile slot. */
+  Widget _profileButton() {
+    Widget face(String? photoUrl, String? photoPath, String emoji) {
+      return Container(
+        width: 38,
+        height: 38,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const LinearGradient(colors: [kRed, kOrange]),
+          boxShadow: [
+            BoxShadow(color: kRed.withOpacity(0.55), blurRadius: 14),
+          ],
+          image: photoUrl != null
+              ? DecorationImage(
+                  image: NetworkImage(photoUrl), fit: BoxFit.cover)
+              : (photoPath != null
+                  ? DecorationImage(
+                      image: FileImage(File(photoPath)), fit: BoxFit.cover)
+                  : null),
+        ),
+        child: (photoUrl == null && photoPath == null)
+            ? Text(emoji, style: const TextStyle(fontSize: 18))
+            : null,
+      );
+    }
+
+    final Widget inner;
+    if (supa.auth.currentUser != null) {
+      final url = _profile?['avatar_url'] as String?;
+      inner = face(
+        (url != null && url.isNotEmpty) ? url : null,
+        null,
+        (_profile?['avatar'] as String?) ?? '👻',
+      );
+    } else {
+      inner = AnimatedBuilder(
+        animation:
+            Listenable.merge([GuestAvatarBus.photoPath, GuestAvatarBus.emoji]),
+        builder: (_, __) {
+          final gp = GuestAvatarBus.photoPath.value;
+          // The guest photo sits in the temp dir; if the OS cleared it,
+          // fall back to the emoji instead of an empty circle.
+          final guestPhoto = (gp != null &&
+                  gp.isNotEmpty &&
+                  File(gp).existsSync())
+              ? gp
+              : null;
+          return face(null, guestPhoto, GuestAvatarBus.emoji.value ?? '👻');
+        },
+      );
+    }
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        setState(() => _tab = 3);
+      },
+      child: inner,
+    );
+  }
+
   Widget _header() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
       child: Row(
         children: [
-          Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(11),
-              boxShadow: [
-                BoxShadow(color: kRed.withOpacity(0.55), blurRadius: 14),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(11),
-              child: Image.asset('assets/icon.png', width: 36, height: 36),
-            ),
-          ),
-          const SizedBox(width: 10),
           Text.rich(
             TextSpan(children: [
               const TextSpan(text: 'TiradA '),
@@ -3030,25 +3951,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
           const SizedBox(width: 8),
-          GestureDetector(
-            onTap: () {
-              HapticFeedback.selectionClick();
-              setState(() => _tab = 3);
-            },
-            child: Container(
-              width: 38,
-              height: 38,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: const LinearGradient(colors: [kRed, kOrange]),
-                boxShadow: [
-                  BoxShadow(color: kRed.withOpacity(0.55), blurRadius: 14),
-                ],
-              ),
-              child: const Text('👻', style: TextStyle(fontSize: 18)),
-            ),
-          ),
+          _profileButton(),
         ],
       ),
     );
@@ -3076,15 +3979,15 @@ class _HomePageState extends State<HomePage> {
           Expanded(
             child: Text.rich(
               TextSpan(children: [
-                const TextSpan(text: 'в городе: '),
+                TextSpan(text: tr('live_in_city')),
                 TextSpan(
-                  text: '$hot мест жарких',
+                  text: trf('live_hot', {'n': hot}),
                   style: const TextStyle(
                     color: kOrange,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                TextSpan(text: ' сейчас • всего ${places.length} мест на радаре'),
+                TextSpan(text: trf('live_total', {'n': places.length})),
               ]),
               maxLines: 2,
               style: const TextStyle(color: kText, fontSize: 13),
@@ -3098,12 +4001,12 @@ class _HomePageState extends State<HomePage> {
   List<String> _tickerMessages() {
     final places = [..._cityPlaces]
       ..sort((a, b) => vibeOf(b).compareTo(vibeOf(a)));
-    if (places.isEmpty || _city == null) return ['👻 Радар включён…'];
+    if (places.isEmpty || _city == null) return [tr('tick_radar_on')];
     final hot = places.where((p) => vibeOf(p) >= 70).length;
     return [
-      '🔥 ${places.first.name} — самый живой движ по радару сейчас…',
-      '📍 ${_city!.name}: ${places.length} мест на радаре, $hot жарких прямо сейчас',
-      '👻 Жми 🔥 внизу — город сам соберёт твою ночь',
+      trf('tick_top', {'name': places.first.name}),
+      trf('tick_city', {'city': _city!.name, 'n': places.length, 'hot': hot}),
+      tr('tick_tap'),
     ];
   }
 
@@ -3200,11 +4103,11 @@ class _HomePageState extends State<HomePage> {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            _navSlot(0, NavGlyph.pin, 'Карта'),
-            _navSlot(1, NavGlyph.flame, 'Места'),
+            _navSlot(0, NavGlyph.pin, tr('nav_map')),
+            _navSlot(1, NavGlyph.flame, tr('nav_places')),
             _DealFab(onTap: _openDeal),
-            _navSlot(2, NavGlyph.route, 'Маршрут'),
-            _navSlot(3, NavGlyph.ghost, 'Профиль'),
+            _navSlot(2, NavGlyph.route, tr('nav_route')),
+            _navSlot(3, NavGlyph.ghost, tr('nav_profile')),
           ],
         ),
       ),
@@ -3259,6 +4162,7 @@ class _HomePageState extends State<HomePage> {
                 children: [
                   MapTab(
                     places: _cityPlaces,
+                    allPlaces: _places,
                     cities: _cities,
                     city: _city,
                     onCity: _onCity,
@@ -3370,9 +4274,9 @@ class _DealFabState extends State<_DealFab> with SingleTickerProviderStateMixin 
             ),
           ),
           const SizedBox(height: 3),
-          const Text(
-            'Ты в деле',
-            style: TextStyle(
+          Text(
+            tr('in_deal_btn'),
+            style: const TextStyle(
               color: kRed,
               fontSize: 10.5,
               fontWeight: FontWeight.w800,
@@ -3451,15 +4355,15 @@ class _DealSheetState extends State<DealSheet> {
             const SizedBox(height: 6),
             Text.rich(
               TextSpan(children: [
-                const TextSpan(text: 'Я в '),
-                TextSpan(text: 'деле', style: T.display(23, color: T.ember)),
+                TextSpan(text: tr('deal_title_a')),
+                TextSpan(text: tr('deal_title_b'), style: T.display(23, color: T.ember)),
               ]),
               textAlign: TextAlign.center,
               style: T.display(23),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Один тап — и город сам собирает твою ночь.',
+            Text(
+              tr('deal_sub'),
               textAlign: TextAlign.center,
               style: TextStyle(color: kMuted, fontSize: 13.5),
             ),
@@ -3469,21 +4373,21 @@ class _DealSheetState extends State<DealSheet> {
               children: [
                 const OnlineDot(),
                 const SizedBox(width: 7),
-                Text('Сейчас в сети: ', style: T.body(14, w: FontWeight.w600)),
+                Text(tr('deal_online_now'), style: T.body(14, w: FontWeight.w600)),
                 AnimatedNumber(value: onlineCount, style: T.num(15)),
               ],
             ),
             const SizedBox(height: 18),
-            sectionLabel('Друзья сейчас в деле · ${inDeal.length}',
+            sectionLabel(trf('deal_friends_label', {'n': inDeal.length}),
                 color: const Color(0xFFFF8A7A)),
             if (!widget.signedIn)
-              const Text(
-                'Ты пока гость 👻 Войди в аккаунт — и здесь будут друзья, которые сейчас в деле.',
+              Text(
+                tr('deal_guest_note'),
                 style: TextStyle(color: kMuted, fontSize: 13),
               ),
             if (widget.signedIn && inDeal.isEmpty)
-              const Text(
-                'Пока никто из друзей не в деле. Будь первым 🔥',
+              Text(
+                tr('deal_none'),
                 style: TextStyle(color: kMuted, fontSize: 13),
               ),
             for (final f in inDeal)
@@ -3513,21 +4417,21 @@ class _DealSheetState extends State<DealSheet> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            f.mode == 'ghost' ? 'Призрак' : f.name,
+                            f.mode == 'ghost' ? tr('ghost') : f.name,
                             style: const TextStyle(
                               fontWeight: FontWeight.w800,
                               fontSize: 15,
                             ),
                           ),
                           Text(
-                            'в сети · ${_cityName(f.cityId)}',
+                            trf('deal_in_city', {'city': _cityName(f.cityId)}),
                             style: const TextStyle(color: kGreen, fontSize: 12),
                           ),
                         ],
                       ),
                     ),
-                    const Text(
-                      '🔥 в деле',
+                    Text(
+                      tr('deal_in'),
                       style: TextStyle(
                         color: kOrange,
                         fontWeight: FontWeight.w800,
@@ -3550,8 +4454,8 @@ class _DealSheetState extends State<DealSheet> {
                       BoxShadow(color: kRed.withOpacity(0.5), blurRadius: 14),
                     ],
                   ),
-                  child: const Text(
-                    '🏆 Топ выбор радара',
+                  child: Text(
+                    tr('deal_top_pick'),
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w800,
@@ -3562,7 +4466,7 @@ class _DealSheetState extends State<DealSheet> {
               ),
               const SizedBox(height: 14),
               Text(
-                '📍 А движ уже есть: ${recPlace.name}',
+                trf('deal_already', {'name': recPlace.name}),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 17.5,
@@ -3580,9 +4484,12 @@ class _DealSheetState extends State<DealSheet> {
                   recPlace.lng,
                 );
                 return Text(
-                  'Город ${widget.city.name} · сейчас там ${vibeWord(v)} (движ $v%), '
-                  'от тебя · по прямой: ${fmtKm(d)} км. '
-                  'Можно стартовать отсюда — друзья подтянутся по ссылке.',
+                  trf('deal_rec_text', {
+                    'city': widget.city.name,
+                    'word': vibeWord(v),
+                    'v': v,
+                    'd': fmtKm(d),
+                  }),
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: kMuted, fontSize: 13),
                 );
@@ -3592,7 +4499,7 @@ class _DealSheetState extends State<DealSheet> {
                 children: [
                   Expanded(
                     child: PressButton(
-                      text: '🚗 Маршрут',
+                      text: tr('deal_route_btn'),
                       onPressed: () {
                         Navigator.of(context).pop();
                         widget.onRoute();
@@ -3602,7 +4509,7 @@ class _DealSheetState extends State<DealSheet> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: PressButton(
-                      text: 'Другое место',
+                      text: tr('deal_other'),
                       primary: false,
                       onPressed: cand.length < 2
                           ? null
@@ -3620,7 +4527,7 @@ class _DealSheetState extends State<DealSheet> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
-                    '🗳️ Куда идём?',
+                    tr('deal_poll_title'),
                     textAlign: TextAlign.center,
                     style: T.head(17),
                   ),
@@ -3689,18 +4596,18 @@ class _DealSheetState extends State<DealSheet> {
                         ),
                       ),
                     ),
-                  const Text(
-                    'Тапни место — это будет твой голос',
+                  Text(
+                    tr('deal_poll_hint'),
                     textAlign: TextAlign.center,
                     style: TextStyle(color: kMuted, fontSize: 12),
                   ),
                   const SizedBox(height: 12),
                   PressButton(
-                    text: 'Позвать голосовать 👻',
+                    text: tr('deal_invite'),
                     primary: false,
                     onPressed: () => shareWithXp(
                       context,
-                      'Голосование за движ в TiradA anon 👻 Присоединяйся: https://tirada-anon.vercel.app',
+                      tr('deal_share_text'),
                     ),
                   ),
                 ],
@@ -3838,7 +4745,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
         );
       } catch (_) {}
     }
-    if (!ok && mounted) snack(context, 'Не удалось открыть навигатор 😕');
+    if (!ok && mounted) snack(context, tr('nav_open_fail'));
   }
 
   /* Read-only ghost gallery — same query shape as the web app:
@@ -3947,7 +4854,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
   Future<void> _toggleFire(Map<String, dynamic> ph) async {
     final uid = myUidOrNull;
     if (uid == null) {
-      snack(context, 'Войди, чтобы ставить 🔥');
+      snack(context, tr('signin_to_fire'));
       return;
     }
     final id = ph['id'].toString();
@@ -3991,10 +4898,10 @@ class _PlaceSheetState extends State<PlaceSheet> {
       });
       _reviewCtl.clear();
       if (!mounted) return;
-      snack(context, 'Отзыв опубликован 👻');
+      snack(context, tr('review_posted'));
       _loadReviews();
     } catch (_) {
-      if (mounted) snack(context, 'Отзыв не отправился — попробуй ещё раз');
+      if (mounted) snack(context, tr('review_fail'));
     }
   }
 
@@ -4004,7 +4911,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
   Future<void> _addPhoto() async {
     final uid = myUidOrNull;
     if (uid == null) {
-      snack(context, 'Войди, чтобы добавлять фото');
+      snack(context, tr('signin_to_photo'));
       Navigator.of(context).push(
         MaterialPageRoute<void>(builder: (_) => const LoginPage()),
       );
@@ -4019,12 +4926,12 @@ class _PlaceSheetState extends State<PlaceSheet> {
           children: [
             ListTile(
               leading: const Text('📷', style: TextStyle(fontSize: 20)),
-              title: Text('Камера', style: T.body(15, w: FontWeight.w600)),
+              title: Text(tr('camera'), style: T.body(15, w: FontWeight.w600)),
               onTap: () => Navigator.of(context).pop(ImageSource.camera),
             ),
             ListTile(
               leading: const Text('🖼️', style: TextStyle(fontSize: 20)),
-              title: Text('Галерея', style: T.body(15, w: FontWeight.w600)),
+              title: Text(tr('gallery'), style: T.body(15, w: FontWeight.w600)),
               onTap: () => Navigator.of(context).pop(ImageSource.gallery),
             ),
           ],
@@ -4044,22 +4951,22 @@ class _PlaceSheetState extends State<PlaceSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Кто увидит фото?', style: T.head(16)),
+              Text(tr('who_sees_photo'), style: T.head(16)),
               const SizedBox(height: T.s12),
               FireButton(
-                text: '🌍 Всем',
+                text: tr('vis_all'),
                 small: true,
                 onPressed: () => Navigator.of(context).pop('public'),
               ),
               const SizedBox(height: T.s8),
               GhostButton(
-                text: '👻 Только друзьям',
+                text: tr('vis_friends'),
                 small: true,
                 onPressed: () => Navigator.of(context).pop('friends'),
               ),
               const SizedBox(height: T.s8),
               GhostButton(
-                text: 'Не показывать',
+                text: tr('vis_none'),
                 small: true,
                 onPressed: () => Navigator.of(context).pop(),
               ),
@@ -4091,10 +4998,10 @@ class _PlaceSheetState extends State<PlaceSheet> {
       widget.onPhotoUploaded?.call(_place);
       if (!mounted) return;
       fireConfetti(context);
-      snack(context, 'Фото опубликовано 📸 · +25 XP за фото');
+      snack(context, tr('photo_posted'));
       _loadPhotos();
     } catch (_) {
-      if (mounted) snack(context, 'Фото не загрузилось — попробуй ещё раз');
+      if (mounted) snack(context, tr('photo_fail'));
     }
     if (mounted) setState(() => _uploading = false);
   }
@@ -4183,7 +5090,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
                   _stars(p.rating!),
                   const SizedBox(width: T.s8),
                   Text(
-                    '${p.rating!.toStringAsFixed(1)}${p.reviews != null ? ' · ${p.reviews} отзывов' : ''}',
+                    '${p.rating!.toStringAsFixed(1)}${p.reviews != null ? trf('reviews_suffix', {'n': p.reviews}) : ''}',
                     style: T.body(13, color: T.muted),
                   ),
                 ] else
@@ -4196,7 +5103,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
                       border: Border.all(color: T.online.withOpacity(0.5)),
                     ),
                     child: Text(
-                      '✨ новое место',
+                      tr('new_place'),
                       style: T.body(11.5, color: T.online, w: FontWeight.w700),
                     ),
                   ),
@@ -4224,7 +5131,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
                   child: Text(
                     [
                       if (p.address.isNotEmpty) '📍 ${p.address}',
-                      if (dist != null) '· ${fmtKm(dist)} км от тебя',
+                      if (dist != null) trf('km_from_you', {'d': fmtKm(dist)}),
                     ].join(' '),
                     textAlign: TextAlign.center,
                     style: T.body(12.5, color: T.muted),
@@ -4234,8 +5141,10 @@ class _PlaceSheetState extends State<PlaceSheet> {
             ),
             const SizedBox(height: 6),
             Text(
-              '👥 Сейчас отдыхают: ~${crowdOf(p)}'
-              '${_crowdFriends > 0 ? ' · друзья рядом: $_crowdFriends' : ''}',
+              trf('crowd_now', {'n': crowdOf(p)}) +
+                  (_crowdFriends > 0
+                      ? trf('crowd_friends', {'n': _crowdFriends})
+                      : ''),
               textAlign: TextAlign.center,
               style: T.body(12.5, color: T.salmon, w: FontWeight.w600),
             ),
@@ -4245,20 +5154,20 @@ class _PlaceSheetState extends State<PlaceSheet> {
                 Expanded(
                   child: _here
                       ? GhostButton(
-                          text: '✓ Ты здесь',
+                          text: tr('you_here'),
                           small: true,
                           onPressed: () {},
                         )
                       : FireButton(
-                          text: '✓ Я здесь',
+                          text: tr('i_here'),
                           small: true,
                           onPressed: () {
                             widget.onCheckIn?.call(p);
                             setState(() => _here = true);
                             fireConfetti(context);
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Чек-ин засчитан · место в твоей статистике 👻'),
+                              SnackBar(
+                                content: Text(tr('checkin_snack')),
                               ),
                             );
                           },
@@ -4267,11 +5176,11 @@ class _PlaceSheetState extends State<PlaceSheet> {
                 const SizedBox(width: T.s12),
                 Expanded(
                   child: GhostButton(
-                    text: 'Поделиться',
+                    text: tr('share'),
                     small: true,
                     onPressed: () => shareWithXp(
                       context,
-                      '${p.name} — движ ${vibeOf(p)}% в TiradA anon 🔥',
+                      trf('share_place_text', {'name': p.name, 'v': vibeOf(p)}),
                     ),
                   ),
                 ),
@@ -4279,7 +5188,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
             ),
             const SizedBox(height: T.s12),
             GhostButton(
-              text: _uploading ? 'Загрузка…' : '📸 Добавить фото',
+              text: _uploading ? tr('uploading') : tr('add_photo'),
               small: true,
               onPressed: _uploading ? () {} : _addPhoto,
             ),
@@ -4288,7 +5197,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
               children: [
                 Expanded(
                   child: FireButton(
-                    text: '🧭 Маршрут сюда',
+                    text: tr('route_here'),
                     small: true,
                     onPressed: _directionsHere,
                   ),
@@ -4296,7 +5205,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
                 const SizedBox(width: T.s12),
                 Expanded(
                   child: GhostButton(
-                    text: 'В навигатор',
+                    text: tr('to_navigator'),
                     small: true,
                     onPressed: _openNavigator,
                   ),
@@ -4305,7 +5214,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
             ),
             if (_photos.isNotEmpty) ...[
               const SizedBox(height: T.s20),
-              sectionLabel('📸 Фото призраков здесь', color: T.salmon),
+              sectionLabel(tr('ghost_photos_here'), color: T.salmon),
               SizedBox(
                 height: 92,
                 child: ListView.builder(
@@ -4368,16 +5277,16 @@ class _PlaceSheetState extends State<PlaceSheet> {
               ),
               const SizedBox(height: T.s4),
               Text(
-                'тап по фото — поставить 🔥',
+                tr('tap_photo_fire'),
                 style: T.body(11, color: T.faint),
               ),
             ],
             // ---- ghost reviews ----
             const SizedBox(height: T.s20),
-            sectionLabel('💬 Отзывы призраков', color: T.salmon),
+            sectionLabel(tr('ghost_reviews'), color: T.salmon),
             if (_reviews.isEmpty)
               Text(
-                'Пока тихо — стань первым призраком с отзывом.',
+                tr('reviews_empty'),
                 style: T.body(12.5, color: T.muted),
               )
             else ...[
@@ -4390,7 +5299,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
                     _stars(avg),
                     const SizedBox(width: T.s8),
                     Text(
-                      '${avg.toStringAsFixed(1)} · ${_reviews.length} отзывов призраков',
+                      trf('ghost_reviews_count', {'avg': avg.toStringAsFixed(1), 'n': _reviews.length}),
                       style: T.body(12.5, color: T.muted),
                     ),
                   ],
@@ -4412,7 +5321,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
                             Row(
                               children: [
                                 Text(
-                                  (r['ghost'] as String?) ?? 'Призрак',
+                                  (r['ghost'] as String?) ?? tr('ghost'),
                                   style: T.body(12.5, w: FontWeight.w700),
                                 ),
                                 const SizedBox(width: T.s8),
@@ -4456,16 +5365,14 @@ class _PlaceSheetState extends State<PlaceSheet> {
                   Expanded(
                     child: TextField(
                       controller: _reviewCtl,
-                      decoration: const InputDecoration(
-                        hintText: '✍️ Оставить отзыв…',
-                      ),
+                      decoration: InputDecoration(hintText: tr('hint_review')),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: T.s8),
               GhostButton(
-                text: '✍️ Оставить отзыв',
+                text: tr('leave_review'),
                 small: true,
                 onPressed: _submitReview,
               ),
@@ -4473,7 +5380,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
               Padding(
                 padding: const EdgeInsets.only(top: T.s8),
                 child: GhostButton(
-                  text: 'Войди, чтобы оставить отзыв',
+                  text: tr('signin_to_review'),
                   small: true,
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
@@ -4483,7 +5390,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
               ),
             if (similar.isNotEmpty) ...[
               const SizedBox(height: T.s20),
-              sectionLabel('Похожие места', color: T.salmon),
+              sectionLabel(tr('similar_places'), color: T.salmon),
               SizedBox(
                 height: 42,
                 child: ListView.builder(
@@ -4534,7 +5441,8 @@ class _PlaceSheetState extends State<PlaceSheet> {
 /* ---------------- map tab: places, friends, presence ---------------- */
 
 class MapTab extends StatefulWidget {
-  final List<Place> places;
+  final List<Place> places; // selected city's places (pulse chip)
+  final List<Place> allPlaces; // the whole country — the pin layer
   final List<City> cities;
   final City? city;
   final void Function(City) onCity;
@@ -4545,6 +5453,7 @@ class MapTab extends StatefulWidget {
   const MapTab({
     super.key,
     required this.places,
+    required this.allPlaces,
     required this.cities,
     required this.city,
     required this.onCity,
@@ -4578,11 +5487,21 @@ class _MapTabState extends State<MapTab> {
   final List<Symbol> _routeSymbols = [];
   final Map<String, Uint8List> _routePinCache = {};
   final Set<String> _routeImagesOnMap = {};
+  // «Me» marker (v2.0.10): a big custom symbol for the user himself —
+  // the native puck alone was too small to spot. Tracked separately,
+  // exactly like the place/friend/route symbols, so no redraw of
+  // those ever wipes it (or vice versa).
+  Symbol? _meSymbol;
+  bool _meImgReady = false;
+  bool _meSyncing = false;
+  bool _meAgain = false;
+  Timer? _zoomTimer; // long-press repeat for the side zoom panels
 
   @override
   void initState() {
     super.initState();
     MapRouteBus.line.addListener(_onRouteLineChanged);
+    myLocationNotifier.addListener(_onMyLocation);
     rootBundle.loadString('assets/map-style.json').then((s) {
       if (mounted) setState(() => _style = s);
     });
@@ -4591,7 +5510,9 @@ class _MapTabState extends State<MapTab> {
   @override
   void dispose() {
     MapRouteBus.line.removeListener(_onRouteLineChanged);
+    myLocationNotifier.removeListener(_onMyLocation);
     _timer?.cancel();
+    _zoomTimer?.cancel();
     super.dispose();
   }
 
@@ -4614,48 +5535,52 @@ class _MapTabState extends State<MapTab> {
      дерево»). Hot places (vibe >= 70) keep the radar feel via a brand-red
      halo ring around the same gray disc. One bitmap per (type, hot) is
      painted once and registered with the map; places are then cheap
-     symbols. Only the selected city's places are drawn (widget.places
-     is already city-filtered), same as the old circles. */
+     symbols. Since v2.0.10 _drawPlaces pins ALL places in the country
+     (widget.allPlaces), not just the selected city. */
   Future<Uint8List> _placePin(String type, {required bool hot}) async {
     final cacheKey = hot ? '$type|hot' : type;
     final cached = _pinCache[cacheKey];
     if (cached != null) return cached;
-    const double size = 120;
+    // v2.0.10: pins were too small to read (owner) — the bitmap is
+    // re-painted at 192 px (was 120) with every radius/glyph scaled
+    // ×1.6, and _drawPlaces shows it at iconSize 0.5 (was 0.45):
+    // ≈1.78× on screen, still crisp because the source is bigger.
+    const double size = 192;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, size, size));
     final center = const Offset(size / 2, size / 2);
     if (hot) {
       canvas.drawCircle(
         center,
-        57,
+        91,
         Paint()..color = T.fire.withOpacity(0.16),
       );
       canvas.drawCircle(
         center,
-        51,
+        82,
         Paint()
           ..color = T.fire
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 6,
+          ..strokeWidth = 10,
       );
     }
     canvas.drawCircle(
       center,
-      42,
+      67,
       Paint()..color = const Color(0xFF9AA1A9),
     );
     canvas.drawCircle(
       center,
-      42,
+      67,
       Paint()
         ..color = const Color(0xFF3A3F45)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 5,
+        ..strokeWidth = 8,
     );
     final tp = TextPainter(
       text: TextSpan(
         text: kPinEmoji[type] ?? kPinEmoji['other'],
-        style: const TextStyle(fontSize: 50),
+        style: const TextStyle(fontSize: 80),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
@@ -4678,31 +5603,54 @@ class _MapTabState extends State<MapTab> {
     }
   }
 
+  bool _drawingPlaces = false;
+
+  /* v2.0.10: the pin layer is COUNTRY-WIDE by the owner's word — every
+     place in the database (allPlaces, 5,212 pins), not just the
+     selected city. The selected city still scopes lists, routes and
+     the pulse chip; only the map stopped filtering. 5k symbols are
+     added/removed in batches (addSymbols/removeSymbols) using the
+     same registered per-type pin images — no new bitmaps. Only our
+     own tracked symbols are removed: friend avatars, the «me» marker
+     and the route overlay live in their own lists and are untouched. */
   Future<void> _drawPlaces() async {
     final ctl = _ctl;
-    if (ctl == null || !_styleReady) return;
-    await _ensurePinImages();
-    // Remove only our own symbols — clearSymbols() would also wipe the
-    // friend avatars that _refreshFriends manages separately.
-    for (final s in _placeSymbols) {
-      try {
-        await ctl.removeSymbol(s);
-      } catch (_) {}
-    }
-    _placeSymbols.clear();
-    _symbolPlace.clear();
-    for (final p in widget.places) {
-      final hot = vibeOf(p) >= 70;
-      final type = kPinEmoji.containsKey(p.type) ? p.type : 'other';
-      final sym = await ctl.addSymbol(
-        SymbolOptions(
-          geometry: LatLng(p.lat, p.lng),
-          iconImage: hot ? 'pin-$type-hot' : 'pin-$type',
-          iconSize: 0.45,
-        ),
-      );
-      _symbolPlace[sym.id] = p;
-      _placeSymbols.add(sym);
+    if (ctl == null || !_styleReady || _drawingPlaces) return;
+    _drawingPlaces = true;
+    try {
+      await _ensurePinImages();
+      if (_placeSymbols.isNotEmpty) {
+        try {
+          await ctl.removeSymbols(List.of(_placeSymbols));
+        } catch (_) {}
+        _placeSymbols.clear();
+        _symbolPlace.clear();
+      }
+      final all = widget.allPlaces;
+      const chunk = 400;
+      for (var i = 0; i < all.length; i += chunk) {
+        if (!mounted || _ctl != ctl) return;
+        final part = all.sublist(i, math.min(i + chunk, all.length));
+        final opts = <SymbolOptions>[];
+        for (final p in part) {
+          final hot = vibeOf(p) >= 70;
+          final type = kPinEmoji.containsKey(p.type) ? p.type : 'other';
+          opts.add(SymbolOptions(
+            geometry: LatLng(p.lat, p.lng),
+            iconImage: hot ? 'pin-$type-hot' : 'pin-$type',
+            iconSize: 0.5, // 192 px bitmap → ≈96 px on screen (was ≈54)
+          ));
+        }
+        final syms = await ctl.addSymbols(opts);
+        for (var j = 0; j < syms.length; j++) {
+          _symbolPlace[syms[j].id] = part[j];
+          _placeSymbols.add(syms[j]);
+        }
+      }
+    } catch (_) {
+      // Pins are best-effort: a platform hiccup must not kill the map.
+    } finally {
+      _drawingPlaces = false;
     }
   }
 
@@ -4713,7 +5661,7 @@ class _MapTabState extends State<MapTab> {
   }
 
   String _distText(double km) =>
-      km < 1 ? '${(km * 1000).round()} м' : '${fmtKm(km)} км';
+      km < 1 ? '${(km * 1000).round()} ${tr('unit_m')}' : '${fmtKm(km)} ${tr('unit_km')}';
 
   Future<Uint8List> _routePinBitmap(String key, void Function(Canvas, Offset) paint) async {
     final cached = _routePinCache[key];
@@ -4830,10 +5778,13 @@ class _MapTabState extends State<MapTab> {
     final data = MapRouteBus.line.value;
     if (data == null || data.points.length < 2) return;
     await _ensureRouteImages(data.stops.length);
+    // Road geometry from OSRM when it has arrived; the straight
+    // waypoint line until then (and on any routing failure).
+    final linePts = data.roadGeometry ?? data.points;
     try {
       _routeLineObj = await ctl.addLine(
         LineOptions(
-          geometry: data.points,
+          geometry: linePts,
           lineColor: '#E11D1D',
           lineWidth: 4.5,
           lineOpacity: 0.92,
@@ -4876,10 +5827,11 @@ class _MapTabState extends State<MapTab> {
         } catch (_) {}
       }
     }
-    // Fit the whole line on screen.
+    // Fit the whole line on screen (the drawn geometry, so a road
+    // route that swings wide still fits).
     try {
       var minLat = 90.0, maxLat = -90.0, minLng = 180.0, maxLng = -180.0;
-      for (final pt in data.points) {
+      for (final pt in linePts) {
         minLat = math.min(minLat, pt.latitude);
         maxLat = math.max(maxLat, pt.latitude);
         minLng = math.min(minLng, pt.longitude);
@@ -4910,13 +5862,23 @@ class _MapTabState extends State<MapTab> {
         if (data == null) return const SizedBox.shrink();
         final String text;
         if (data.kind == 'directions' && data.target != null) {
-          text = '🧭 ${data.target!.name} · ${_distText(data.totalKm)} · '
-              '≈ ${data.walkMins} мин пешком'
-              '${data.walkMins - data.driveMins >= 10 ? ' · 🚗 ≈ ${data.driveMins} мин' : ''}'
-              '${data.fromCityCenter ? ' · от центра города' : ''}';
+          // displayKm / walkMins / driveMins turn into the real OSRM
+          // road values as soon as the enrichment lands.
+          text = trf('chip_dir', {
+                'name': data.target!.name,
+                'd': _distText(data.displayKm),
+              }) +
+              trf('chip_walk', {'n': data.walkMins}) +
+              (data.walkMins - data.driveMins >= 10
+                  ? trf('chip_drive', {'n': data.driveMins})
+                  : '') +
+              (data.fromCityCenter ? tr('chip_from_center') : '');
         } else {
-          text = '🗺️ ${data.title} · ${data.stops.length} точки · '
-              '${_distText(data.totalKm)}';
+          text = trf('chip_route', {
+            'title': data.title,
+            'n': data.stops.length,
+            'd': _distText(data.displayKm),
+          });
         }
         return Positioned(
           top: T.s12,
@@ -4967,10 +5929,17 @@ class _MapTabState extends State<MapTab> {
   }
 
   Future<Uint8List> _friendMarker(Friend f) async {
-    final cacheKey = '${f.id}|${f.avatarUrl ?? f.avatar ?? ''}';
+    // The online state is part of the cache key (v2.0.10): the ring
+    // colour depends on it, so a friend flipping online/offline must
+    // repaint the bitmap on the next 30 s refresh, not reuse the old.
+    final cacheKey = '${f.id}|${f.avatarUrl ?? f.avatar ?? ''}|${f.online}';
     final cached = _markerCache[cacheKey];
     if (cached != null) return cached;
-    const double size = 112;
+    // v2.0.10: markers were too small (owner) — bitmap re-painted at
+    // 168 px (was 112) with all radii scaled ×1.5; iconSize stays
+    // 0.55, so on screen ≈92 px (was ≈62). The status ring also gets
+    // a thicker stroke so the online green actually reads at a glance.
+    const double size = 168;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, size, size));
     final center = const Offset(size / 2, size / 2);
@@ -5001,33 +5970,36 @@ class _MapTabState extends State<MapTab> {
       );
       canvas.save();
       canvas.clipPath(
-        Path()..addOval(Rect.fromCircle(center: center, radius: 48)),
+        Path()..addOval(Rect.fromCircle(center: center, radius: 72)),
       );
       canvas.drawImageRect(
         photo,
         crop.isEmpty ? src : crop,
-        Rect.fromCircle(center: center, radius: 48),
+        Rect.fromCircle(center: center, radius: 72),
         Paint(),
       );
       canvas.restore();
     } else {
-      canvas.drawCircle(center, 48, Paint()..color = kSurface2);
+      canvas.drawCircle(center, 72, Paint()..color = kSurface2);
       final tp = TextPainter(
         text: TextSpan(
           text: f.mode == 'ghost' ? '👻' : (f.avatar ?? '👤'),
-          style: const TextStyle(fontSize: 50),
+          style: const TextStyle(fontSize: 75),
         ),
         textDirection: TextDirection.ltr,
       )..layout();
       tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
     }
+    // Status ring: bright green (#22C55E) while the friend is online —
+    // the same profiles.online / presence signal the friends list
+    // uses — muted gray otherwise. Ring only; the avatar is untouched.
     canvas.drawCircle(
       center,
-      50,
+      75,
       Paint()
         ..color = f.online ? kGreen : kMuted
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 5,
+        ..strokeWidth = 8,
     );
     final pic = recorder.endRecording();
     final img = await pic.toImage(size.toInt(), size.toInt());
@@ -5088,7 +6060,7 @@ class _MapTabState extends State<MapTab> {
         if (mode == 'offline') continue;
         final friend = Friend(
           id: id,
-          name: (p['name'] as String?) ?? 'Призрак',
+          name: (p['name'] as String?) ?? tr('ghost'),
           avatar: p['avatar'] as String?,
           avatarUrl: p['avatar_url'] as String?,
           mode: mode,
@@ -5131,6 +6103,232 @@ class _MapTabState extends State<MapTab> {
     }
   }
 
+  /* ---------------- «me» marker (v2.0.10) ---------------- */
+
+  void _onMyLocation() {
+    _updateMeMarker();
+  }
+
+  /* Keeps the big «you are here» symbol glued to myLocationNotifier —
+     the same position feed presence and distances already use. The
+     native puck stays enabled underneath; this marker is the one the
+     eye is meant to catch. Serialised via _meSyncing so rapid stream
+     updates can never stack duplicate symbols. */
+  Future<void> _updateMeMarker() async {
+    if (_meSyncing) {
+      _meAgain = true;
+      return;
+    }
+    final ctl = _ctl;
+    if (ctl == null || !_styleReady) return;
+    if (myLocationNotifier.value == null) return;
+    _meSyncing = true;
+    try {
+      if (!_meImgReady) {
+        try {
+          await ctl.addImage('me-marker', await _meMarkerBitmap());
+          _meImgReady = true;
+        } catch (_) {
+          return;
+        }
+      }
+      final pos = myLocationNotifier.value; // may have moved meanwhile
+      if (pos == null) return;
+      if (_meSymbol == null) {
+        _meSymbol = await ctl.addSymbol(
+          SymbolOptions(
+            geometry: pos,
+            iconImage: 'me-marker',
+            iconSize: 0.75, // 176 px bitmap → ≈132 px on screen
+          ),
+        );
+      } else {
+        await ctl.updateSymbol(_meSymbol!, SymbolOptions(geometry: pos));
+      }
+    } catch (_) {
+      _meSymbol = null; // stale handle — recreate on the next update
+    } finally {
+      _meSyncing = false;
+      if (_meAgain) {
+        _meAgain = false;
+        _updateMeMarker();
+      }
+    }
+  }
+
+  Future<ui.Image?> _downloadImage(String url) async {
+    try {
+      final client = HttpClient();
+      final req = await client.getUrl(Uri.parse(url));
+      final resp = await req.close();
+      final bytes = await resp.fold<BytesBuilder>(
+        BytesBuilder(),
+        (b, d) => b..add(d),
+      );
+      client.close();
+      final codec = await ui.instantiateImageCodec(bytes.takeBytes());
+      return (await codec.getNextFrame()).image;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /* The user's own face for the marker: signed-in → profiles.avatar_url;
+     guest → the local avatar file the profile tab keeps in prefs.
+     Null → the bitmap falls back to the branded ghost. */
+  Future<ui.Image?> _loadMePhoto() async {
+    try {
+      final uid = myUidOrNull;
+      if (uid != null) {
+        final rows = await supa
+            .from('profiles')
+            .select('avatar_url')
+            .eq('id', uid)
+            .limit(1);
+        for (final r in rows as List) {
+          final url = r['avatar_url'] as String?;
+          if (url != null && url.isNotEmpty) {
+            final img = await _downloadImage(url);
+            if (img != null) return img;
+          }
+        }
+      }
+    } catch (_) {}
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final path = prefs.getString('guest_avatar_path');
+      if (path != null && path.isNotEmpty) {
+        final bytes = await File(path).readAsBytes();
+        final codec = await ui.instantiateImageCodec(bytes);
+        return (await codec.getNextFrame()).image;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /* 176 px round marker: brand-red outer ring + white ring, then the
+     avatar photo (or 👻 on the dark surface) — «you are here» reads
+     instantly, and it can't be confused with a friend (green/gray
+     ring) or a place pin (gray disc). */
+  Future<Uint8List> _meMarkerBitmap() async {
+    const cacheKey = 'me-marker-bitmap';
+    final cached = _markerCache[cacheKey];
+    if (cached != null) return cached;
+    const double size = 176;
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, size, size));
+    final center = const Offset(size / 2, size / 2);
+    canvas.drawCircle(center, 86, Paint()..color = T.fire);
+    canvas.drawCircle(center, 77, Paint()..color = Colors.white);
+    final photo = await _loadMePhoto();
+    if (photo != null) {
+      final side = math.min(photo.width, photo.height).toDouble();
+      final crop = Rect.fromLTWH(
+        (photo.width - side) / 2,
+        (photo.height - side) / 2,
+        side,
+        side,
+      );
+      canvas.save();
+      canvas.clipPath(
+        Path()..addOval(Rect.fromCircle(center: center, radius: 68)),
+      );
+      canvas.drawImageRect(
+        photo,
+        crop,
+        Rect.fromCircle(center: center, radius: 68),
+        Paint(),
+      );
+      canvas.restore();
+    } else {
+      canvas.drawCircle(center, 68, Paint()..color = kSurface2);
+      final tp = TextPainter(
+        text: const TextSpan(
+          text: '👻',
+          style: TextStyle(fontSize: 76),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, center - Offset(tp.width / 2, tp.height / 2));
+    }
+    final pic = recorder.endRecording();
+    final img = await pic.toImage(size.toInt(), size.toInt());
+    final data = await img.toByteData(format: ui.ImageByteFormat.png);
+    final bytes = data!.buffer.asUint8List();
+    _markerCache[cacheKey] = bytes;
+    return bytes;
+  }
+
+  /* ---------------- side zoom panels (v2.0.10) ----------------
+     «Как в Бампе»: invisible tap strips along both screen edges —
+     upper half zooms in, lower half zooms out, hold to keep zooming.
+     Fully transparent by the owner's word: no fill, no border, only
+     faint + / − glyphs so the zones stay discoverable. They sit
+     between the route chip and the bottom pulse chip and intercept
+     touches only on their own 48 dp strip. */
+
+  void _zoomStep(bool zoomIn) {
+    final ctl = _ctl;
+    if (ctl == null) return;
+    try {
+      ctl.animateCamera(
+          zoomIn ? CameraUpdate.zoomIn() : CameraUpdate.zoomOut());
+    } catch (_) {}
+  }
+
+  void _startZoomRepeat(bool zoomIn) {
+    _zoomStep(zoomIn);
+    _zoomTimer?.cancel();
+    _zoomTimer = Timer.periodic(const Duration(milliseconds: 280), (_) {
+      _zoomStep(zoomIn);
+    });
+  }
+
+  void _stopZoomRepeat() {
+    _zoomTimer?.cancel();
+    _zoomTimer = null;
+  }
+
+  Widget _zoomZone(bool zoomIn) {
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _zoomStep(zoomIn),
+        onLongPressStart: (_) => _startZoomRepeat(zoomIn),
+        onLongPressEnd: (_) => _stopZoomRepeat(),
+        onLongPressCancel: _stopZoomRepeat,
+        child: Container(
+          color: Colors.transparent,
+          alignment: Alignment.center,
+          child: Text(
+            zoomIn ? '+' : '−',
+            style: TextStyle(
+              color: T.text.withOpacity(0.28),
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _zoomPanel({required bool leftSide}) {
+    return Positioned(
+      top: 84, // below the route chip
+      bottom: 64, // above the pulse chip / bottom controls
+      left: leftSide ? 0 : null,
+      right: leftSide ? null : 0,
+      width: 48,
+      child: Column(
+        children: [
+          _zoomZone(true),
+          _zoomZone(false),
+        ],
+      ),
+    );
+  }
+
   Future<void> _presence() async {
     final ctl = _ctl;
     if (ctl == null) return;
@@ -5159,16 +6357,30 @@ class _MapTabState extends State<MapTab> {
     _routeImagesOnMap.clear(); // …and so must the route-marker images
     _routeLineObj = null;
     _routeSymbols.clear();
+    _meSymbol = null; // …and the «me» marker belongs to the old style
+    _meImgReady = false;
     ctl.onSymbolTapped.add((s) {
       final p = _symbolPlace[s.id];
       if (p != null && mounted) {
+        // Pins are country-wide now: the sheet gets the place's OWN
+        // city as context (vibe text, «similar», directions fallback),
+        // not whichever city happens to be selected.
+        City? pCity;
+        for (final c in widget.cities) {
+          if (c.id == p.city) {
+            pCity = c;
+            break;
+          }
+        }
         showPlaceSheet(
           context,
           p,
           favs: widget.favs,
           onToggleFav: widget.onToggleFav,
-          cityPlaces: widget.places,
-          city: widget.city,
+          cityPlaces: pCity != null
+              ? widget.allPlaces.where((x) => x.city == p.city).toList()
+              : widget.places,
+          city: pCity ?? widget.city,
           onCheckIn: widget.onCheckIn,
           onPhotoUploaded: widget.onPhotoUploaded,
         );
@@ -5205,14 +6417,14 @@ class _MapTabState extends State<MapTab> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  f.mode == 'ghost' ? 'Призрак' : f.name,
+                  f.mode == 'ghost' ? tr('ghost') : f.name,
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
                 Text(
-                  f.online ? 'Сейчас в сети' : 'Был(а) недавно',
+                  f.online ? tr('online_now') : tr('seen_recently'),
                   style: TextStyle(color: f.online ? kGreen : kMuted),
                 ),
               ],
@@ -5245,6 +6457,7 @@ class _MapTabState extends State<MapTab> {
         _drawPlaces();
         _drawRouteLine();
         _refreshFriends();
+        _updateMeMarker();
         _presence().then((_) {
           // First open: center on the user when we have a real position;
           // otherwise the initial camera already sits on the city.
@@ -5290,7 +6503,7 @@ class _MapTabState extends State<MapTab> {
                     const PulseDot(size: 7),
                     const SizedBox(width: T.s8),
                     Text(
-                      '${city.name} · ${widget.places.length} мест · $hot жарких',
+                      trf('pulse_chip', {'city': city.name, 'n': widget.places.length, 'hot': hot}),
                       style: T.body(12, w: FontWeight.w600),
                     ),
                   ],
@@ -5299,6 +6512,10 @@ class _MapTabState extends State<MapTab> {
             ),
           ),
         ),
+        // Side zoom panels — topmost, but only their 48 dp strips
+        // catch touches; the map centre stays fully pan/pinch-able.
+        _zoomPanel(leftSide: true),
+        _zoomPanel(leftSide: false),
       ],
     );
   }
@@ -5315,10 +6532,12 @@ const kPinEmoji = <String, String>{
   'view': '🌆', 'market': '🛍️', 'other': '📍',
 };
 
+/* Type id → kStr key (display names resolve through tr()). */
 const kTypeNames = <String, String>{
-  'park': 'Парки', 'cafe': 'Кафе', 'bar': 'Бары', 'restaurant': 'Рестораны',
-  'club': 'Клубы', 'beach': 'Пляжи', 'view': 'Смотровые', 'sport': 'Спорт',
-  'culture': 'Культура', 'market': 'Магазины', 'other': 'Разное',
+  'park': 'type_park', 'cafe': 'type_cafe', 'bar': 'type_bar',
+  'restaurant': 'type_restaurant', 'club': 'type_club', 'beach': 'type_beach',
+  'view': 'type_view', 'sport': 'type_sport', 'culture': 'type_culture',
+  'market': 'type_market', 'other': 'type_other',
 };
 
 class PlacesTab extends StatefulWidget {
@@ -5352,11 +6571,11 @@ class _PlacesTabState extends State<PlacesTab> {
   Map<String, dynamic>? _drop;
 
   static const _sortLabels = {
-    'vibe': 'По движу',
-    'dist': '📍 Рядом со мной',
-    'rating': 'По рейтингу',
-    'price': 'По цене',
-    'name': 'А–Я',
+    'vibe': 'sort_vibe',
+    'dist': 'sort_dist',
+    'rating': 'sort_rating',
+    'price': 'sort_price',
+    'name': 'sort_name',
   };
 
   @override
@@ -5471,7 +6690,7 @@ class _PlacesTabState extends State<PlacesTab> {
                 Text(widget.city?.name ?? '', style: T.head(20)),
                 const SizedBox(width: T.s8),
                 Text(
-                  '${all.length} мест',
+                  trf('places_count', {'n': all.length}),
                   style: T.body(13, color: T.muted),
                 ),
                 const Spacer(),
@@ -5493,7 +6712,7 @@ class _PlacesTabState extends State<PlacesTab> {
                 SizedBox(
                   width: 132,
                   child: PressButton(
-                    text: '🎯 Задачник',
+                    text: tr('tasks_book'),
                     small: true,
                     onPressed: widget.onOpenTasks,
                   ),
@@ -5522,7 +6741,7 @@ class _PlacesTabState extends State<PlacesTab> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  sectionLabel('🤖 ИИ дня', color: T.salmon),
+                                  sectionLabel(tr('ai_day'), color: T.salmon),
                                   Text(
                                     '🌙 ${aiText(routeTheme['title'])}',
                                     style: T.head(16),
@@ -5530,13 +6749,13 @@ class _PlacesTabState extends State<PlacesTab> {
                                   if (aiTasks.isNotEmpty) ...[
                                     const SizedBox(height: T.s4),
                                     Text(
-                                      'Первое задание: ${aiText((aiTasks.first as Map)['title'])}',
+                                      trf('first_task', {'t': aiText((aiTasks.first as Map)['title'])}),
                                       style: T.body(13, color: T.muted),
                                     ),
                                   ],
                                   const SizedBox(height: T.s4),
                                   Text(
-                                    'Открыть задачник →',
+                                    tr('open_tasks'),
                                     style: T.body(12.5,
                                         color: T.ember, w: FontWeight.w700),
                                   ),
@@ -5553,12 +6772,12 @@ class _PlacesTabState extends State<PlacesTab> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              sectionLabel('Город сейчас', color: T.salmon),
+                              sectionLabel(tr('city_now'), color: T.salmon),
                               Row(
                                 children: [
-                                  _cityStat('${all.length}', 'мест на радаре'),
-                                  _cityStat('$hotCount', 'жарких сейчас'),
-                                  _cityStat('$avgVibe%', 'средний движ'),
+                                  _cityStat('${all.length}', tr('stat_places_radar')),
+                                  _cityStat('$hotCount', tr('stat_hot_now')),
+                                  _cityStat('$avgVibe%', tr('stat_avg_vibe')),
                                 ],
                               ),
                               const SizedBox(height: T.s12),
@@ -5600,7 +6819,7 @@ class _PlacesTabState extends State<PlacesTab> {
                             horizontal: T.s16, vertical: T.s4),
                         child: TextField(
                           decoration:
-                              const InputDecoration(hintText: 'Поиск места…'),
+                              InputDecoration(hintText: tr('search_hint')),
                           onChanged: (v) => setState(() => _q = v),
                         ),
                       ),
@@ -5611,11 +6830,11 @@ class _PlacesTabState extends State<PlacesTab> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: T.s16, vertical: 2),
                           children: [
-                            _filterChip(null, 'Все'),
+                            _filterChip(null, tr('all')),
                             for (final t in typesPresent)
                               _filterChip(
                                 t,
-                                '${kTypeEmoji[t]} ${kTypeNames[t] ?? t}',
+                                '${kTypeEmoji[t]} ${tr(kTypeNames[t] ?? t)}',
                               ),
                           ],
                         ),
@@ -5633,7 +6852,7 @@ class _PlacesTabState extends State<PlacesTab> {
                                 for (final e in _sortLabels.entries)
                                   PopupMenuItem(
                                     value: e.key,
-                                    child: Text(e.value, style: T.body(13.5)),
+                                    child: Text(tr(e.value), style: T.body(13.5)),
                                   ),
                               ],
                               child: Container(
@@ -5645,31 +6864,31 @@ class _PlacesTabState extends State<PlacesTab> {
                                   border: Border.all(color: T.stroke),
                                 ),
                                 child: Text(
-                                  '↕ ${_sortLabels[_sort]} ▾',
+                                  '↕ ${tr(_sortLabels[_sort] ?? 'sort_vibe')} ▾',
                                   style: T.body(12.5, w: FontWeight.w600),
                                 ),
                               ),
                             ),
                             const SizedBox(width: T.s8),
                             PillButton(
-                              text: '🔥 Только жаркие',
+                              text: tr('only_hot'),
                               selected: _hotOnly,
                               onTap: () =>
                                   setState(() => _hotOnly = !_hotOnly),
                             ),
                             const Spacer(),
                             Text(
-                              'Найдено: ${list.length}',
+                              trf('found_n', {'n': list.length}),
                               style: T.body(12, color: T.faint),
                             ),
                           ],
                         ),
                       ),
                       if (list.isEmpty)
-                        const EmptyState(
+                        EmptyState(
                           emoji: '👻',
-                          title: 'Здесь пока тихо',
-                          hint: 'Попробуй другой фильтр, поиск или город.',
+                          title: tr('empty_title'),
+                          hint: tr('empty_hint'),
                         ),
                     ],
                   );
@@ -5731,10 +6950,10 @@ class _PlacesTabState extends State<PlacesTab> {
                                         if (p.rating != null)
                                           '⭐ ${p.rating!.toStringAsFixed(1)}'
                                         else
-                                          '✨ новое',
+                                          tr('new_short'),
                                         if (priceText(p).isNotEmpty)
                                           priceText(p),
-                                        if (d != null) '📍 ${fmtKm(d)} км',
+                                        if (d != null) trf('dist_badge', {'d': fmtKm(d)}),
                                         if (p.address.isNotEmpty) p.address,
                                       ].join(' · '),
                                       maxLines: 1,
@@ -5842,6 +7061,12 @@ class RouteTab extends StatefulWidget {
 
 class _RouteTabState extends State<RouteTab> {
   String _transport = 'car';
+  /* Real road route (OSRM, v2.0.10) for the active route — per-leg
+     and total values replace the straight-line estimates in place
+     when it lands. Null while loading and on any routing failure:
+     the estimates just stay, exactly as in v2.0.9. */
+  RoadRoute? _road;
+  String _roadSig = '';
   int _seed = 0;
   List<dynamic> _routeTasks = [];
 
@@ -5853,7 +7078,23 @@ class _RouteTabState extends State<RouteTab> {
   bool _startIsCenter = false;
   String _kind = 'evening'; // evening · ready · saved
   String _routeKey = '';
-  String _routeTitle = 'Маршрут на вечер';
+  String _routeTitle = 'route_evening_title';
+
+  /* _routeTitle holds either a localized ready-route name (aiText) or a
+     kStr key for the built-in kinds; resolve it at display time so a
+     language switch re-reads it. Legacy persisted titles (the Russian
+     literals older builds stored) map onto the same keys. */
+  String get _titleText {
+    if (_routeTitle == 'route_evening_title' ||
+        _routeTitle == 'Маршрут на вечер') {
+      return tr('route_evening_title');
+    }
+    if (_routeTitle == 'route_saved_title' ||
+        _routeTitle == 'Сохранённый маршрут') {
+      return tr('route_saved_title');
+    }
+    return _routeTitle;
+  }
   String _routeCityId = '';
   String _routeCityName = '';
   final Set<int> _done = {};
@@ -5933,6 +7174,7 @@ class _RouteTabState extends State<RouteTab> {
       if (ar != null) _restoreActive(jsonDecode(ar));
     } catch (_) {}
     if (_stops.isEmpty) _buildEvening();
+    _refreshRoad();
     if (mounted) setState(() {});
   }
 
@@ -5951,7 +7193,7 @@ class _RouteTabState extends State<RouteTab> {
     }
     _kind = kind;
     _routeKey = (m['key'] ?? '').toString();
-    _routeTitle = (m['title'] ?? 'Маршрут на вечер').toString();
+    _routeTitle = (m['title'] ?? 'route_evening_title').toString();
     _routeCityId = (m['cityId'] ?? '').toString();
     _routeCityName = (m['cityName'] ?? '').toString();
     _seed = (m['seed'] as num?)?.toInt() ?? _seed;
@@ -6072,13 +7314,14 @@ class _RouteTabState extends State<RouteTab> {
     _startIsCenter = origin == null;
     _routeCityId = city.id;
     _routeCityName = city.name;
-    _routeTitle = 'Маршрут на вечер';
+    _routeTitle = 'route_evening_title';
     _routeKey =
         'evening-${city.id}-${dayKey()}-$_seed-${stops.map((p) => p.id).join('.')}';
     _done.clear();
     _counted = false;
     if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
     _persistActive();
+    _refreshRoad();
   }
 
   Future<void> _reshuffle() async {
@@ -6227,6 +7470,7 @@ class _RouteTabState extends State<RouteTab> {
     _counted = _readyCounted.contains(r.id);
     if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
     _persistActive();
+    _refreshRoad();
     setState(() {});
   }
 
@@ -6249,7 +7493,7 @@ class _RouteTabState extends State<RouteTab> {
     }
     _kind = 'saved';
     _routeKey = _savedKey(e);
-    _routeTitle = 'Сохранённый маршрут';
+    _routeTitle = 'route_saved_title';
     _routeCityId = stops.first.city;
     _routeCityName = (e['cityName'] ?? '').toString();
     _stops = stops;
@@ -6264,6 +7508,7 @@ class _RouteTabState extends State<RouteTab> {
     _counted = e['counted'] == true;
     if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
     _persistActive();
+    _refreshRoad();
     setState(() {});
   }
 
@@ -6293,7 +7538,7 @@ class _RouteTabState extends State<RouteTab> {
     } catch (_) {}
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Маршрут сохранён 💾')),
+        SnackBar(content: Text(tr('route_saved_snack'))),
       );
     }
   }
@@ -6303,11 +7548,11 @@ class _RouteTabState extends State<RouteTab> {
   String _descFor(int i) {
     switch (i) {
       case 0:
-        return 'Старт — спокойно зайти в вечер.';
+        return tr('route_desc_0');
       case 1:
-        return 'Пик ночи — туда, где жарче всего.';
+        return tr('route_desc_1');
       default:
-        return 'Финал — закрепить ночь красиво.';
+        return tr('route_desc_2');
     }
   }
 
@@ -6320,14 +7565,14 @@ class _RouteTabState extends State<RouteTab> {
 
   String _taskFor(int i) {
     if (_routeTasks.isEmpty) {
-      return 'Сделай фото, которое расскажет про это место без слов.';
+      return tr('route_task_fallback');
     }
     return _routeTasks[stableHash('$_routeKey|$i') % _routeTasks.length]
         .toString();
   }
 
   String _fmtDist(double km) =>
-      km < 1 ? '${(km * 1000).round()} м' : '${fmtKm(km)} км';
+      km < 1 ? '${(km * 1000).round()} ${tr('unit_m')}' : '${fmtKm(km)} ${tr('unit_km')}';
 
   double get _totalKm {
     var t = 0.0;
@@ -6367,8 +7612,7 @@ class _RouteTabState extends State<RouteTab> {
     if (origin != null) {
       final d = haversineKm(origin.latitude, origin.longitude, p.lat, p.lng);
       if (d > _checkInRadiusKm) {
-        snack(context,
-            'Подойди ближе к месту · до него ${_fmtDist(d)} — чек-ин откроется рядом');
+        snack(context, trf('route_too_far', {'d': _fmtDist(d)}));
         return;
       }
     }
@@ -6386,15 +7630,42 @@ class _RouteTabState extends State<RouteTab> {
       widget.onRouteBuilt();
       fireConfetti(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Маршрут пройден целиком · +40 XP 🎉')),
+        SnackBar(content: Text(tr('route_done_snack'))),
       );
     }
     _persistActive();
   }
 
+  /* Loads the real road route (OSRM) for the active route at the
+     current transport. Straight-line estimates stay on screen until
+     it lands; on failure they simply stay forever. The signature
+     guards against a slow answer for a previous route/transport
+     overwriting the current one. */
+  Future<void> _refreshRoad() async {
+    final start = _start;
+    if (start == null || _stops.isEmpty) {
+      _road = null;
+      _roadSig = '';
+      return;
+    }
+    final pts = [start, for (final p in _stops) LatLng(p.lat, p.lng)];
+    final profile = RoutingService.profileFor(_transport);
+    final sig = RoutingService.cacheKey(profile, pts);
+    if (sig == _roadSig) return;
+    _roadSig = sig;
+    _road = null;
+    final r = await RoutingService.route(profile, pts);
+    if (r != null && mounted && _roadSig == sig) {
+      setState(() => _road = r);
+    }
+  }
+
+  /* Total shown in the header: road distance once OSRM answered. */
+  double get _displayTotalKm => _road?.totalKm ?? _totalKm;
+
   void _showOnMap() {
     if (_stops.isEmpty) {
-      snack(context, 'Сначала собери маршрут — пока показывать нечего');
+      snack(context, tr('route_empty_snack'));
       return;
     }
     final start = _start ??
@@ -6402,14 +7673,25 @@ class _RouteTabState extends State<RouteTab> {
         (widget.city != null
             ? LatLng(widget.city!.lat, widget.city!.lng)
             : LatLng(_stops.first.lat, _stops.first.lng));
-    MapRouteBus.show(MapRouteLine(
+    final pts = [start, for (final p in _stops) LatLng(p.lat, p.lng)];
+    final profile = RoutingService.profileFor(_transport);
+    // If the road route for exactly these waypoints is already in
+    // hand, the map gets the road geometry instantly; otherwise the
+    // bus enrichment fetches it (same shared cache) and swaps it in.
+    final preloaded =
+        (_road != null && _roadSig == RoutingService.cacheKey(profile, pts))
+            ? _road
+            : null;
+    final line = MapRouteLine(
       kind: 'route',
-      title: _routeTitle,
-      points: [start, for (final p in _stops) LatLng(p.lat, p.lng)],
+      title: _titleText,
+      points: pts,
       stops: List.of(_stops),
       fromCityCenter: _startIsCenter,
       totalKm: _totalKm,
-    ));
+      profile: profile,
+    );
+    MapRouteBus.show(preloaded != null ? line.copyWithRoad(preloaded) : line);
   }
 
   /* ---------------- UI ---------------- */
@@ -6420,6 +7702,7 @@ class _RouteTabState extends State<RouteTab> {
       onTap: () async {
         tickSelect();
         setState(() => _transport = id);
+        _refreshRoad(); // legs/total re-fetch for the new profile
         try {
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('route_transport_${dayKey()}', id);
@@ -6445,9 +7728,19 @@ class _RouteTabState extends State<RouteTab> {
     );
   }
 
-  Widget _legRow(LatLng a, Place b, {String? fromLabel}) {
-    final km = haversineKm(a.latitude, a.longitude, b.lat, b.lng);
-    final mins = (km / (_speeds[_transport] ?? 30) * 60).round();
+  Widget _legRow(LatLng a, Place b, {String? fromLabel, int leg = -1}) {
+    // OSRM leg values once the road route has landed; the straight-
+    // line estimate for this leg until then (and on any failure).
+    final r = _road;
+    final double km;
+    final int mins;
+    if (r != null && leg >= 0 && leg < r.legKm.length) {
+      km = r.legKm[leg];
+      mins = r.legMins[leg].round();
+    } else {
+      km = haversineKm(a.latitude, a.longitude, b.lat, b.lng);
+      mins = (km / (_speeds[_transport] ?? 30) * 60).round();
+    }
     return Row(
       children: [
         SizedBox(
@@ -6458,7 +7751,7 @@ class _RouteTabState extends State<RouteTab> {
         ),
         const SizedBox(width: 10),
         Text(
-          '${fromLabel != null ? '$fromLabel · ' : ''}${_icons[_transport]} ${_fmtDist(km)} · ≈ $mins мин',
+          '${fromLabel != null ? '$fromLabel · ' : ''}${_icons[_transport]} ${_fmtDist(km)} · ${trf('mins_short', {'n': mins})}',
           style: const TextStyle(color: kMuted, fontSize: 12.5),
         ),
       ],
@@ -6547,8 +7840,8 @@ class _RouteTabState extends State<RouteTab> {
                       padding: const EdgeInsets.only(top: 7),
                       child: Text(
                         near
-                            ? '📍 Ты рядом — можно чекиниться'
-                            : '📍 ${_fmtDist(d)} от тебя · чек-ин откроется у места',
+                            ? tr('stop_near')
+                            : trf('stop_far', {'d': _fmtDist(d)}),
                         style: TextStyle(
                           color: near ? kGreen : kMuted,
                           fontSize: 12.5,
@@ -6592,7 +7885,7 @@ class _RouteTabState extends State<RouteTab> {
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          done ? 'Выполнено ✓' : 'Я здесь · задание выполнено',
+                          done ? tr('done_label') : tr('checkin_task'),
                           style: TextStyle(
                             fontWeight: FontWeight.w700,
                             color: done ? kGreen : kText,
@@ -6629,7 +7922,7 @@ class _RouteTabState extends State<RouteTab> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '🌙 ${aiText(r.name)}${counted ? ' · ✓ пройден' : ''}',
+              '🌙 ${aiText(r.name)}${counted ? tr('route_counted_suffix') : ''}',
               style: T.body(13.5, w: FontWeight.w800),
             ),
             const SizedBox(height: 3),
@@ -6641,7 +7934,7 @@ class _RouteTabState extends State<RouteTab> {
             ),
             const SizedBox(height: 3),
             Text(
-              '${r.stops.length} точки · ≈ ${_fmtDist(km)} от центра',
+              trf('ready_card_line', {'n': r.stops.length, 'd': _fmtDist(km)}),
               style: T.body(11.5, color: T.salmon, w: FontWeight.w600),
             ),
           ],
@@ -6660,51 +7953,48 @@ class _RouteTabState extends State<RouteTab> {
           if (_kind == 'evening')
             Text.rich(
               TextSpan(children: [
-                const TextSpan(text: 'Маршрут на '),
-                TextSpan(text: 'вечер', style: T.display(20, color: T.ember)),
+                TextSpan(text: tr('route_title_a')),
+                TextSpan(text: tr('route_title_b'), style: T.display(20, color: T.ember)),
               ]),
               style: T.display(20),
             )
           else
-            Text(_routeTitle, style: T.display(20)),
+            Text(_titleText, style: T.display(20)),
           const SizedBox(height: 6),
           Text(
             _kind == 'evening'
-                ? 'Три точки, три задания — маршрут строится от тебя по городу $_routeCityName. '
-                    'Не нравится расклад — пересобери.'
+                ? trf('route_intro_evening', {'city': _routeCityName})
                 : _kind == 'ready'
-                    ? 'Готовый маршрут по городу $_routeCityName: лучшие места, '
-                        'собранные в пешую цепочку. Иди по точкам и чекинься у каждой.'
-                    : 'Твой сохранённый маршрут по городу $_routeCityName.',
+                    ? trf('route_intro_ready', {'city': _routeCityName})
+                    : trf('route_intro_saved', {'city': _routeCityName}),
             style: const TextStyle(color: kMuted, fontSize: 13.5),
           ),
           if (_stops.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
-              _startIsCenter
-                  ? '📍 Геолокация выключена — старт от центра города'
-                  : '📍 Старт — от тебя',
+              _startIsCenter ? tr('route_start_center') : tr('route_start_you'),
               style: T.body(12.5, color: T.salmon, w: FontWeight.w600),
             ),
             const SizedBox(height: 4),
             Text(
-              '🗺️ ${_stops.length} точки · всего ≈ ${_fmtDist(_totalKm)}${_counted ? ' · ✓ маршрут пройден' : ''}',
+              trf('route_summary', {'n': _stops.length, 'd': _fmtDist(_displayTotalKm)}) +
+                  (_counted ? tr('route_summary_done') : ''),
               style: T.body(12.5, color: T.muted, w: FontWeight.w600),
             ),
           ],
           const SizedBox(height: 14),
           Row(
             children: [
-              _transportPill('walk', '🚶 Пешком'),
+              _transportPill('walk', tr('tp_walk')),
               const SizedBox(width: 8),
-              _transportPill('bus', '🚌 Автобус'),
+              _transportPill('bus', tr('tp_bus')),
               const SizedBox(width: 8),
-              _transportPill('car', '🚗 Машина'),
+              _transportPill('car', tr('tp_car')),
             ],
           ),
           const SizedBox(height: 14),
           PressButton(
-            text: '🎲 Пересобрать маршрут',
+            text: tr('route_reshuffle'),
             primary: false,
             onPressed: _reshuffle,
           ),
@@ -6713,7 +8003,7 @@ class _RouteTabState extends State<RouteTab> {
             children: [
               Expanded(
                 child: GhostButton(
-                  text: '🗺️ Показать на карте',
+                  text: tr('route_show_map'),
                   small: true,
                   onPressed: _showOnMap,
                 ),
@@ -6721,7 +8011,7 @@ class _RouteTabState extends State<RouteTab> {
               const SizedBox(width: T.s8),
               Expanded(
                 child: GhostButton(
-                  text: '💾 Сохранить маршрут',
+                  text: tr('route_save'),
                   small: true,
                   onPressed: _saveRoute,
                 ),
@@ -6731,7 +8021,7 @@ class _RouteTabState extends State<RouteTab> {
           if (_kind != 'evening') ...[
             const SizedBox(height: T.s12),
             GhostButton(
-              text: '🌙 К маршруту на вечер',
+              text: tr('route_back_evening'),
               small: true,
               onPressed: () {
                 _seed++;
@@ -6742,7 +8032,7 @@ class _RouteTabState extends State<RouteTab> {
           ],
           if (_savedRoutes.isNotEmpty) ...[
             const SizedBox(height: T.s20),
-            sectionLabel('Мои маршруты', color: T.salmon),
+            sectionLabel(tr('my_routes'), color: T.salmon),
             for (final e in _savedRoutes)
               Pressable(
                 onTap: () => _activateSaved(e),
@@ -6763,7 +8053,7 @@ class _RouteTabState extends State<RouteTab> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '${_icons[e['transport']] ?? '🚗'} ${e['cityName']} · ${e['day']}${e['counted'] == true ? ' · ✓ пройден' : ''}',
+                        '${_icons[e['transport']] ?? '🚗'} ${e['cityName']} · ${e['day']}${e['counted'] == true ? tr('route_counted_suffix') : ''}',
                         style: T.body(13, w: FontWeight.w700),
                       ),
                       const SizedBox(height: 3),
@@ -6782,7 +8072,7 @@ class _RouteTabState extends State<RouteTab> {
           ],
           if (groups.isNotEmpty) ...[
             const SizedBox(height: T.s20),
-            sectionLabel('Готовые маршруты', color: T.salmon),
+            sectionLabel(tr('ready_routes'), color: T.salmon),
             for (final g in groups) ...[
               Padding(
                 padding: const EdgeInsets.only(bottom: T.s8, top: T.s4),
@@ -6796,17 +8086,19 @@ class _RouteTabState extends State<RouteTab> {
           ],
           const SizedBox(height: 20),
           if (_stops.isEmpty)
-            const Text(
-              'В этом городе пока нет мест для маршрута.',
+            Text(
+              tr('route_no_places'),
               style: TextStyle(color: kMuted),
             ),
           if (_stops.isNotEmpty && _start != null)
             _legRow(_start!, _stops.first,
-                fromLabel: _startIsCenter ? '🏙️ от центра' : '📍 от тебя'),
+                fromLabel: _startIsCenter ? tr('from_center') : tr('from_you'),
+                leg: 0),
           for (var i = 0; i < _stops.length; i++) ...[
             _stopCard(i, _stops[i]),
             if (i < _stops.length - 1)
-              _legRow(LatLng(_stops[i].lat, _stops[i].lng), _stops[i + 1]),
+              _legRow(LatLng(_stops[i].lat, _stops[i].lng), _stops[i + 1],
+                  leg: i + 1),
           ],
         ],
       ),
@@ -6828,7 +8120,7 @@ class DonePill extends StatelessWidget {
         border: Border.all(color: T.online.withOpacity(0.55)),
       ),
       child: Text(
-        'Выполнено ✓',
+        tr('done_label'),
         style: T.body(12.5, color: T.online, w: FontWeight.w700),
       ),
     );
@@ -6859,7 +8151,7 @@ class StepsCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text('👟 Шаги сегодня', style: T.head(15)),
+                    Text(tr('steps_title'), style: T.head(15)),
                     const Spacer(),
                     Text(
                       '$steps',
@@ -6872,9 +8164,8 @@ class StepsCard extends StatelessWidget {
                 const SizedBox(height: 9),
                 Text(
                   !available
-                      ? 'Нет доступа к шагам — разреши физическую активность, и шаги начнут давать XP'
-                      : 'Каждые 1000 шагов = +5 XP (до +50 в день) · '
-                          'до следующего +5 XP: ${1000 - (steps % 1000)} шагов · сегодня +$xp XP',
+                      ? tr('steps_no_access')
+                      : trf('steps_info', {'n': 1000 - (steps % 1000), 'xp': xp}),
                   style: T.body(12, color: T.muted),
                 ),
               ],
@@ -6923,11 +8214,11 @@ class _CityQuestCardState extends State<CityQuestCard> {
   String _stepLabel(Map<String, dynamic> st) {
     switch (st['kind']) {
       case 'checkin':
-        return 'Зачекинься: ${st['name']}';
+        return trf('cq_checkin', {'name': st['name']});
       case 'photo':
-        return 'Сфотографируй: ${st['name']}';
+        return trf('cq_photo', {'name': st['name']});
       case 'fav':
-        return 'Добавь в избранное: ${st['name']}';
+        return trf('cq_fav', {'name': st['name']});
       default:
         return '${st['name']}';
     }
@@ -6953,7 +8244,7 @@ class _CityQuestCardState extends State<CityQuestCard> {
             children: [
               Expanded(
                 child: Text(
-                  '🏙️ Квест города — ${widget.city!.name}',
+                  trf('cq_title', {'city': widget.city!.name}),
                   style: T.head(15),
                 ),
               ),
@@ -6985,9 +8276,7 @@ class _CityQuestCardState extends State<CityQuestCard> {
               ),
             ),
           Text(
-            allDone
-                ? 'Квест выполнен · +50 XP уже твои 🎉'
-                : 'Все три шага за день — бонус +50 XP. Шаги засчитываются сами: чек-ин, фото и сердечко у нужных мест.',
+            allDone ? tr('cq_done') : tr('cq_hint'),
             style: T.body(12, color: T.muted),
           ),
         ],
@@ -7028,7 +8317,7 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
   String _placeName(String placeId) => widget.places
       .where((e) => e.id == placeId)
       .map((e) => e.name)
-      .firstOrNull ?? 'Место';
+      .firstOrNull ?? tr('place_word');
 
   Future<List<Map<String, dynamic>>> _photosBetween(
       DateTime from, DateTime to) async {
@@ -7116,7 +8405,7 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
         await prefs.setBool(flag, true);
         widget.onAiXp(25);
         if (mounted) {
-          snack(context, '🏆 Твоё фото выиграло вчерашний турнир · +25 XP');
+          snack(context, tr('tour_winner_snack'));
         }
       }
     } catch (_) {}
@@ -7125,7 +8414,7 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
   Future<void> _toggleFire(Map<String, dynamic> ph) async {
     final uid = myUidOrNull;
     if (uid == null) {
-      snack(context, 'Войди, чтобы ставить 🔥');
+      snack(context, tr('signin_to_fire'));
       return;
     }
     final id = ph['id'].toString();
@@ -7167,10 +8456,10 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('🏆 Фото дня — турнир', style: T.head(15)),
+          Text(tr('tour_title'), style: T.head(15)),
           const SizedBox(height: T.s4),
           Text(
-            'Фото призраков города за сегодня. Больше 🔥 — выше место; лидер дня завтра получит +25 XP.',
+            tr('tour_sub'),
             style: T.body(12, color: T.muted),
           ),
           const SizedBox(height: T.s12),
@@ -7178,7 +8467,7 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
             const ShimmerBox(height: 64)
           else if (_photos.isEmpty)
             Text(
-              'Сегодня пока нет фото — открой место и стань первым 📸',
+              tr('tour_empty'),
               style: T.body(13, color: T.muted),
             )
           else
@@ -7231,7 +8520,7 @@ class _PhotoTournamentCardState extends State<PhotoTournamentCard> {
                             ),
                             Text(
                               leader
-                                  ? '🏆 Фото дня · ${ghostLabelFor(ph['user_id'].toString())}'
+                                  ? trf('tour_leader', {'ghost': ghostLabelFor(ph['user_id'].toString())})
                                   : ghostLabelFor(ph['user_id'].toString()),
                               style: T.body(11.5, color: T.muted),
                             ),
@@ -7341,7 +8630,7 @@ class _TasksPageState extends State<TasksPage> {
     if (mounted) {
       fireConfetti(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Задание ИИ выполнено · +$xp XP')),
+        SnackBar(content: Text(trf('ai_task_done', {'xp': xp}))),
       );
     }
   }
@@ -7354,7 +8643,7 @@ class _TasksPageState extends State<TasksPage> {
     if (mounted) {
       fireConfetti(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Задание дня выполнено · +20 XP')),
+        SnackBar(content: Text(tr('daily_task_done'))),
       );
     }
   }
@@ -7387,12 +8676,12 @@ class _TasksPageState extends State<TasksPage> {
                     icon: const Icon(Icons.arrow_back),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
-                  Text('🎯 Задачник', style: T.display(20)),
+                  Text(tr('tasks_book'), style: T.display(20)),
                 ],
               ),
               if (_drop != null && aiTasks.isNotEmpty) ...[
                 const SizedBox(height: 8),
-                sectionLabel('🤖 ИИ дня', color: const Color(0xFFFF8A7A)),
+                sectionLabel(tr('ai_day'), color: const Color(0xFFFF8A7A)),
                 for (final t in aiTasks)
                   _taskCard(
                     Row(
@@ -7420,7 +8709,7 @@ class _TasksPageState extends State<TasksPage> {
                         _aiDone.contains(t['id'].toString())
                             ? const DonePill()
                             : PressButton(
-                                text: 'Готово ✓',
+                                text: tr('done_btn'),
                                 small: true,
                                 onPressed: () =>
                                     _completeAi(t as Map<String, dynamic>),
@@ -7429,7 +8718,7 @@ class _TasksPageState extends State<TasksPage> {
                     ),
                   ),
                 if (_drop!['quest'] != null) ...[
-                  sectionLabel('🗺️ Квест дня: ${aiText(_drop!['quest']['title'])}',
+                  sectionLabel(trf('ai_quest_label', {'t': aiText(_drop!['quest']['title'])}),
                       color: const Color(0xFFFF8A7A)),
                   Text(
                     aiText(_drop!['quest']['desc']),
@@ -7439,7 +8728,7 @@ class _TasksPageState extends State<TasksPage> {
                 ],
                 if (_drop!['route_theme'] != null) ...[
                   sectionLabel(
-                      '🌙 Тема маршрута: ${aiText(_drop!['route_theme']['title'])}',
+                      trf('ai_route_theme_label', {'t': aiText(_drop!['route_theme']['title'])}),
                       color: const Color(0xFFFF8A7A)),
                   Text(
                     aiText(_drop!['route_theme']['desc']),
@@ -7455,14 +8744,14 @@ class _TasksPageState extends State<TasksPage> {
               ),
               const StepsCard(),
               const SizedBox(height: 10),
-              sectionLabel('🎯 Задание дня', color: const Color(0xFFFF8A7A)),
+              sectionLabel(tr('daily_task_label'), color: const Color(0xFFFF8A7A)),
               _taskCard(
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: Text(
-                        dailyTask ?? 'Загрузка…',
+                        dailyTask ?? tr('loading'),
                         style: const TextStyle(fontSize: 15),
                       ),
                     ),
@@ -7470,7 +8759,7 @@ class _TasksPageState extends State<TasksPage> {
                     _dailyDone
                         ? const DonePill()
                         : PressButton(
-                            text: 'Готово ✓',
+                            text: tr('done_btn'),
                             small: true,
                             onPressed: _completeDaily,
                           ),
@@ -7478,7 +8767,7 @@ class _TasksPageState extends State<TasksPage> {
                 ),
               ),
               if (weekQuest != null) ...[
-                sectionLabel('🗓️ Квест недели: ${weekQuest['theme']}',
+                sectionLabel(trf('week_quest_label', {'t': weekQuest['theme']}),
                     color: const Color(0xFFFF8A7A)),
                 for (final s in (weekQuest['steps'] as List? ?? []))
                   Padding(
@@ -7515,18 +8804,18 @@ List<BadgeDef> badgesOf(Map<String, dynamic> stats) {
   final places = (stats['places'] as List?)?.length ?? 0;
   final streak = math.max(statInt(stats, 'streak'), statInt(stats, 'bestStreak'));
   return [
-    BadgeDef('🌙', 'Первая ночь', '1 ночь в деле', statInt(stats, 'nights'), 1),
-    BadgeDef('🎉', 'Тусовщик', '5 ночей в деле', statInt(stats, 'nights'), 5),
-    BadgeDef('🧭', 'Исследователь', '10 мест открыто', places, 10),
-    BadgeDef('📸', 'Фотограф города', '1 фото в городе', statInt(stats, 'photos'), 1),
-    BadgeDef('👁️', 'Глаз города', '5 фото в городе', statInt(stats, 'photos'), 5),
-    BadgeDef('🗺️', 'Маршрутник', '3 маршрута построено', statInt(stats, 'routes'), 3),
-    BadgeDef('🏛️', 'Архитектор ночей', '10 маршрутов', statInt(stats, 'routes'), 10),
-    BadgeDef('🔥', 'Серия 3', 'серия 3 дня подряд', streak, 3),
-    BadgeDef('☄️', 'Серия 7', 'серия 7 дней подряд', streak, 7),
-    BadgeDef('🗳️', 'Голос города', '10 голосов', statInt(stats, 'votes'), 10),
-    BadgeDef('🎯', 'Квестер', '1 квест пройден', statInt(stats, 'quests'), 1),
-    BadgeDef('👑', 'Легенда', '1500 XP', xpOfStats(stats), 1500),
+    BadgeDef('🌙', tr('b_first_night'), tr('c_1_night'), statInt(stats, 'nights'), 1),
+    BadgeDef('🎉', tr('lv_partier'), tr('c_5_nights'), statInt(stats, 'nights'), 5),
+    BadgeDef('🧭', tr('b_explorer'), tr('c_10_places'), places, 10),
+    BadgeDef('📸', tr('b_photographer'), tr('c_1_photo'), statInt(stats, 'photos'), 1),
+    BadgeDef('👁️', tr('b_eye'), tr('c_5_photos'), statInt(stats, 'photos'), 5),
+    BadgeDef('🗺️', tr('b_router'), tr('c_3_routes'), statInt(stats, 'routes'), 3),
+    BadgeDef('🏛️', tr('b_architect'), tr('c_10_routes'), statInt(stats, 'routes'), 10),
+    BadgeDef('🔥', tr('b_streak3'), tr('c_streak3'), streak, 3),
+    BadgeDef('☄️', tr('b_streak7'), tr('c_streak7'), streak, 7),
+    BadgeDef('🗳️', tr('b_voice'), tr('c_10_votes'), statInt(stats, 'votes'), 10),
+    BadgeDef('🎯', tr('b_quester'), tr('c_1_quest'), statInt(stats, 'quests'), 1),
+    BadgeDef('👑', tr('b_legend'), '1500 XP', xpOfStats(stats), 1500),
   ];
 }
 
@@ -7540,13 +8829,13 @@ List<TitleDef> titlesOf(Map<String, dynamic> stats) {
   final xp = xpOfStats(stats);
   final places = (stats['places'] as List?)?.length ?? 0;
   return [
-    TitleDef('Бродяга', '100 XP', xp >= 100),
-    TitleDef('Призрак района', '500 XP', xp >= 500),
-    TitleDef('Исследователь города', '25 мест открыто', places >= 25),
-    TitleDef('Архитектор ночей', '5 маршрутов', statInt(stats, 'routes') >= 5),
-    TitleDef('Король ночей', '10 ночей в деле', statInt(stats, 'nights') >= 10),
-    TitleDef('Легенда ночей', '1500 XP', xp >= 1500),
-    TitleDef('Хранитель движа', '2500 XP', xp >= 2500),
+    TitleDef(tr('lv_wanderer'), '100 XP', xp >= 100),
+    TitleDef(tr('lv_district_ghost'), '500 XP', xp >= 500),
+    TitleDef(tr('t_explorer_city'), tr('c_25_places'), places >= 25),
+    TitleDef(tr('b_architect'), tr('c_5_routes'), statInt(stats, 'routes') >= 5),
+    TitleDef(tr('t_king'), tr('c_10_nights'), statInt(stats, 'nights') >= 10),
+    TitleDef(tr('lv_night_legend'), '1500 XP', xp >= 1500),
+    TitleDef(tr('lv_keeper'), '2500 XP', xp >= 2500),
   ];
 }
 
@@ -7554,13 +8843,13 @@ List<TitleDef> titlesOf(Map<String, dynamic> stats) {
 String? ghostTitle(Map<String, dynamic> stats, String cityName) {
   final xp = xpOfStats(stats);
   final places = (stats['places'] as List?)?.length ?? 0;
-  if (xp >= 2500) return 'Хранитель движа · $cityName';
-  if (xp >= 1500) return 'Легенда ночей · $cityName';
-  if (statInt(stats, 'nights') >= 10) return 'Король ночей · $cityName';
-  if (places >= 25) return 'Исследователь · $cityName';
-  if (statInt(stats, 'routes') >= 5) return 'Архитектор ночей · $cityName';
-  if (xp >= 500) return 'Призрак · $cityName';
-  if (xp >= 100) return 'Бродяга · $cityName';
+  if (xp >= 2500) return '${tr('lv_keeper')} · $cityName';
+  if (xp >= 1500) return '${tr('lv_night_legend')} · $cityName';
+  if (statInt(stats, 'nights') >= 10) return '${tr('t_king')} · $cityName';
+  if (places >= 25) return '${tr('b_explorer')} · $cityName';
+  if (statInt(stats, 'routes') >= 5) return '${tr('b_architect')} · $cityName';
+  if (xp >= 500) return '${tr('ghost')} · $cityName';
+  if (xp >= 100) return '${tr('lv_wanderer')} · $cityName';
   return null;
 }
 
@@ -7626,12 +8915,12 @@ class _BadgesPageState extends State<BadgesPage> {
                     icon: const Icon(Icons.arrow_back),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
-                  Text('🏆 Награды', style: T.display(19)),
+                  Text(tr('badges_title'), style: T.display(19)),
                 ],
               ),
               const SizedBox(height: T.s8),
               sectionLabel(
-                'Награды · открыто ${badges.where((b) => b.unlocked).length} из ${badges.length}',
+                trf('badges_open_count', {'n': badges.where((b) => b.unlocked).length, 'total': badges.length}),
                 color: T.salmon,
               ),
               GridView.builder(
@@ -7703,7 +8992,7 @@ class _BadgesPageState extends State<BadgesPage> {
                           const SizedBox(height: T.s4),
                           Text(
                             b.unlocked
-                                ? 'открыто ✓'
+                                ? tr('badge_open')
                                 : '${b.current}/${b.threshold} · ${b.condition}',
                             textAlign: TextAlign.center,
                             maxLines: 1,
@@ -7719,7 +9008,7 @@ class _BadgesPageState extends State<BadgesPage> {
                 },
               ),
               const SizedBox(height: T.s20),
-              sectionLabel('Титулы города', color: T.salmon),
+              sectionLabel(tr('city_titles'), color: T.salmon),
               GlassCard(
                 padding: const EdgeInsets.symmetric(
                     horizontal: T.s16, vertical: T.s8),
@@ -7755,8 +9044,8 @@ class _BadgesPageState extends State<BadgesPage> {
                                   gradient: T.fireGrad,
                                   borderRadius: BorderRadius.circular(T.rPill),
                                 ),
-                                child: const Text(
-                                  'твой титул',
+                                child: Text(
+                                  tr('your_title'),
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 10,
@@ -7766,7 +9055,7 @@ class _BadgesPageState extends State<BadgesPage> {
                               )
                             else
                               Text(
-                                titles[i].unlocked ? 'открыт' : titles[i].hint,
+                                titles[i].unlocked ? tr('title_open') : titles[i].hint,
                                 style: T.body(11.5,
                                     color: titles[i].unlocked
                                         ? T.online
@@ -7780,7 +9069,7 @@ class _BadgesPageState extends State<BadgesPage> {
                 ),
               ),
               const SizedBox(height: T.s20),
-              sectionLabel('Лестница уровней', color: T.salmon),
+              sectionLabel(tr('level_ladder'), color: T.salmon),
               GlassCard(
                 padding: const EdgeInsets.symmetric(
                     horizontal: T.s16, vertical: T.s8),
@@ -7817,7 +9106,7 @@ class _BadgesPageState extends State<BadgesPage> {
                             const SizedBox(width: T.s12),
                             Expanded(
                               child: Text(
-                                kLevels[i].$2,
+                                tr(kLevels[i].$2),
                                 style: T.body(13.5,
                                     w: FontWeight.w600,
                                     color: lvNum == i + 1
@@ -7829,8 +9118,8 @@ class _BadgesPageState extends State<BadgesPage> {
                             ),
                             Text(
                               lvNum == i + 1 && nextXp != null
-                                  ? 'осталось ${nextXp - xp} XP'
-                                  : 'от ${kLevels[i].$1} XP',
+                                  ? trf('xp_left', {'n': nextXp - xp})
+                                  : trf('xp_from', {'n': kLevels[i].$1}),
                               style: T.body(11.5,
                                   color: lvNum == i + 1 ? T.ember : T.faint,
                                   w: FontWeight.w600),
@@ -7843,7 +9132,7 @@ class _BadgesPageState extends State<BadgesPage> {
                 ),
               ),
               const SizedBox(height: T.s20),
-              sectionLabel('👑 Топ призраков', color: T.salmon),
+              sectionLabel(tr('top_ghosts'), color: T.salmon),
               if (!_signedIn)
                 GlassCard(
                   gradientBorder: true,
@@ -7852,19 +9141,19 @@ class _BadgesPageState extends State<BadgesPage> {
                       const Text('👑', style: TextStyle(fontSize: 34)),
                       const SizedBox(height: T.s8),
                       Text(
-                        'Войди, чтобы видеть топ города',
+                        tr('top_signin_title'),
                         textAlign: TextAlign.center,
                         style: T.head(15),
                       ),
                       const SizedBox(height: T.s4),
                       Text(
-                        'Кто самый легендарный призрак района — видно только своим.',
+                        tr('top_signin_sub'),
                         textAlign: TextAlign.center,
                         style: T.body(12.5, color: T.muted),
                       ),
                       const SizedBox(height: T.s12),
                       FireButton(
-                        text: '🚀 Войти',
+                        text: tr('sign_in'),
                         small: true,
                         onPressed: () => Navigator.of(context).push(
                           MaterialPageRoute<void>(
@@ -7886,10 +9175,10 @@ class _BadgesPageState extends State<BadgesPage> {
                   ],
                 )
               else if (_boardFailed || (_board?.isEmpty ?? true))
-                const EmptyState(
+                EmptyState(
                   emoji: '👻',
-                  title: 'Топ пока пуст',
-                  hint: 'Не удалось загрузить призраков города.',
+                  title: tr('top_empty_title'),
+                  hint: tr('top_empty_hint'),
                 )
               else
                 for (var i = 0; i < _board!.length; i++)
@@ -7960,7 +9249,7 @@ class _BadgesPageState extends State<BadgesPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${row['name'] ?? 'Призрак'}${mine ? ' · ты' : ''}',
+                  '${row['name'] ?? tr('ghost')}${mine ? tr('you_suffix') : ''}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: T.body(14, w: FontWeight.w700),
@@ -8010,16 +9299,16 @@ class _ProfileTabState extends State<ProfileTab> {
   String? _guestAvatarPath;
   String? _guestEmoji;
   final Map<String, bool> _notif = {};
-  final GlobalKey _aboutKey = GlobalKey();
 
+  /* (prefs key, kStr label key) — labels resolve through tr(). */
   static const _notifKinds = <(String, String)>[
-    ('quest', '🏙️ Квесты и задания дня'),
-    ('friends', '👻 Друзья в деле и онлайн'),
-    ('votes', '🗳️ Голосования'),
-    ('photos', '📸 Фото и турнир дня'),
-    ('streak', '🔥 Серия под угрозой'),
-    ('rain', '🌧️ Дождь в городе'),
-    ('steps', '👟 Цели шагов'),
+    ('quest', 'notif_quest'),
+    ('friends', 'notif_friends'),
+    ('votes', 'notif_votes'),
+    ('photos', 'notif_photos'),
+    ('streak', 'notif_streak'),
+    ('rain', 'notif_rain'),
+    ('steps', 'notif_steps'),
   ];
 
   @override
@@ -8043,6 +9332,10 @@ class _ProfileTabState extends State<ProfileTab> {
         // is kept in prefs (guest_avatar_path) — nothing is uploaded.
         _guestAvatarPath = prefs.getString('guest_avatar_path');
         _guestEmoji = prefs.getString('guest_avatar_emoji');
+        // Mirror into the bus so the header's profile button (outside
+        // this tab) starts out showing the same guest face.
+        GuestAvatarBus.photoPath.value = _guestAvatarPath;
+        GuestAvatarBus.emoji.value = _guestEmoji;
         for (final (key, _) in _notifKinds) {
           _notif[key] = prefs.getBool('notif_$key') ?? true;
         }
@@ -8073,7 +9366,7 @@ class _ProfileTabState extends State<ProfileTab> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Аватар призрака', style: T.head(16)),
+              Text(tr('avatar_sheet_title'), style: T.head(16)),
               const SizedBox(height: T.s12),
               Wrap(
                 spacing: 10,
@@ -8104,7 +9397,7 @@ class _ProfileTabState extends State<ProfileTab> {
               ),
               const SizedBox(height: T.s16),
               FireButton(
-                text: '📷 Фото из галереи',
+                text: tr('photo_from_gallery'),
                 small: true,
                 onPressed: () {
                   Navigator.of(context).pop();
@@ -8114,7 +9407,7 @@ class _ProfileTabState extends State<ProfileTab> {
               if (!signedIn) ...[
                 const SizedBox(height: T.s8),
                 Text(
-                  'Гостю фото сохранится только на этом телефоне. Войди — и аватар будет жить в облаке.',
+                  tr('guest_photo_note'),
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.muted),
                 ),
@@ -8133,6 +9426,7 @@ class _ProfileTabState extends State<ProfileTab> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('guest_avatar_emoji', e);
       } catch (_) {}
+      GuestAvatarBus.emoji.value = e;
       if (mounted) setState(() => _guestEmoji = e);
       return;
     }
@@ -8156,6 +9450,7 @@ class _ProfileTabState extends State<ProfileTab> {
         await f.writeAsBytes(bytes);
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('guest_avatar_path', f.path);
+        GuestAvatarBus.photoPath.value = f.path;
         if (mounted) setState(() => _guestAvatarPath = f.path);
       } catch (_) {}
       return;
@@ -8174,9 +9469,9 @@ class _ProfileTabState extends State<ProfileTab> {
           '${supa.storage.from('avatars').getPublicUrl(path)}?t=${DateTime.now().millisecondsSinceEpoch}';
       widget.onProfileChanged({...?widget.profile, 'avatar_url': url});
       await supa.from('profiles').update({'avatar_url': url}).eq('id', uid);
-      if (mounted) snack(context, 'Аватар обновлён 📷');
+      if (mounted) snack(context, tr('avatar_updated'));
     } catch (_) {
-      if (mounted) snack(context, 'Аватар не загрузился — попробуй ещё раз');
+      if (mounted) snack(context, tr('avatar_fail'));
     }
   }
 
@@ -8267,8 +9562,8 @@ class _ProfileTabState extends State<ProfileTab> {
                 gradient: const LinearGradient(colors: [kRed, kOrange]),
                 borderRadius: BorderRadius.circular(999),
               ),
-              child: const Text(
-                'главный создатель',
+              child: Text(
+                tr('main_creator'),
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 10.5,
@@ -8291,11 +9586,237 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
+  /* Dedicated Creators page (v2.0.10): everything that used to sit
+     inline at the bottom of the profile — neon logo, version caption,
+     tagline, «Мы на связи» socials and the «Сделали призраки» list —
+     moved behind the profile's one remaining button, «👻 Создатели».
+     Content and order are unchanged from the old About block. */
+  void _openCreators() {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => _creatorsPage()),
+    );
+  }
+
+  Widget _creatorsPage() {
+    return Scaffold(
+      body: GlowBackground(
+        child: SafeArea(
+          child: Builder(
+            builder: (pageCtx) => ListView(
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 22),
+              children: [
+                Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back, color: T.text),
+                      onPressed: () => Navigator.of(pageCtx).pop(),
+                    ),
+                    Text(tr('creators_title'), style: T.head(19)),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Center(child: glowIcon(118)),
+                const SizedBox(height: 12),
+                Text(
+                  'TiradA anon · 2.0.10',
+                  textAlign: TextAlign.center,
+                  style: T.body(11.5, color: T.faint),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  tr('app_tagline'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: kMuted, fontSize: 14, height: 1.45),
+                ),
+                const SizedBox(height: 22),
+                Center(child: sectionLabel(tr('we_on_air'))),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _socialButton('✈️', 'https://t.me/anoncarmiel'),
+                    const SizedBox(width: 16),
+                    _socialButton(
+                        '📸', 'https://www.instagram.com/black_prince_1.8'),
+                    const SizedBox(width: 16),
+                    _socialButton(
+                        '🎵', 'https://www.tiktok.com/@black_prince_1.8'),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                sectionLabel(tr('made_by_ghosts')),
+                _creatorRow('👑', 'Яша', '@black_prince_18', main: true),
+                const Divider(color: Color(0xFF26262E), height: 1),
+                _creatorRow('🛠️', 'Вард', '@WardDeveloper'),
+                const Divider(color: Color(0xFF26262E), height: 1),
+                _creatorRow('🎨', 'Сева', '@Severarin'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /* ── Dedicated Settings page (v2.0.10, owner's word) ─────────────────
+     The profile's inline «Настройки» (Вибрация кнопок) and
+     «🔔 Уведомления» sections MOVED here, behind the «⚙️ Настройки»
+     button, and a «Язык» switcher (ru/he/en) sits on top. Toggles bind
+     the very same state/prefs as before — haptics via HomePage
+     (haptics_on), notifications via notif_<key> prefs — so nothing
+     about PushService behaviour changes. The page re-renders on
+     language change (AnimatedBuilder on appLang) and on its own
+     toggle taps (StatefulBuilder). */
+  void _openSettings() {
+    HapticFeedback.selectionClick();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => _settingsPage()),
+    );
+  }
+
+  Widget _settingsPage() {
+    const langOptions = <(String, String)>[
+      ('ru', 'Русский'),
+      ('he', 'עברית'),
+      ('en', 'English'),
+    ];
+    return Scaffold(
+      body: GlowBackground(
+        child: SafeArea(
+          child: AnimatedBuilder(
+            animation: appLang,
+            builder: (pageCtx, _) => StatefulBuilder(
+              builder: (ctx, setPageState) => ListView(
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 22),
+                children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back, color: T.text),
+                        onPressed: () => Navigator.of(ctx).pop(),
+                      ),
+                      Text(tr('settings'), style: T.head(19)),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  sectionLabel(tr('language')),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: T.s16, vertical: T.s4),
+                    decoration: cardDecoration(),
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < langOptions.length; i++) ...[
+                          if (i > 0) hairline(opacity: 0.6),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => setAppLang(langOptions[i].$1),
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: T.s12),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      langOptions[i].$2,
+                                      style:
+                                          T.body(14, w: FontWeight.w600),
+                                    ),
+                                  ),
+                                  if (appLang.value == langOptions[i].$1)
+                                    const Icon(Icons.check,
+                                        color: T.ember, size: 20),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: T.s24),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: T.s16, vertical: T.s4),
+                    decoration: cardDecoration(),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            const Text('📳',
+                                style: TextStyle(fontSize: 17)),
+                            const SizedBox(width: T.s12),
+                            Expanded(
+                              child: Text(
+                                tr('haptics_label'),
+                                style: T.body(14, w: FontWeight.w600),
+                              ),
+                            ),
+                            Switch(
+                              value: widget.hapticsValue,
+                              onChanged: (v) {
+                                widget.onToggleHaptics(v);
+                                setPageState(() {});
+                              },
+                              activeColor: T.ember,
+                              activeTrackColor: T.fire.withOpacity(0.45),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: T.s24),
+                  sectionLabel(tr('notif_section'), color: T.salmon),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: T.s16, vertical: T.s4),
+                    decoration: cardDecoration(),
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < _notifKinds.length; i++) ...[
+                          if (i > 0) hairline(opacity: 0.6),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: T.s8),
+                                  child: Text(
+                                    tr(_notifKinds[i].$2),
+                                    style: T.body(14, w: FontWeight.w600),
+                                  ),
+                                ),
+                              ),
+                              Switch(
+                                value: _notif[_notifKinds[i].$1] ?? true,
+                                onChanged: (v) {
+                                  _setNotif(_notifKinds[i].$1, v);
+                                  setPageState(() {});
+                                },
+                                activeColor: T.ember,
+                                activeTrackColor: T.fire.withOpacity(0.45),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final signedIn = supa.auth.currentUser != null;
     final p = widget.profile;
-    final nick = signedIn ? ((p?['name'] as String?) ?? 'Призрак') : 'Гость';
+    final nick = signedIn ? ((p?['name'] as String?) ?? tr('ghost')) : tr('guest');
     final uid = myUidOrNull;
     final number = signedIn && uid != null
         ? 1000 + stableHash(uid) % 9000
@@ -8315,13 +9836,13 @@ class _ProfileTabState extends State<ProfileTab> {
     final best = math.max(statInt(s, 'bestStreak'), statInt(s, 'streak'));
     final b = math.min(math.max(0, best), 30);
     final contrib = <String, int>{
-      'задания': statInt(s, 'tasks') * 20,
-      'квест': statInt(s, 'quests') * 100 + statInt(s, 'questSteps') * 15,
-      'маршруты': statInt(s, 'routes') * 40,
-      'ночи': statInt(s, 'nights') * 30,
-      'фото': statInt(s, 'photos') * 25,
-      'голоса': statInt(s, 'votes') * 5,
-      'серия': b * b * 2,
+      tr('contrib_tasks'): statInt(s, 'tasks') * 20,
+      tr('contrib_quest'): statInt(s, 'quests') * 100 + statInt(s, 'questSteps') * 15,
+      tr('contrib_routes'): statInt(s, 'routes') * 40,
+      tr('contrib_nights'): statInt(s, 'nights') * 30,
+      tr('contrib_photos'): statInt(s, 'photos') * 25,
+      tr('contrib_votes'): statInt(s, 'votes') * 5,
+      tr('contrib_streak'): b * b * 2,
     };
     final favPlaces = widget.favs
         .map((id) => widget.places.where((pl) => pl.id == id).firstOrNull)
@@ -8335,8 +9856,8 @@ class _ProfileTabState extends State<ProfileTab> {
         children: [
           Text.rich(
             TextSpan(children: [
-              const TextSpan(text: 'Мой '),
-              TextSpan(text: 'призрак', style: T.display(21, color: T.ember)),
+              TextSpan(text: tr('prof_title_a')),
+              TextSpan(text: tr('prof_title_b'), style: T.display(21, color: T.ember)),
             ]),
             style: T.display(21),
           ),
@@ -8382,8 +9903,8 @@ class _ProfileTabState extends State<ProfileTab> {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'тап по призраку — выбрать аватарку',
+          Text(
+            tr('tap_ghost_hint'),
             textAlign: TextAlign.center,
             style: TextStyle(color: kMuted, fontSize: 12),
           ),
@@ -8395,10 +9916,10 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s8),
           Builder(builder: (_) {
-            final title = ghostTitle(s, widget.city?.name ?? 'города');
+            final title = ghostTitle(s, widget.city?.name ?? tr('city_fallback'));
             if (title == null) {
               return Text(
-                'Без титула — пока',
+                tr('no_title_yet'),
                 textAlign: TextAlign.center,
                 style: T.body(12, color: T.faint),
               );
@@ -8424,14 +9945,14 @@ class _ProfileTabState extends State<ProfileTab> {
             );
           }),
           const SizedBox(height: 5),
-          const Text(
-            'Без настоящего имени. Без лишнего. Только вайб.',
+          Text(
+            tr('prof_motto'),
             textAlign: TextAlign.center,
             style: TextStyle(color: kMuted, fontSize: 13.5),
           ),
           const SizedBox(height: 20),
           if (signedIn) ...[
-            sectionLabel('Ник призрака'),
+            sectionLabel(tr('ghost_nick_label')),
             Container(
               padding: const EdgeInsets.symmetric(vertical: 14),
               alignment: Alignment.center,
@@ -8447,14 +9968,14 @@ class _ProfileTabState extends State<ProfileTab> {
               ),
             ),
             const SizedBox(height: 18),
-            sectionLabel('Режим на карте'),
+            sectionLabel(tr('map_mode_label')),
             Wrap(
               spacing: 8,
               children: [
                 for (final (v, label) in [
-                  ('visible', '👁 Видимый'),
-                  ('ghost', '👻 Призрак'),
-                  ('offline', '🚫 Невидимка'),
+                  ('visible', tr('mode_visible')),
+                  ('ghost', tr('mode_ghost')),
+                  ('offline', tr('mode_offline')),
                 ])
                   GestureDetector(
                     onTap: () => _setMode(v),
@@ -8487,15 +10008,14 @@ class _ProfileTabState extends State<ProfileTab> {
             const SizedBox(height: 20),
           ] else ...[
             PressButton(
-              text: '🚀 Войти / Создать аккаунт',
+              text: tr('signin_create'),
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: (_) => const LoginPage()),
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Аккаунт нужен для друзей на карте, своего ника и синхронизации. '
-              'Всё остальное работает и так.',
+            Text(
+              tr('account_why'),
               textAlign: TextAlign.center,
               style: TextStyle(color: kMuted, fontSize: 12),
             ),
@@ -8503,13 +10023,13 @@ class _ProfileTabState extends State<ProfileTab> {
           ],
           Row(
             children: [
-              _statCard('${statInt(s, 'nights')}', 'ночи в деле'),
+              _statCard('${statInt(s, 'nights')}', tr('stat_nights')),
               const SizedBox(width: 8),
-              _statCard('$visited', 'мест открыто'),
+              _statCard('$visited', tr('stat_places_opened')),
               const SizedBox(width: 8),
-              _statCard('${statInt(s, 'routes')}', 'маршрута построено'),
+              _statCard('${statInt(s, 'routes')}', tr('stat_routes_built')),
               const SizedBox(width: 8),
-              _statCard('${statInt(s, 'photos')}', 'фото в городе'),
+              _statCard('${statInt(s, 'photos')}', tr('stat_photos_city')),
             ],
           ),
           const SizedBox(height: 14),
@@ -8542,8 +10062,8 @@ class _ProfileTabState extends State<ProfileTab> {
                 const SizedBox(height: 9),
                 Text(
                   nextXp == null
-                      ? 'Максимальный уровень 👑'
-                      : 'До уровня ${lvNum + 1} «$nextName» осталось ${nextXp - xp} XP',
+                      ? tr('max_level')
+                      : trf('to_level', {'n': lvNum + 1, 'name': nextName, 'xp': nextXp - xp}),
                   style: const TextStyle(
                     fontWeight: FontWeight.w700,
                     fontSize: 13.5,
@@ -8577,11 +10097,11 @@ class _ProfileTabState extends State<ProfileTab> {
                 children: [
                   Row(
                     children: [
-                      Text('🔥 серия: $streak дн.',
+                      Text(trf('streak_line', {'n': streak}),
                           style: T.head(15)),
                       const Spacer(),
                       Text(
-                        'рекорд: $bestStreak',
+                        trf('record', {'n': bestStreak}),
                         style: T.body(12, color: T.muted),
                       ),
                     ],
@@ -8624,7 +10144,7 @@ class _ProfileTabState extends State<ProfileTab> {
                             ),
                             const SizedBox(height: T.s4),
                             Text(
-                              ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'][i],
+                              [tr('wd_1'), tr('wd_2'), tr('wd_3'), tr('wd_4'), tr('wd_5'), tr('wd_6'), tr('wd_7')][i],
                               style: T.body(10,
                                   color: i + 1 == weekday
                                       ? T.ember
@@ -8646,19 +10166,19 @@ class _ProfileTabState extends State<ProfileTab> {
             children: [
               Expanded(
                 child: FireButton(
-                  text: '🎯 Задачник',
+                  text: tr('tasks_book'),
                   onPressed: widget.onOpenTasks,
                 ),
               ),
               const SizedBox(width: T.s12),
               Expanded(
                 child: GhostButton(
-                  text: '🏆 Награды',
+                  text: tr('badges_title'),
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => BadgesPage(
                         stats: s,
-                        cityName: widget.city?.name ?? 'города',
+                        cityName: widget.city?.name ?? tr('city_fallback'),
                       ),
                     ),
                   ),
@@ -8667,10 +10187,10 @@ class _ProfileTabState extends State<ProfileTab> {
             ],
           ),
           const SizedBox(height: 20),
-          sectionLabel('❤️ Избранное', color: const Color(0xFFFF8A7A)),
+          sectionLabel(tr('favorites_label'), color: const Color(0xFFFF8A7A)),
           if (favPlaces.isEmpty)
-            const Text(
-              'Пока пусто — жми сердечко у мест',
+            Text(
+              tr('favorites_empty'),
               style: TextStyle(color: kMuted),
             ),
           for (final fp in favPlaces)
@@ -8708,13 +10228,13 @@ class _ProfileTabState extends State<ProfileTab> {
           if (signedIn) ...[
             const SizedBox(height: 10),
             PressButton(
-              text: 'Выйти',
+              text: tr('sign_out'),
               primary: false,
               onPressed: () => supa.auth.signOut(),
             ),
           ],
           const SizedBox(height: T.s24),
-          sectionLabel('Карточка призрака', color: T.salmon),
+          sectionLabel(tr('ghost_card_label'), color: T.salmon),
           GlassCard(
             gradientBorder: true,
             child: Column(
@@ -8731,7 +10251,7 @@ class _ProfileTabState extends State<ProfileTab> {
                           Text('$nick #$number', style: T.head(16)),
                           const SizedBox(height: 2),
                           Text(
-                            'Уровень $lvNum · $lvName · $xp XP',
+                            trf('level_line', {'n': lvNum, 'name': lvName, 'xp': xp}),
                             style: T.body(12.5, color: T.muted),
                           ),
                           Text(
@@ -8746,188 +10266,47 @@ class _ProfileTabState extends State<ProfileTab> {
                 ),
                 const SizedBox(height: T.s12),
                 GhostButton(
-                  text: '🔗 Поделиться карточкой',
+                  text: tr('share_card'),
                   small: true,
                   onPressed: () => shareWithXp(
                     context,
-                    '👻 $nick #$number — TiradA anon\n'
-                    'Уровень $lvNum · $lvName · $xp XP\n'
-                    'Город: ${widget.city?.name ?? ''} · живой радар движа 🔥',
+                    trf('share_card_text', {
+                      'nick': nick,
+                      'num': number,
+                      'n': lvNum,
+                      'name': lvName,
+                      'xp': xp,
+                      'city': widget.city?.name ?? '',
+                    }),
                   ),
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: T.s24),
-          sectionLabel('Настройки', color: T.salmon),
-          Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: T.s16, vertical: T.s4),
-            decoration: cardDecoration(),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    const Text('📳', style: TextStyle(fontSize: 17)),
-                    const SizedBox(width: T.s12),
-                    Expanded(
-                      child: Text(
-                        'Вибрация кнопок',
-                        style: T.body(14, w: FontWeight.w600),
-                      ),
-                    ),
-                    Switch(
-                      value: widget.hapticsValue,
-                      onChanged: widget.onToggleHaptics,
-                      activeColor: T.ember,
-                      activeTrackColor: T.fire.withOpacity(0.45),
-                    ),
-                  ],
-                ),
-                hairline(opacity: 0.6),
-                Pressable(
-                  onTap: () {
-                    final ctx = _aboutKey.currentContext;
-                    if (ctx != null) {
-                      Scrollable.ensureVisible(
-                        ctx,
-                        duration: T.dSlow,
-                        curve: T.cPage,
-                      );
-                    }
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: T.s12),
-                    child: Row(
-                      children: [
-                        const Text('📱', style: TextStyle(fontSize: 17)),
-                        const SizedBox(width: T.s12),
-                        Expanded(
-                          child: Text(
-                            'О приложении',
-                            style: T.body(14, w: FontWeight.w600),
-                          ),
-                        ),
-                        const Icon(Icons.expand_more, color: T.muted, size: 20),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: T.s24),
-          sectionLabel('🔔 Уведомления', color: T.salmon),
-          Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: T.s16, vertical: T.s4),
-            decoration: cardDecoration(),
-            child: Column(
-              children: [
-                for (var i = 0; i < _notifKinds.length; i++) ...[
-                  if (i > 0) hairline(opacity: 0.6),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Padding(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: T.s8),
-                          child: Text(
-                            _notifKinds[i].$2,
-                            style: T.body(14, w: FontWeight.w600),
-                          ),
-                        ),
-                      ),
-                      Switch(
-                        value: _notif[_notifKinds[i].$1] ?? true,
-                        onChanged: (v) => _setNotif(_notifKinds[i].$1, v),
-                        activeColor: T.ember,
-                        activeTrackColor: T.fire.withOpacity(0.45),
-                      ),
-                    ],
-                  ),
-                ],
               ],
             ),
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.9',
+            'TiradA anon · 2.0.10',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
-          const SizedBox(height: 28),
-          /* ---------------- About ---------------- */
-          Center(child: Container(key: _aboutKey, child: glowIcon(118))),
-          const SizedBox(height: 16),
-          const Text(
-            'Живой радар движа твоего города.\nАнонимно, честно, прямо сейчас.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: kMuted, fontSize: 14, height: 1.45),
-          ),
-          const SizedBox(height: 22),
-          Center(child: sectionLabel('Мы на связи')),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _socialButton('✈️', 'https://t.me/anoncarmiel'),
-              const SizedBox(width: 16),
-              _socialButton('📸', 'https://www.instagram.com/black_prince_1.8'),
-              const SizedBox(width: 16),
-              _socialButton('🎵', 'https://www.tiktok.com/@black_prince_1.8'),
-            ],
-          ),
-          const SizedBox(height: 24),
-          sectionLabel('Сделали призраки'),
-          _creatorRow('👑', 'Яша', '@black_prince_18', main: true),
-          const Divider(color: Color(0xFF26262E), height: 1),
-          _creatorRow('🛠️', 'Вард', '@WardDeveloper'),
-          const Divider(color: Color(0xFF26262E), height: 1),
-          _creatorRow('🎨', 'Сева', '@Severarin'),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: PressButton(
-                  text: '👻 Создатели',
-                  small: true,
-                  primary: false,
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Сделали призраки: Яша 👑, Вард 🛠️ и Сева 🎨',
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: PressButton(
-                  text: '📱 О приложении',
-                  small: true,
-                  primary: false,
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'TiradA anon — живой радар движа твоего города. Анонимно, честно, прямо сейчас.',
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
+          const SizedBox(height: 20),
+          /* Two dedicated pages (v2.0.10, owner's word): Settings —
+             language, vibration and all notification toggles moved
+             there out of this scroll; Creators — the about page. The
+             «О приложении» and «Политика конфиденциальности» buttons
+             are gone. */
+          PressButton(
+            text: tr('settings_btn'),
+            small: true,
+            primary: false,
+            onPressed: _openSettings,
           ),
           const SizedBox(height: 10),
           PressButton(
-            text: '🔒 Политика конфиденциальности',
+            text: tr('creators_btn'),
             small: true,
             primary: false,
-            onPressed: () => openLink('https://tirada-anon.vercel.app'),
+            onPressed: _openCreators,
           ),
         ],
       ),
