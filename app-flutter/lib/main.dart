@@ -801,11 +801,23 @@ class RoutingService {
     final client = HttpClient();
     try {
       client.connectionTimeout = const Duration(seconds: 6);
+      /* v2.0.32 ROOT CAUSE of «маршрут по прямой»: Dart's HttpClient
+         sends NO User-Agent by default, and routing.openstreetmap.de
+         answers 403 to UA-less requests (verified live 2026-11-26:
+         no UA → 403, any UA → 200). Every foot fetch — and every
+         routed-car fetch — silently failed, so the road geometry
+         NEVER landed and the map kept the straight waypoint line
+         forever. Send an explicit UA, on the client and the request. */
+      client.userAgent =
+          'TiradA-anon/2.0.32 (Flutter; github.com/Yashafr123/tirada-anon)';
+      
       final coords =
           waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
       final uri = Uri.parse('$base/$coords'
           '?overview=full&geometries=geojson&annotations=false');
       final req = await client.getUrl(uri).timeout(const Duration(seconds: 6));
+      req.headers.set(HttpHeaders.userAgentHeader,
+          'TiradA-anon/2.0.32 (Flutter; github.com/Yashafr123/tirada-anon)');
       final resp = await req.close().timeout(const Duration(seconds: 6));
       if (resp.statusCode != 200) return null;
       final body =
@@ -11093,7 +11105,11 @@ class RouteTab extends StatefulWidget {
 }
 
 class _RouteTabState extends State<RouteTab> {
-  String _transport = 'car';
+  /* v2.0.32: default transport is WALK (owner: «сделай для
+     пешком») — a fresh route is a pedestrian route until the user
+     picks bus/car with the pills. A transport saved with an active
+     route still wins on load. */
+  String _transport = 'walk';
   /* Real road route (OSRM, v2.0.10) for the active route — per-leg
      and total values replace the straight-line estimates in place
      when it lands. Null while loading and on any routing failure:
