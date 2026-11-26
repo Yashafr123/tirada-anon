@@ -138,7 +138,7 @@ async function deliver(
   type: string,
   data: Record<string, string>,
 ): Promise<Response> {
-  if (!targets.length) return Response.json({ sent: 0, skipped: 0, failed: 0, note: "no tokens" });
+  if (!targets.length) return Response.json({ sent: 0, skipped: 0, failed: 0, note: "no tokens", diag: lastTokenReadDiag });
   const access = await getAccessToken(sa);
   let sent = 0, skipped = 0, failed = 0;
   const errors: string[] = [];
@@ -185,11 +185,23 @@ async function deliver(
   return Response.json({ sent, skipped, failed, errors: errors.slice(0, 5) });
 }
 
+/* v3 diagnostic: WHY the last device_tokens read returned what it
+   did — surfaced in deliver()'s empty-targets response so a broken
+   service-role read names itself instead of posing as "no tokens"
+   (2026-11-26: rows provably existed while the function saw none). */
+let lastTokenReadDiag: string | null = null;
+
 async function targetsForUsers(userIds: string[]): Promise<Target[]> {
   if (!userIds.length) return [];
   const rows = await rest(`device_tokens?select=user_id,token&user_id=in.(${userIds.join(",")})`);
   const targets: Target[] = [];
-  if (Array.isArray(rows)) for (const r of rows) targets.push({ userId: r.user_id, token: r.token });
+  if (Array.isArray(rows)) {
+    for (const r of rows) targets.push({ userId: r.user_id, token: r.token });
+    lastTokenReadDiag = `ok rows=${rows.length}`;
+  } else {
+    lastTokenReadDiag = `read_failed: ${JSON.stringify(rows).slice(0, 240)}`;
+    console.error("TiradA send-fcm device_tokens read failed:", lastTokenReadDiag);
+  }
   return targets;
 }
 
