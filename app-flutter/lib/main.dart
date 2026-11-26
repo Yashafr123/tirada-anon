@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.28.
+// TiradA anon — native app (Flutter), v2.0.29.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -2492,6 +2492,11 @@ const Map<String, (String, String, String)> kStr = {
     "Friends can't see you on the map: location services are off on your phone"
   ),
   'share_banner_allow': ('Разрешить', 'אישור', 'Allow'),
+  'me_no_position': (
+    'Не получилось найти тебя на карте',
+    'לא הצלחנו למצוא אותך במפה',
+    "Couldn't find you on the map"
+  ),
   'free': ('Бесплатно', 'חינם', 'Free'),
   'free_lc': ('бесплатно', 'חינם', 'free'),
   'per_person': ('на человека', 'לאדם', 'per person'),
@@ -9728,7 +9733,9 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
           SymbolOptions(
             geometry: pos,
             iconImage: imgName,
-            iconSize: 0.8, // v2.0.28: 264 px bitmap → ≈211 px on screen
+            iconSize: 0.75, // 176 px bitmap → ≈132 px on screen
+            // (v2.0.29: own marker back to the v2.0.27 size — the
+            // 2.0.28 growth was meant for OTHER people only)
           ),
         );
       } else {
@@ -9844,15 +9851,15 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
     final cacheKey = ghost ? 'me-marker-bitmap-ghost' : 'me-marker-bitmap';
     final cached = _markerCache[cacheKey];
     if (cached != null) return cached;
-    // v2.0.28: scaled with the friend markers («аватарки больше») —
-    // bitmap 264 px (was 176), every radius/glyph ×1.5; shown at
-    // iconSize 0.8 in _updateMeMarker → ≈211 px on screen (was ≈132).
-    const double size = 264;
+    // v2.0.29: own marker reverted to the v2.0.27 geometry (bitmap
+    // 176 px) — the owner: the 2.0.28 growth («аватарки больше») was
+    // for OTHER people's markers only, not his own.
+    const double size = 176;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, size, size));
     final center = const Offset(size / 2, size / 2);
-    canvas.drawCircle(center, 129, Paint()..color = T.fire);
-    canvas.drawCircle(center, 115.5, Paint()..color = Colors.white);
+    canvas.drawCircle(center, 86, Paint()..color = T.fire);
+    canvas.drawCircle(center, 77, Paint()..color = Colors.white);
     final photo = ghost ? null : await _loadMePhoto();
     if (photo != null) {
       final side = math.min(photo.width, photo.height).toDouble();
@@ -9864,17 +9871,17 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
       );
       canvas.save();
       canvas.clipPath(
-        Path()..addOval(Rect.fromCircle(center: center, radius: 102)),
+        Path()..addOval(Rect.fromCircle(center: center, radius: 68)),
       );
       canvas.drawImageRect(
         photo,
         crop,
-        Rect.fromCircle(center: center, radius: 102),
+        Rect.fromCircle(center: center, radius: 68),
         Paint(),
       );
       canvas.restore();
     } else {
-      canvas.drawCircle(center, 102, Paint()..color = kSurface2);
+      canvas.drawCircle(center, 68, Paint()..color = kSurface2);
       // v2.0.12: TI ghost glyph fallback (vector, no emoji).
       // v2.0.16: if the user picked a glyph avatar ('ti:<name>'),
       // paint THAT glyph; a legacy emoji keeps the previous
@@ -9884,7 +9891,7 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
       TIPaint.paint(
         canvas,
         myGlyph ?? TIGlyph.ghost,
-        Rect.fromCenter(center: center, width: 138, height: 138),
+        Rect.fromCenter(center: center, width: 92, height: 92),
         T.iconGray,
         strokeScale: 1.1,
       );
@@ -10038,6 +10045,73 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
      the user hasn't dismissed THAT cause; a successful presence
      write clears the state and the banner is gone. Inset 56 dp
      sideways so the invisible side-zoom strips keep their edges. */
+  /* v2.0.29 (item B): «take me to myself» — the Google-Maps-style
+     centre-on-me control the owner asked for («кнопка, которая
+     направляет тебя к себе, ну как в картах»). Latest fix from
+     myLocationNotifier first; if there is none yet, a one-shot fix
+     via the 2.0.28 kickPresence machinery (it also feeds the
+     notifier), with a bare Geolocator fix as the fallback for the
+     cases kickPresence doesn't cover (guest / «Невидимка» —
+     centring my own map on me is a local act, it writes nothing).
+     If no position can be obtained at all, an honest snack instead
+     of a silent dead tap. Zoom 14 — the same zoom the map itself
+     picks when it first centres on the user. */
+  Future<void> _centerOnMe() async {
+    var pos = myLocationNotifier.value;
+    if (pos == null) {
+      await LocationService.kickPresence();
+      pos = myLocationNotifier.value;
+    }
+    if (pos == null) {
+      try {
+        final fix = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 10),
+          ),
+        );
+        pos = LatLng(fix.latitude, fix.longitude);
+        myLocationNotifier.value = pos;
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    final p = pos;
+    if (p == null) {
+      snack(context, tr('me_no_position'));
+      return;
+    }
+    await _ctl?.animateCamera(CameraUpdate.newLatLngZoom(p, 14));
+  }
+
+  /* The button itself: circular, dark, TI target glyph — bottom-
+     right, mirroring the pulse chip (bottom-left, same T.s12
+     insets). It collides with nothing: the route chip and the
+     sharing banner live at the top, and the invisible swipe-zoom
+     strips end 64 dp above the bottom edge, well above this
+     button. Last in the Stack, so its taps are its own. */
+  Widget _centerOnMeButton() {
+    return Positioned(
+      right: T.s12,
+      bottom: T.s12,
+      child: Pressable(
+        onTap: _centerOnMe,
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: T.surface.withOpacity(0.92),
+            shape: BoxShape.circle,
+            border: Border.all(color: T.stroke),
+            boxShadow: T.cardDepth,
+          ),
+          child: const Center(
+            child: TiradIcon(TIGlyph.target, size: 24, color: T.iconGray),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _shareBanner() {
     final issue = LocationService.shareIssue.value;
     if (issue == null || _shareBannerHidden) {
@@ -10190,6 +10264,8 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
         // v2.0.28: the sharing-issue honesty banner (inset past the
         // zoom strips, under the route chip's line).
         _shareBanner(),
+        // v2.0.29 (item B): centre-on-me, bottom-right.
+        _centerOnMeButton(),
       ],
     );
   }
@@ -16437,7 +16513,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.28',
+                  'TiradA anon · 2.0.29',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -17141,7 +17217,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.28',
+            'TiradA anon · 2.0.29',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
