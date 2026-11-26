@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.29.
+// TiradA anon — native app (Flutter), v2.0.30.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -6782,52 +6782,76 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /* v2.0.30: the city picker is rebuilt (owner: «не все города
+     на месте, или я не могу прокрутить вниз панель для выбора
+     города» — BOTH halves were true). (1) SCROLL: SheetShell
+     wraps its child in a Column(mainAxisSize: min), so this
+     picker's own Column was measured with UNBOUNDED height; its
+     Flexible then had no bounded space to flex into, and the
+     shrinkWrap ListView sized itself to its FULL content height
+     (87 rows ≈ 4 900 dp) — far past the old Container's
+     0.7·screen cap. A list that believes its viewport is the
+     whole content never scrolls: the sheet was clamped, and
+     every city below the fold was clipped and unreachable (only
+     ~10 cities were usable). Fix: the sheet body now gets an
+     explicit bounded height (0.8·screen) and the list is an
+     Expanded without shrinkWrap — a real viewport that scrolls
+     to the very last city. (2) ORDER: _cities is sorted only
+     «karmiel first» with a comparator returning 0 for every
+     other pair, and Dart's List.sort is not stable — the other
+     86 cities surfaced in effectively arbitrary order, so in a
+     long list they looked missing. The picker now works on an
+     alphabetically sorted copy (by the displayed name — city
+     names are proper nouns, never translated); _cities itself
+     keeps its karmiel-first order, which the default-city
+     fallbacks rely on. All 87 cities from cities.json are
+     listed (85 of them hold the 5 212 bundled places; Ариэль
+     and Тире have none yet). */
   void _showCityPicker() {
     HapticFeedback.selectionClick();
+    final sorted = [..._cities]
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (ctx) => Container(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(ctx).size.height * 0.7,
-        ),
-        child: SheetShell(
+      builder: (ctx) => SheetShell(
+        child: SizedBox(
+          height: MediaQuery.of(ctx).size.height * 0.8,
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(tr('pick_city'), style: T.head(18)),
               ),
-            Flexible(
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: _cities.length,
-                itemBuilder: (_, i) {
-                  final c = _cities[i];
-                  final sel = c.id == _city?.id;
-                  return ListTile(
-                    leading: TiradIcon(TIGlyph.mapPin,
-                        size: 19, color: sel ? T.ember : T.iconGray),
-                    title: Text(
-                      c.name,
-                      style: TextStyle(
-                        fontWeight: sel ? FontWeight.w900 : FontWeight.w600,
-                        color: sel ? kOrange : kText,
+              Expanded(
+                child: ListView.builder(
+                  itemCount: sorted.length,
+                  itemBuilder: (_, i) {
+                    final c = sorted[i];
+                    final sel = c.id == _city?.id;
+                    return ListTile(
+                      leading: TiradIcon(TIGlyph.mapPin,
+                          size: 19, color: sel ? T.ember : T.iconGray),
+                      title: Text(
+                        c.name,
+                        style: TextStyle(
+                          fontWeight:
+                              sel ? FontWeight.w900 : FontWeight.w600,
+                          color: sel ? kOrange : kText,
+                        ),
                       ),
-                    ),
-                    trailing: sel
-                        ? const Icon(Icons.check, color: kRed, size: 20)
-                        : null,
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      _onCity(c);
-                    },
-                  );
-                },
+                      trailing: sel
+                          ? const Icon(Icons.check, color: kRed, size: 20)
+                          : null,
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        _onCity(c);
+                      },
+                    );
+                  },
+                ),
               ),
-            ),
               const SizedBox(height: 10),
             ],
           ),
@@ -16513,7 +16537,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.29',
+                  'TiradA anon · 2.0.30',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -17217,7 +17241,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.29',
+            'TiradA anon · 2.0.30',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
