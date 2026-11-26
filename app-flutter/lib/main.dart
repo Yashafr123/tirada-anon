@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.24.
+// TiradA anon — native app (Flutter), v2.0.25.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -255,6 +255,12 @@ String? get myUidOrNull => supa.auth.currentUser?.id;
 /* Last real location seen by the map — shared with the «Я в деле» sheet. */
 final ValueNotifier<LatLng?> myLocationNotifier = ValueNotifier<LatLng?>(null);
 
+/* v2.0.25: my own visibility mode ('visible' · 'ghost' · 'offline'),
+   mirrored app-wide. HomePage owns the profile and keeps this in
+   sync (load + every onProfileChanged); MapTab's presence writer and
+   me-marker and LocationService's background gate read it here. */
+final ValueNotifier<String> myModeNotifier = ValueNotifier<String>('visible');
+
 /* Real geolocation (v2.0.8). Before this, the only position source was
    MapLibre's requestMyLocationLatLng() — which silently returns null
    forever when the app never asked for the location permission, so the
@@ -269,6 +275,95 @@ class LocationService {
   static bool _deniedHintShown = false;
   static bool _gpsOffHintShown = false;
   static StreamSubscription<Position>? _sub;
+  /* v2.0.25: whether the live stream runs as an Android foreground
+     service (background location), and whether the second-step
+     "always" permission has been asked this session. */
+  static bool _fgsStream = false;
+  static bool _bgAsked = false;
+
+  /* Signed-in + «Невидимка»: no stream at all — the owner must not
+     broadcast (or even track) a position he chose to hide. */
+  static bool get _iAmHidden =>
+      myUidOrNull != null && myModeNotifier.value == 'offline';
+
+  static void _startStream({required bool fgs}) {
+    _fgsStream = fgs;
+    final LocationSettings settings = fgs
+        ? AndroidSettings(
+            accuracy: LocationAccuracy.medium,
+            distanceFilter: 25,
+            intervalDuration: const Duration(seconds: 30),
+            foregroundNotificationConfig: ForegroundNotificationConfig(
+              notificationTitle: 'TiradA anon',
+              notificationText: tr('bg_loc_note'),
+              enableWakeLock: false,
+            ),
+          )
+        : const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            distanceFilter: 25,
+          );
+    try {
+      _sub = Geolocator.getPositionStream(
+        locationSettings: settings,
+      ).listen(
+        (pos) {
+          myLocationNotifier.value = LatLng(pos.latitude, pos.longitude);
+        },
+        onError: (_) {},
+      );
+    } catch (_) {
+      _sub = null;
+      _fgsStream = false;
+    }
+  }
+
+  static Future<void> _stopStream() async {
+    try {
+      await _sub?.cancel();
+    } catch (_) {}
+    _sub = null;
+    _fgsStream = false;
+  }
+
+  /* v2.0.25: stop everything (sign-out, «Невидимка»). Cancelling the
+     subscription also tears down the foreground service and its
+     persistent notification. */
+  static Future<void> stopAll() => _stopStream();
+
+  /* v2.0.25: reconcile the stream with the sharing state.
+     Signed-in + visible/ghost → the stream must be the foreground-
+     service one so the position keeps updating while the app is
+     backgrounded; the "always" (background) permission is requested
+     here, as the second step after the foreground one (Android
+     rules), at most once per session. Signed-out or «Невидимка» →
+     no stream. Guests keep the plain foreground-only stream that
+     ensureLocation started. */
+  static Future<void> applySharing() async {
+    try {
+      final uid = myUidOrNull;
+      if (uid == null) return; // guest: nothing to reconcile
+      if (myModeNotifier.value == 'offline') {
+        await _stopStream();
+        return;
+      }
+      final status = await Permission.location.status;
+      if (!status.isGranted && !status.isLimited) {
+        return; // ensureLocation owns the first (foreground) ask
+      }
+      if (!await Geolocator.isLocationServiceEnabled()) return;
+      final always = await Permission.locationAlways.status;
+      if (!always.isGranted && !_bgAsked) {
+        _bgAsked = true;
+        try {
+          await Permission.locationAlways.request();
+        } catch (_) {}
+      }
+      if (_sub != null && _fgsStream) return; // already background-live
+      await _stopStream();
+      _startStream(fgs: true);
+    } catch (_) {}
+  }
 
   /* Idempotent: safe to call from HomePage init and again when the Map
      tab is first opened. Hints are shown at most once per session. */
@@ -309,6 +404,7 @@ class LocationService {
         }
         return;
       }
+      if (_iAmHidden) return; // «Невидимка»: no stream, no fix
       if (_sub != null || _starting) return; // stream already (being) started
       _starting = true;
       try {
@@ -320,19 +416,9 @@ class LocationService {
         );
         myLocationNotifier.value = LatLng(pos.latitude, pos.longitude);
       } catch (_) {}
-      try {
-        _sub = Geolocator.getPositionStream(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.medium,
-            distanceFilter: 25,
-          ),
-        ).listen(
-          (pos) {
-            myLocationNotifier.value = LatLng(pos.latitude, pos.longitude);
-          },
-          onError: (_) {},
-        );
-      } catch (_) {}
+      /* Signed-in users share from the background too (foreground
+         service); guests get the plain foreground-only stream. */
+      _startStream(fgs: myUidOrNull != null);
       _starting = false;
     } catch (_) {
       _starting = false;
@@ -1819,87 +1905,184 @@ String dayKeyOf(DateTime d) {
 
 String dayKey() => dayKeyOf(DateTime.now());
 
-/* ============================ STREAK (v2.0.14) ============================
-   ROOT CAUSE of «серия дней не работает»: before 2.0.14 NOTHING in the
-   app ever wrote stats['streak'] / stats['bestStreak'] — the counters
-   existed in normStats, were read by the profile display, the badges
-   and the XP formula, but no code path incremented them (the check-in
-   comment even said "streak is left to its own logic" — that logic did
-   not exist). The streak therefore sat at 0 forever.
+/* ============================ STREAK ============================
+   v2.0.25 REWORK. The v2.0.14 service stored only (count, best,
+   last active day) — no per-day history existed, so the profile
+   week strip INVENTED the past: it painted the last N days ending
+   TODAY from the bare counter, in a Monday-first row. Yesterday's
+   real completion landed on today's cell, a not-yet-done today
+   already looked done, and missed days could never show as missed
+   (owner: «я вчера выполнял задания, а огонь у меня стоит только
+   на сегодня»).
 
-   This service owns the truth in prefs (streak_count, streak_best,
-   streak_last_day — LOCAL calendar dates via dayKeyOf, never UTC):
-   a day counts as active when HomePage funnels a meaningful action
-   through markActive() (any Item-7 completion toggle, a photo
-   check-in/upload, a place or route check-in). First activity of a
-   new day: last active yesterday → streak+1; older/none → streak=1;
-   same day → unchanged. best = max(best, streak), never decreases.
-   HomePage mirrors the returned values into stats (the single source
-   the profile, badges and xpOfStats read) and persists them with the
-   rest of stats, so the streak survives restarts for guests (prefs +
-   local_stats) and signed-in users (cloud profile) alike. */
+   Now the truth is a per-day history in prefs ('streak_days' —
+   JSON {yyyy-mm-dd: true} for days with at least one completed
+   TASK, 'streak_since' — the first tracked day; pruned to ~60
+   days, LOCAL dates via dayKeyOf). A day counts ONLY through
+   markActive(), which HomePage calls from the same _bumpStat
+   funnel that credits tasks/XP (daily task, AI-drop task, quest
+   steps, quests; a place check-in also passes through it). A bare
+   app open records nothing.
+
+   The count, per the owner's rules: a missed day inside the
+   tracked history is ICE — it shows as ice and does NOT break the
+   run by itself, but the THIRD ice inside one calendar month
+   zeroes the run from that day (done days after it start a new
+   streak from 1); the ice counter resets each calendar month.
+   Days before the history starts are unknown, never ice. Today
+   pending changes nothing. best = the historical maximum run,
+   never erased by a reset. HomePage mirrors (count, best) into
+   stats — the single source the profile, badges and the
+   xpOfStats streak bonus read — so everything stays consistent.
+
+   Migration: the legacy (count, last) pair claimed «count
+   consecutive active days ending at last» — exactly those days
+   are marked done on first run. If prefs hold nothing but stats
+   carry a streak, the old adopt-convention applies (that many
+   days ending yesterday). Anything older is unrecoverable — the
+   old storage never kept it — and is NOT invented. */
 class StreakService {
   static const _kCount = 'streak_count';
   static const _kBest = 'streak_best';
   static const _kLast = 'streak_last_day';
+  /* v2.0.25: the per-day history (see the section header). */
+  static const _kDays = 'streak_days';
+  static const _kSince = 'streak_since';
 
-  /* Record activity for today; returns the (streak, best) to display. */
-  static Future<(int, int)> markActive() async {
-    final prefs = await SharedPreferences.getInstance();
-    final today = dayKey();
-    final last = prefs.getString(_kLast) ?? '';
-    var streak = prefs.getInt(_kCount) ?? 0;
-    var best = prefs.getInt(_kBest) ?? 0;
-    if (last != today) {
-      final yesterday = dayKeyOf(DateTime.now().subtract(
-          const Duration(days: 1)));
-      streak = (last == yesterday && streak > 0) ? streak + 1 : 1;
-      await prefs.setString(_kLast, today);
-      await prefs.setInt(_kCount, streak);
+  /* Load the done-day set, running the legacy migration on first
+     use (see header). [stats] is only a fallback seed source for
+     reconcile() — prefs data always wins. */
+  static Future<Set<String>> _loadDays(SharedPreferences prefs,
+      [Map<String, dynamic>? stats]) async {
+    final raw = prefs.getString(_kDays);
+    if (raw != null) {
+      try {
+        return (jsonDecode(raw) as Map<String, dynamic>).keys.toSet();
+      } catch (_) {}
     }
-    if (streak > best) {
-      best = streak;
-      await prefs.setInt(_kBest, best);
-    }
-    return (streak, best);
-  }
-
-  /* Read-only view for display: a streak whose last active day is
-     older than yesterday is broken and reads 0 (best is kept). */
-  static Future<(int, int)> current() async {
-    final prefs = await SharedPreferences.getInstance();
-    final last = prefs.getString(_kLast) ?? '';
-    final best = prefs.getInt(_kBest) ?? 0;
-    if (last == dayKey() ||
-        last == dayKeyOf(DateTime.now().subtract(const Duration(days: 1)))) {
-      return (prefs.getInt(_kCount) ?? 0, best);
-    }
-    return (0, best);
-  }
-
-  /* One-time reconciliation at load: seed prefs from the stats copy
-     (cloud profile / local_stats) when prefs have never seen a streak
-     (fresh install, reinstall), then persist a broken streak as 0 so
-     every reader agrees. Returns the values stats should show. */
-  static Future<(int, int)> reconcile(Map<String, dynamic> stats) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (prefs.getString(_kLast) == null) {
-      final sStreak = statInt(stats, 'streak');
-      final sBest = math.max(sStreak, statInt(stats, 'bestStreak'));
-      if (sBest > 0) {
-        // Adopt the stored record; treat it as "active yesterday" so
-        // it displays today and continues if today becomes active.
-        await prefs.setInt(_kCount, sStreak);
-        await prefs.setInt(_kBest, sBest);
-        await prefs.setString(
-            _kLast,
-            dayKeyOf(DateTime.now().subtract(const Duration(days: 1))));
+    final days = <String>{};
+    var count = prefs.getInt(_kCount) ?? 0;
+    var last = prefs.getString(_kLast) ?? '';
+    if (count <= 0 && stats != null) {
+      count = statInt(stats, 'streak');
+      if (count > 0) {
+        last = dayKeyOf(DateTime.now().subtract(const Duration(days: 1)));
       }
     }
-    final cur = await current();
-    if (cur.$1 == 0 && (prefs.getInt(_kCount) ?? 0) != 0) {
-      await prefs.setInt(_kCount, 0); // broken — persist the reset
+    if (count > 0 && last.isNotEmpty) {
+      final end = DateTime.tryParse(last);
+      if (end != null) {
+        for (var i = 0; i < count && i < 60; i++) {
+          days.add(dayKeyOf(end.subtract(Duration(days: i))));
+        }
+      }
     }
+    if (days.isNotEmpty) {
+      await prefs.setString(
+          _kDays, jsonEncode({for (final d in days) d: true}));
+      await prefs.setString(
+          _kSince, days.reduce((a, b) => a.compareTo(b) < 0 ? a : b));
+    }
+    return days;
+  }
+
+  static Future<void> _saveDays(
+      SharedPreferences prefs, Set<String> days) async {
+    final cutoff =
+        dayKeyOf(DateTime.now().subtract(const Duration(days: 60)));
+    days.removeWhere((d) => d.compareTo(cutoff) < 0);
+    await prefs.setString(
+        _kDays, jsonEncode({for (final d in days) d: true}));
+  }
+
+  /* (current, best) derived from the day history alone — see the
+     section header for the exact rules (ice, 3rd-ice reset). */
+  static (int, int) _compute(Set<String> days, String since, int bestFloor) {
+    if (days.isEmpty || since.isEmpty) return (0, bestFloor);
+    final start = DateTime.tryParse(since);
+    if (start == null) return (0, bestFloor);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    var run = 0;
+    var best = bestFloor;
+    var monthIce = 0;
+    var curMonth = -1;
+    var d = DateTime(start.year, start.month, start.day);
+    while (!d.isAfter(today)) {
+      final mk = d.year * 12 + d.month;
+      if (mk != curMonth) {
+        curMonth = mk;
+        monthIce = 0;
+      }
+      if (days.contains(dayKeyOf(d))) {
+        run++;
+        if (run > best) best = run;
+      } else if (d.isBefore(today)) {
+        monthIce++;
+        if (monthIce >= 3) run = 0; // third ice of the month: reset
+      }
+      d = d.add(const Duration(days: 1));
+    }
+    return (run, best);
+  }
+
+  /* Record a completed-task day (today) and return the (streak,
+     best) to mirror into stats. Called ONLY from HomePage's
+     completion funnel — never from app open. */
+  static Future<(int, int)> markActive() async {
+    final prefs = await SharedPreferences.getInstance();
+    final days = await _loadDays(prefs);
+    final today = dayKey();
+    if (prefs.getString(_kSince) == null) {
+      await prefs.setString(_kSince, today);
+    }
+    days.add(today);
+    await _saveDays(prefs, days);
+    final r = _compute(
+        days, prefs.getString(_kSince) ?? today, prefs.getInt(_kBest) ?? 0);
+    await prefs.setInt(_kCount, r.$1);
+    await prefs.setInt(_kBest, r.$2);
+    await prefs.setString(_kLast, today);
+    return r;
+  }
+
+  /* Read-only view for display: derived from the same history, so
+     the number can never drift from the week strip. A pending
+     today does not zero the count. */
+  static Future<(int, int)> current() async {
+    final prefs = await SharedPreferences.getInstance();
+    final days = await _loadDays(prefs);
+    return _compute(
+        days, prefs.getString(_kSince) ?? '', prefs.getInt(_kBest) ?? 0);
+  }
+
+  /* The done-day set + the first tracked day, for the week strip.
+     Days before 'since' are unknown (never rendered as ice). */
+  static Future<(Set<String>, String)> history() async {
+    final prefs = await SharedPreferences.getInstance();
+    final days = await _loadDays(prefs);
+    return (days, prefs.getString(_kSince) ?? '');
+  }
+
+  /* Load-time reconciliation: run the migration (stats are the
+     fallback seed), lift the best floor from the stats copy (the
+     cloud may hold the record), and return the values stats
+     should show. */
+  static Future<(int, int)> reconcile(Map<String, dynamic> stats) async {
+    final prefs = await SharedPreferences.getInstance();
+    final days = await _loadDays(prefs, stats);
+    if (days.isNotEmpty && prefs.getString(_kSince) == null) {
+      await prefs.setString(
+          _kSince, days.reduce((a, b) => a.compareTo(b) < 0 ? a : b));
+    }
+    final sBest =
+        math.max(statInt(stats, 'bestStreak'), statInt(stats, 'streak'));
+    if (sBest > (prefs.getInt(_kBest) ?? 0)) {
+      await prefs.setInt(_kBest, sBest);
+    }
+    final cur = await current();
+    await prefs.setInt(_kCount, cur.$1);
+    await prefs.setInt(_kBest, cur.$2);
     return cur;
   }
 }
@@ -2651,10 +2834,26 @@ const Map<String, (String, String, String)> kStr = {
     'No real name. No extras. Just the vibe.'
   ),
   'ghost_nick_label': ('Ник призрака', 'הכינוי של הרוח', "The ghost's nickname"),
+  'nick_hint': ('От 2 до 20 символов', 'בין 2 ל־20 תווים', '2 to 20 characters'),
+  'nick_taken': ('Этот ник уже занят', 'הכינוי הזה כבר תפוס', 'That nickname is already taken'),
+  'nick_save_fail': ('Не удалось сохранить ник', 'לא ניתן היה לשמור את הכינוי', 'Could not save the nickname'),
+  'nick_saved': ('Ник обновлён', 'הכינוי עודכן', 'Nickname updated'),
+  'save_btn': ('Сохранить', 'שמירה', 'Save'),
+  'cancel_btn': ('Отмена', 'ביטול', 'Cancel'),
   'map_mode_label': ('Режим на карте', 'מצב במפה', 'Map mode'),
   'mode_visible': ('Видимый', 'גלוי', 'Visible'),
   'mode_ghost': ('Призрак', 'רוח', 'Ghost'),
   'mode_offline': ('Невидимка', 'בלתי נראה', 'Invisible'),
+  'bg_loc_hint': (
+    'В режимах «Видимый» и «Призрак» местоположение обновляется даже в фоне — для этого нужно разрешение на геолокацию «Всегда». В «Невидимке» передача местоположения полностью останавливается.',
+    'במצבים «גלוי» ו«רוח» המיקום ממשיך להתעדכן גם ברקע — לשם כך נדרשת הרשאת מיקום «תמיד». במצב «בלתי נראה» שידור המיקום נעצר לגמרי.',
+    'In Visible and Ghost modes your location keeps updating in the background — that needs the “Always” location permission. In Invisible mode location sharing stops completely.'
+  ),
+  'bg_loc_note': (
+    'Ты на радаре — местоположение обновляется',
+    'אתה על הרדאר — המיקום מתעדכן',
+    "You're on the radar — location updating"
+  ),
   'signin_create': ('Войти / Создать аккаунт', 'כניסה / יצירת חשבון', 'Sign in / Create account'),
   'account_why': (
     'Аккаунт нужен для людей на карте, своего ника и синхронизации. Всё остальное работает и так.',
@@ -3727,7 +3926,7 @@ enum TIGlyph {
   wineGlass, coffeeCup, tree, utensils, umbrella, musicNote, ball,
   eye, bag, landmark, camera, photo, paperPlane, gear, bell, check,
   x, chevronBack, plus, minus, navArrow, compass, cloud, sun, moon,
-  cloudRain, snow, fog, storm, phone, globe, trash, users, voteBox,
+  cloudRain, snow, snowflake, fog, storm, phone, globe, trash, users, voteBox,
   target, calendar, link, share, lock, trophy, dice, walk, car, bus,
   pencil, chat, clock,
 }
@@ -4199,6 +4398,27 @@ class TIPaint {
         dot(8.6, 18.6, 1.15);
         dot(12.4, 20, 1.15);
         dot(16.2, 18.6, 1.15);
+      case TIGlyph.snowflake:
+        /* v2.0.25: the streak's ICE marker — a six-arm flake in the
+           same monoline stroke: three axes through the centre with
+           small chevrons near each tip. */
+        line(12, 3.5, 12, 20.5);
+        line(4.6, 7.75, 19.4, 16.25);
+        line(19.4, 7.75, 4.6, 16.25);
+        // chevrons at the vertical tips
+        line(9.2, 6.2, 12, 3.8);
+        line(14.8, 6.2, 12, 3.8);
+        line(9.2, 17.8, 12, 20.2);
+        line(14.8, 17.8, 12, 20.2);
+        // chevrons at the diagonal tips
+        line(7.3, 6.6, 4.9, 8.1);
+        line(8.2, 9.7, 4.9, 8.1);
+        line(16.7, 17.4, 19.1, 15.9);
+        line(15.8, 14.3, 19.1, 15.9);
+        line(16.7, 6.6, 19.1, 8.1);
+        line(15.8, 9.7, 19.1, 8.1);
+        line(7.3, 17.4, 4.9, 15.9);
+        line(8.2, 14.3, 4.9, 15.9);
       case TIGlyph.fog:
         final p = Path()
           ..moveTo(6.4, 10.4)
@@ -5543,6 +5763,8 @@ class _HomePageState extends State<HomePage> {
         _loading = false;
       });
       if (profile != null) {
+        myModeNotifier.value = (profile['mode'] as String?) ?? 'visible';
+        LocationService.applySharing();
         _persistLocal();
         PushService.registerCurrent(); // FCM token → device_tokens
       }
@@ -5580,6 +5802,16 @@ class _HomePageState extends State<HomePage> {
       await prefs.setStringList('local_favs', _favs.toList());
       await prefs.setString('local_stats', jsonEncode(normStats(_stats)));
     } catch (_) {}
+  }
+
+  /* v2.0.25: every profile edit (mode, nickname, avatar) funnels
+     through here — keep the app-wide mode mirror and the background
+     location gate in sync with the edit, immediately. */
+  void _onProfileChanged(Map<String, dynamic> p) {
+    setState(() => _profile = p);
+    final m = (p['mode'] as String?) ?? 'visible';
+    if (myModeNotifier.value != m) myModeNotifier.value = m;
+    LocationService.applySharing();
   }
 
   Future<void> _toggleFav(Place p) async {
@@ -5889,7 +6121,9 @@ class _HomePageState extends State<HomePage> {
     if (changed) {
       setState(() {});
       _saveStats();
-      _touchStreak(); // a place check-in is a meaningful day action
+      /* v2.0.25: a place check-in no longer marks the streak day —
+         the owner's rule is that a streak day counts ONLY when a
+         task is completed (the _bumpStat funnel). */
     }
     _cityQuestMark('checkin', p);
   }
@@ -6541,7 +6775,7 @@ class _HomePageState extends State<HomePage> {
                     favs: _favs,
                     places: _places,
                     city: _city,
-                    onProfileChanged: (p) => setState(() => _profile = p),
+                    onProfileChanged: _onProfileChanged,
                     onOpenTasks: _openTasks,
                     onOpenFriends: () => _selectTab(2),
                     hapticsValue: hapticsOn,
@@ -7239,10 +7473,24 @@ class _PlaceSheetState extends State<PlaceSheet> {
   }
 
   /* Friends physically at this place right now: live rows in
-     profile_locations within ~80 m (excluding me). Best-effort. */
+     profile_locations within ~80 m (excluding me). Best-effort.
+     v2.0.25: «Невидимка» users are excluded — their own client
+     deletes the location row, and this mode join covers any stale
+     row that survived (e.g. the app was killed mid-switch). */
   Future<void> _loadCrowd() async {
     try {
       final uid = myUidOrNull;
+      final hidden = <String>{};
+      try {
+        final profs = await supa
+            .from('profiles')
+            .select('id, mode')
+            .eq('mode', 'offline')
+            .limit(500);
+        for (final r in profs as List) {
+          hidden.add((r as Map)['id'] as String);
+        }
+      } catch (_) {}
       final rows = await supa
           .from('profile_locations')
           .select('user_id, lat, lng')
@@ -7250,6 +7498,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
       var n = 0;
       for (final r in rows as List) {
         if (r['user_id'] == uid) continue;
+        if (hidden.contains(r['user_id'])) continue;
         final lat = (r['lat'] as num?)?.toDouble();
         final lng = (r['lng'] as num?)?.toDouble();
         if (lat == null || lng == null) continue;
@@ -8030,7 +8279,10 @@ class _MapTabState extends State<MapTab> {
   // exactly like the place/friend/route symbols, so no redraw of
   // those ever wipes it (or vice versa).
   Symbol? _meSymbol;
-  bool _meImgReady = false;
+  /* v2.0.25: registered me-marker images, per mode ('me-marker',
+     'me-marker-ghost') — a mode switch registers the other bitmap
+     instead of reusing the wrong cover. */
+  final Set<String> _meImgNames = {};
   bool _meSyncing = false;
   bool _meAgain = false;
   // Side-zoom swipe session (v2.0.16): pointer id that owns the
@@ -8046,6 +8298,7 @@ class _MapTabState extends State<MapTab> {
     super.initState();
     MapRouteBus.line.addListener(_onRouteLineChanged);
     myLocationNotifier.addListener(_onMyLocation);
+    myModeNotifier.addListener(_onMyModeChanged);
     rootBundle.loadString('assets/map-style.json').then((s) {
       if (mounted) setState(() => _style = s);
     });
@@ -8055,9 +8308,19 @@ class _MapTabState extends State<MapTab> {
   void dispose() {
     MapRouteBus.line.removeListener(_onRouteLineChanged);
     myLocationNotifier.removeListener(_onMyLocation);
+    myModeNotifier.removeListener(_onMyModeChanged);
     _timer?.cancel();
     _zoomDragPointer = null;
     super.dispose();
+  }
+
+  /* v2.0.25: my mode changed (in the Profile tab) — presence and
+     the me-marker must follow NOW, not on the next 30 s cycle:
+     «Невидимка» wipes my location row and my marker at once;
+     «Призрак» repaints my marker with the ghost cover. */
+  void _onMyModeChanged() {
+    _updateMeMarker();
+    _presence();
   }
 
   @override
@@ -8553,7 +8816,11 @@ class _MapTabState extends State<MapTab> {
     // The online state is part of the cache key (v2.0.10): the ring
     // colour depends on it, so a friend flipping online/offline must
     // repaint the bitmap on the next 30 s refresh, not reuse the old.
-    final cacheKey = '${f.id}|${f.avatarUrl ?? f.avatar ?? ''}|${f.online}';
+    // v2.0.25: the mode is part of the key too — a visible↔ghost
+    // switch must repaint the marker on the next refresh, not
+    // reuse the other mode's bitmap.
+    final cacheKey =
+        '${f.id}|${f.avatarUrl ?? f.avatar ?? ''}|${f.online}|${f.mode ?? ''}';
     final cached = _markerCache[cacheKey];
     if (cached != null) return cached;
     // v2.0.10: markers were too small (owner) — bitmap re-painted at
@@ -8702,11 +8969,19 @@ class _MapTabState extends State<MapTab> {
         if (loc == null) continue;
         final mode = p['mode'] as String?;
         if (mode == 'offline') continue;
+        /* v2.0.25: ghost mode is masked at construction (same rule
+           as friendFromProfile) — the marker bitmap then has no
+           photo to draw and falls into its ghost branch. Before,
+           the real avatarUrl reached _friendMarker, whose photo
+           branch ran BEFORE any mode check: a ghost with a photo
+           stood on the map with his real face. */
         final friend = Friend(
           id: id,
-          name: (p['name'] as String?) ?? tr('ghost'),
-          avatar: p['avatar'] as String?,
-          avatarUrl: p['avatar_url'] as String?,
+          name: mode == 'ghost'
+              ? tr('ghost')
+              : ((p['name'] as String?) ?? tr('ghost')),
+          avatar: mode == 'ghost' ? null : p['avatar'] as String?,
+          avatarUrl: mode == 'ghost' ? null : p['avatar_url'] as String?,
           mode: mode,
           online: p['online'] == true,
           lat: loc.$1,
@@ -8767,13 +9042,30 @@ class _MapTabState extends State<MapTab> {
     }
     final ctl = _ctl;
     if (ctl == null || !_styleReady) return;
+    /* v2.0.25: my marker obeys my mode. «Невидимка» — no marker at
+       all, not even on my own map (the owner: «когда невидимка, я
+       вообще не должен отображаться на карте»). «Призрак» — the
+       marker wears the ghost cover (its own bitmap/image name). */
+    final mode = myModeNotifier.value;
+    if (mode == 'offline' && myUidOrNull != null) {
+      final sym = _meSymbol;
+      _meSymbol = null;
+      if (sym != null) {
+        try {
+          await ctl.removeSymbol(sym);
+        } catch (_) {}
+      }
+      return;
+    }
     if (myLocationNotifier.value == null) return;
     _meSyncing = true;
     try {
-      if (!_meImgReady) {
+      final ghost = mode == 'ghost' && myUidOrNull != null;
+      final imgName = ghost ? 'me-marker-ghost' : 'me-marker';
+      if (!_meImgNames.contains(imgName)) {
         try {
-          await ctl.addImage('me-marker', await _meMarkerBitmap());
-          _meImgReady = true;
+          await ctl.addImage(imgName, await _meMarkerBitmap(ghost: ghost));
+          _meImgNames.add(imgName);
         } catch (_) {
           return;
         }
@@ -8784,12 +9076,15 @@ class _MapTabState extends State<MapTab> {
         _meSymbol = await ctl.addSymbol(
           SymbolOptions(
             geometry: pos,
-            iconImage: 'me-marker',
+            iconImage: imgName,
             iconSize: 0.75, // 176 px bitmap → ≈132 px on screen
           ),
         );
       } else {
-        await ctl.updateSymbol(_meSymbol!, SymbolOptions(geometry: pos));
+        await ctl.updateSymbol(
+          _meSymbol!,
+          SymbolOptions(geometry: pos, iconImage: imgName),
+        );
       }
     } catch (_) {
       _meSymbol = null; // stale handle — recreate on the next update
@@ -8892,8 +9187,10 @@ class _MapTabState extends State<MapTab> {
     return null;
   }
 
-  Future<Uint8List> _meMarkerBitmap() async {
-    const cacheKey = 'me-marker-bitmap';
+  /* [ghost] (v2.0.25): the disguised cover — no photo is even
+     loaded, the disc wears the branded TI ghost. */
+  Future<Uint8List> _meMarkerBitmap({bool ghost = false}) async {
+    final cacheKey = ghost ? 'me-marker-bitmap-ghost' : 'me-marker-bitmap';
     final cached = _markerCache[cacheKey];
     if (cached != null) return cached;
     const double size = 176;
@@ -8902,7 +9199,7 @@ class _MapTabState extends State<MapTab> {
     final center = const Offset(size / 2, size / 2);
     canvas.drawCircle(center, 86, Paint()..color = T.fire);
     canvas.drawCircle(center, 77, Paint()..color = Colors.white);
-    final photo = await _loadMePhoto();
+    final photo = ghost ? null : await _loadMePhoto();
     if (photo != null) {
       final side = math.min(photo.width, photo.height).toDouble();
       final crop = Rect.fromLTWH(
@@ -8928,7 +9225,8 @@ class _MapTabState extends State<MapTab> {
       // v2.0.16: if the user picked a glyph avatar ('ti:<name>'),
       // paint THAT glyph; a legacy emoji keeps the previous
       // behaviour (the branded ghost).
-      final myGlyph = tiAvatarGlyph(await _meAvatarValue());
+      final myGlyph =
+          ghost ? TIGlyph.ghost : tiAvatarGlyph(await _meAvatarValue());
       TIPaint.paint(
         canvas,
         myGlyph ?? TIGlyph.ghost,
@@ -9030,6 +9328,22 @@ class _MapTabState extends State<MapTab> {
 
   Future<void> _presence() async {
     try {
+      final uid = myUidOrNull;
+      if (uid == null) return; // guest: nowhere to write presence
+      /* v2.0.25: presence RESPECTS the mode. Before, this writer
+         upserted a fresh location and online=true unconditionally —
+         a «Невидимка» user kept broadcasting a live position (and
+         showed as online) forever; only the map's render filter
+         hid him. Now «Невидимка» deletes the location row and goes
+         offline in the DB, so NO surface can place or count him. */
+      if (myModeNotifier.value == 'offline') {
+        await supa.from('profile_locations').delete().eq('user_id', uid);
+        await supa.from('profiles').update({
+          'online': false,
+          'last_seen': DateTime.now().toUtc().toIso8601String(),
+        }).eq('id', uid);
+        return;
+      }
       // v2.0.12: the position comes from the geolocator-fed
       // myLocationNotifier (LocationService), NOT from MapLibre's
       // requestMyLocationLatLng() — that API only works while the
@@ -9041,8 +9355,6 @@ class _MapTabState extends State<MapTab> {
       // presence all already flow through the notifier.
       final pos = myLocationNotifier.value;
       if (pos == null) return;
-      final uid = myUidOrNull;
-      if (uid == null) return; // guest: nowhere to write presence
       await supa.from('profile_locations').upsert({
         'user_id': uid,
         'lat': pos.latitude,
@@ -9063,7 +9375,7 @@ class _MapTabState extends State<MapTab> {
     _routeLineObj = null;
     _routeSymbols.clear();
     _meSymbol = null; // …and the «me» marker belongs to the old style
-    _meImgReady = false;
+    _meImgNames.clear();
     ctl.onSymbolTapped.add((s) {
       final p = _symbolPlace[s.id];
       if (p != null && mounted) {
@@ -10645,67 +10957,262 @@ class _RouteTabState extends State<RouteTab> {
   /* ---------------- UI ---------------- */
 
   /* Summary chip for the route hero card (v2.0.14). */
-  Widget _summaryChip(TIGlyph glyph, String text) {
+  /* v2.0.25: ONE segmented stats strip — start · points/distance ·
+     time as three cells of a single bar with hairline dividers,
+     replacing the three floating mismatched chips. The numbers are
+     the same ones the chips showed (incl. the v2.0.15 transport-
+     adjusted total time). */
+  Widget _statsStrip() {
+    Widget cell(TIGlyph g, String text, {int flex = 1}) => Expanded(
+          flex: flex,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TiradIcon(g, size: 13, color: T.ember),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: T.body(12, w: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+        );
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: T.s12, vertical: T.s8),
+      padding: const EdgeInsets.symmetric(horizontal: T.s8, vertical: 10),
       decoration: BoxDecoration(
         color: T.surfaceHi,
-        borderRadius: BorderRadius.circular(T.rPill),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: T.stroke),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          TiradIcon(glyph, size: 13, color: T.iconGray),
-          const SizedBox(width: 6),
-          Text(text, style: T.body(12, w: FontWeight.w700)),
+          cell(
+            TIGlyph.mapPin,
+            _startIsCenter ? tr('from_center') : tr('from_you'),
+            flex: 2,
+          ),
+          Container(width: 1, height: 18, color: T.stroke),
+          cell(
+            TIGlyph.routePath,
+            trf('route_summary', {
+                  'n': _stops.length,
+                  'd': _fmtDist(_displayTotalKm),
+                }) +
+                (_counted ? tr('route_summary_done') : ''),
+            flex: 4,
+          ),
+          Container(width: 1, height: 18, color: T.stroke),
+          cell(
+            TIGlyph.clock,
+            trf('mins_short', {
+              // v2.0.15: the OSRM total goes through the transport
+              // adjustment (bus = driving ×1.35 + 8 min) — the raw
+              // duration was identical for bus/car and, via the
+              // profile-blind demo server, for walking too.
+              'n': _road != null
+                  ? _modeTotalMins(_road!.totalMins).round()
+                  : (_displayTotalKm / (_speeds[_transport] ?? 5) * 60)
+                      .round(),
+            }),
+            flex: 3,
+          ),
         ],
       ),
     );
   }
 
-  Widget _transportPill(String id, String label) {
-    final sel = _transport == id;
-    return GestureDetector(
-      onTap: () async {
-        tickSelect();
-        setState(() => _transport = id);
-        _refreshRoad(); // legs/total re-fetch for the new profile
-        try {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('route_transport_${dayKey()}', id);
-        } catch (_) {}
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          gradient: sel ? const LinearGradient(colors: [kRed, kOrange]) : null,
-          color: sel ? null : kSurface,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: sel ? Colors.transparent : kBorder),
-          boxShadow: sel
-              ? [BoxShadow(color: kRed.withOpacity(0.45), blurRadius: 14)]
-              : null,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+  /* v2.0.25: the route preview as a connected vertical TIMELINE —
+     numbered neon dots joined by a gradient path line, stop names
+     in order, the leg distance riding each connector, a check on
+     stops already checked in. Stop names come from _stops (always
+     available); leg distances reuse the _legRow maths (OSRM legs
+     when landed, straight-line estimates until then). */
+  Widget _routeTimeline() {
+    double legKm(int leg) {
+      final r = _road;
+      if (r != null && leg >= 0 && leg < r.legKm.length) return r.legKm[leg];
+      final a = leg == 0
+          ? _start
+          : LatLng(_stops[leg - 1].lat, _stops[leg - 1].lng);
+      if (a == null) return 0;
+      final b = _stops[leg];
+      return haversineKm(a.latitude, a.longitude, b.lat, b.lng);
+    }
+
+    Widget dot(int i) => Container(
+          width: 26,
+          height: 26,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: _done.contains(i) ? null : T.specGrad,
+            color: _done.contains(i) ? T.online : null,
+            boxShadow: [
+              BoxShadow(
+                color: (_done.contains(i) ? T.online : T.fire)
+                    .withValues(alpha: 0.45),
+                blurRadius: 8,
+              ),
+            ],
+          ),
+          child: _done.contains(i)
+              ? const TiradIcon(TIGlyph.check,
+                  size: 13, color: Colors.white, filled: true)
+              : Text(
+                  '${i + 1}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+        );
+
+    Widget connector(int leg) => Row(
           children: [
-            TiradIcon(
-              id == 'walk'
-                  ? TIGlyph.walk
-                  : (id == 'bus' ? TIGlyph.bus : TIGlyph.car),
-              size: 15,
-              color: sel ? Colors.white : T.iconGray,
-              filled: sel,
+            SizedBox(
+              width: 26,
+              child: Center(
+                child: Container(
+                  width: 2.5,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(2),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        T.fire.withValues(alpha: 0.85),
+                        T.ember.withValues(alpha: 0.35),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: T.s12),
             Text(
-              label,
-              style:
-                  const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+              _fmtDist(legKm(leg)),
+              style: T.body(11, color: T.faint, w: FontWeight.w600),
             ),
           ],
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < _stops.length; i++) ...[
+          if (i > 0) connector(i),
+          Row(
+            children: [
+              dot(i),
+              const SizedBox(width: T.s12),
+              Expanded(
+                child: Text(
+                  _stops[i].name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: T.body(13.5, w: FontWeight.w700),
+                ),
+              ),
+              TiradIcon(
+                typeGlyph(_stops[i].type),
+                size: 14,
+                color: T.iconGray,
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  /* v2.0.25: a quiet secondary action cell (icon over label) — the
+     two secondary route actions share one aligned row of these, at
+     one height, instead of odd-width floating buttons. */
+  Widget _actionCell(TIGlyph glyph, String label, VoidCallback onTap) {
+    return Expanded(
+      child: Pressable(
+        onTap: onTap,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(vertical: 10, horizontal: T.s8),
+          decoration: BoxDecoration(
+            color: T.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: T.stroke),
+          ),
+          child: Column(
+            children: [
+              TiradIcon(glyph, size: 18, color: T.salmon),
+              const SizedBox(height: 5),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: T.body(11.5, w: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /* v2.0.25: one segment of the transport switch — the track (a
+     single pill shell) lives in the hero card; the selected segment
+     fills with the brand gradient. The tap behaviour is unchanged. */
+  Widget _transportPill(String id, String label) {
+    final sel = _transport == id;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () async {
+          tickSelect();
+          setState(() => _transport = id);
+          _refreshRoad(); // legs/total re-fetch for the new profile
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('route_transport_${dayKey()}', id);
+          } catch (_) {}
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+          decoration: BoxDecoration(
+            gradient:
+                sel ? const LinearGradient(colors: [kRed, kOrange]) : null,
+            borderRadius: BorderRadius.circular(999),
+            boxShadow: sel
+                ? [BoxShadow(color: kRed.withOpacity(0.45), blurRadius: 14)]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TiradIcon(
+                id == 'walk'
+                    ? TIGlyph.walk
+                    : (id == 'bus' ? TIGlyph.bus : TIGlyph.car),
+                size: 15,
+                color: sel ? Colors.white : T.iconGray,
+                filled: sel,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, fontSize: 13.5),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -10990,23 +11497,45 @@ class _RouteTabState extends State<RouteTab> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      alignment: Alignment.center,
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: T.specGrad,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Color(0x66E8301E),
-                            blurRadius: 14,
-                            offset: Offset(0, 4),
+                    /* v2.0.25: a faint radar ring echoes the brand
+                       motif around the route badge. */
+                    SizedBox(
+                      width: 56,
+                      height: 56,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: T.fire.withValues(alpha: 0.30),
+                                width: 1.2,
+                              ),
+                            ),
+                          ),
+                          Container(
+                            width: 44,
+                            height: 44,
+                            alignment: Alignment.center,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: T.specGrad,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Color(0x66E8301E),
+                                  blurRadius: 14,
+                                  offset: Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: const TiradIcon(TIGlyph.routePath,
+                                size: 22, color: Colors.white, filled: true),
                           ),
                         ],
                       ),
-                      child: const TiradIcon(TIGlyph.routePath,
-                          size: 22, color: Colors.white, filled: true),
                     ),
                     const SizedBox(width: T.s12),
                     Expanded(
@@ -11044,83 +11573,72 @@ class _RouteTabState extends State<RouteTab> {
                   ],
                 ),
                 if (_stops.isNotEmpty) ...[
-                  const SizedBox(height: T.s12),
-                  Wrap(
-                    spacing: T.s8,
-                    runSpacing: T.s8,
-                    children: [
-                      _summaryChip(
-                        TIGlyph.mapPin,
-                        _startIsCenter
-                            ? tr('route_start_center')
-                            : tr('route_start_you'),
-                      ),
-                      _summaryChip(
-                        TIGlyph.routePath,
-                        trf('route_summary', {
-                              'n': _stops.length,
-                              'd': _fmtDist(_displayTotalKm),
-                            }) +
-                            (_counted ? tr('route_summary_done') : ''),
-                      ),
-                      _summaryChip(
-                        TIGlyph.clock,
-                        trf('mins_short', {
-                          // v2.0.15: the OSRM total goes through
-                          // the transport adjustment (bus = driving
-                          // ×1.35 + 8 min) — before, this chip showed
-                          // the raw duration, identical for bus/car
-                          // and, via the profile-blind demo server,
-                          // for walking too.
-                          'n': _road != null
-                              ? _modeTotalMins(_road!.totalMins).round()
-                              : (_displayTotalKm /
-                                      (_speeds[_transport] ?? 5) *
-                                      60)
-                                  .round(),
-                        }),
-                      ),
-                    ],
-                  ),
+                  /* v2.0.25: the panel was a scatter of mismatched
+                     floating chips and uneven buttons (owner:
+                     «выглядает разбросано»). Now one rhythm: a
+                     single segmented stats strip, the stops as a
+                     connected timeline preview, one segmented
+                     transport switch, ONE primary action and the
+                     rest as two equal quiet cells. All callbacks
+                     are the original ones — composition only. */
+                  if (_startIsCenter) ...[
+                    const SizedBox(height: T.s12),
+                    Row(
+                      children: [
+                        const TiradIcon(TIGlyph.mapPin,
+                            size: 13, color: T.iconGray),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            tr('route_start_center'),
+                            style: T.body(12, color: T.muted),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: T.s16),
+                  _statsStrip(),
+                  const SizedBox(height: T.s16),
+                  _routeTimeline(),
                 ],
                 const SizedBox(height: T.s16),
                 hairline(),
                 const SizedBox(height: T.s16),
-                Row(
-                  children: [
-                    _transportPill('walk', tr('tp_walk')),
-                    const SizedBox(width: 8),
-                    _transportPill('bus', tr('tp_bus')),
-                    const SizedBox(width: 8),
-                    _transportPill('car', tr('tp_car')),
-                  ],
+                Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: T.surfaceHi,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: T.stroke),
+                  ),
+                  child: Row(
+                    children: [
+                      _transportPill('walk', tr('tp_walk')),
+                      _transportPill('bus', tr('tp_bus')),
+                      _transportPill('car', tr('tp_car')),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: T.s12),
+                const SizedBox(height: T.s16),
                 PressButton(
-                  text: tr('route_reshuffle'),
-                  primary: false,
-                  icon: TIGlyph.dice,
-                  onPressed: _reshuffle,
+                  text: tr('route_show_map'),
+                  icon: TIGlyph.routePath,
+                  onPressed: _showOnMap,
                 ),
                 const SizedBox(height: T.s12),
                 Row(
                   children: [
-                    Expanded(
-                      child: GhostButton(
-                        text: tr('route_show_map'),
-                        small: true,
-                        icon: TIGlyph.routePath,
-                        onPressed: _showOnMap,
-                      ),
+                    _actionCell(
+                      TIGlyph.dice,
+                      tr('route_reshuffle'),
+                      _reshuffle,
                     ),
                     const SizedBox(width: T.s8),
-                    Expanded(
-                      child: GhostButton(
-                        text: tr('route_save'),
-                        small: true,
-                        icon: TIGlyph.check,
-                        onPressed: _saveRoute,
-                      ),
+                    _actionCell(
+                      TIGlyph.check,
+                      tr('route_save'),
+                      _saveRoute,
                     ),
                   ],
                 ),
@@ -12202,16 +12720,22 @@ List<TitleDef> titlesOf(Map<String, dynamic> stats) {
   ];
 }
 
-/* The one title shown under the nick — highest earned wins. */
+/* The one title shown under the nick — highest earned wins.
+   v2.0.25: the XP rungs now mirror kLevels EXACTLY (this ladder
+   used to jump 100 → 500, so a 250–499 XP user — «Тусовщик» in
+   the profile progress — was titled «Бродяга» here). */
 String? ghostTitle(Map<String, dynamic> stats, String cityName) {
   final xp = xpOfStats(stats);
   final places = (stats['places'] as List?)?.length ?? 0;
+  if (xp >= 4000) return '${tr('lv_myth')} · $cityName';
   if (xp >= 2500) return '${tr('lv_keeper')} · $cityName';
   if (xp >= 1500) return '${tr('lv_night_legend')} · $cityName';
   if (statInt(stats, 'nights') >= 10) return '${tr('t_king')} · $cityName';
   if (places >= 25) return '${tr('b_explorer')} · $cityName';
   if (statInt(stats, 'routes') >= 5) return '${tr('b_architect')} · $cityName';
+  if (xp >= 900) return '${tr('lv_city_ghost')} · $cityName';
   if (xp >= 500) return '${tr('ghost')} · $cityName';
+  if (xp >= 250) return '${tr('lv_partier')} · $cityName';
   if (xp >= 100) return '${tr('lv_wanderer')} · $cityName';
   return null;
 }
@@ -12241,7 +12765,7 @@ class _BadgesPageState extends State<BadgesPage> {
     try {
       final rows = await supa
           .from('profiles')
-          .select('id, name, avatar, avatar_url, stats')
+          .select('id, name, avatar, avatar_url, stats, mode')
           .limit(80);
       final list = <Map<String, dynamic>>[
         for (final r in rows as List)
@@ -12571,6 +13095,15 @@ class _BadgesPageState extends State<BadgesPage> {
     final xp = row['xp'] as int;
     final (_, lvName, _) = levelOf(xp);
     final mine = row['id'] == myUidOrNull;
+    /* v2.0.25: a ghost-mode user is masked on the board too — the
+       query never even selected mode before, so the board showed
+       his real name and photo while every other surface masked
+       the name (and the map, until this version, the photo). */
+    final ghostMode = row['mode'] == 'ghost';
+    final shownName =
+        ghostMode ? tr('ghost') : (row['name'] ?? tr('ghost')).toString();
+    final shownAvatar = ghostMode ? null : row['avatar']?.toString();
+    final shownUrl = ghostMode ? null : row['avatar_url']?.toString();
     return Container(
       margin: const EdgeInsets.only(bottom: T.s8),
       padding: const EdgeInsets.symmetric(horizontal: T.s12, vertical: T.s8),
@@ -12614,18 +13147,17 @@ class _BadgesPageState extends State<BadgesPage> {
             behavior: HitTestBehavior.opaque,
             onTap: () => showAvatarZoom(
               context,
-              name: (row['name'] ?? tr('ghost')).toString(),
-              avatar: row['avatar']?.toString(),
-              avatarUrl: row['avatar_url']?.toString(),
+              name: shownName,
+              avatar: shownAvatar,
+              avatarUrl: shownUrl,
             ),
             child: CircleAvatar(
               radius: 20,
               backgroundColor: T.surfaceHi,
-              backgroundImage: row['avatar_url'] != null
-                  ? NetworkImage(row['avatar_url'].toString())
-                  : null,
-              child: row['avatar_url'] == null
-                  ? AvatarFace((row['avatar'] ?? '👻').toString(),
+              backgroundImage:
+                  shownUrl != null ? NetworkImage(shownUrl) : null,
+              child: shownUrl == null
+                  ? AvatarFace(shownAvatar ?? '👻',
                       glyphSize: 20, emojiSize: 18)
                   : null,
             ),
@@ -12636,7 +13168,7 @@ class _BadgesPageState extends State<BadgesPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${row['name'] ?? tr('ghost')}${mine ? tr('you_suffix') : ''}',
+                  '$shownName${mine ? tr('you_suffix') : ''}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: T.body(14, w: FontWeight.w700),
@@ -12697,16 +13229,25 @@ class Ping {
       );
 }
 
-/* A profiles row → Friend (the join used by pings + friends tab). */
-Friend friendFromProfile(Map<String, dynamic> p) => Friend(
-      id: p['id'] as String,
-      name: (p['name'] as String?) ?? tr('ghost'),
-      avatar: p['avatar'] as String?,
-      avatarUrl: p['avatar_url'] as String?,
-      mode: p['mode'] as String?,
-      cityId: p['city'] as String?,
-      online: p['online'] == true,
-    );
+/* A profiles row → Friend (the join used by pings + friends tab).
+   v2.0.25: GHOST MODE IS MASKED HERE, at construction — a ghost's
+   Friend carries the «Призрак» name and NO avatar/avatarUrl, so
+   every surface that renders a Friend (list rows, sheets, ping
+   cards, avatar zoom, the DealSheet) is disguised by construction
+   and none of them can leak the photo or the real name. */
+Friend friendFromProfile(Map<String, dynamic> p) {
+  final mode = p['mode'] as String?;
+  final ghost = mode == 'ghost';
+  return Friend(
+    id: p['id'] as String,
+    name: ghost ? tr('ghost') : ((p['name'] as String?) ?? tr('ghost')),
+    avatar: ghost ? null : p['avatar'] as String?,
+    avatarUrl: ghost ? null : p['avatar_url'] as String?,
+    mode: mode,
+    cityId: p['city'] as String?,
+    online: p['online'] == true,
+  );
+}
 
 /* «5 мин назад» — compact relative time for the ping inbox. */
 String relTime(DateTime t) {
@@ -13926,6 +14467,171 @@ class _FriendsTabState extends State<FriendsTab> {
   }
 }
 
+/* v2.0.25: the streak week card — renders the REAL per-day history
+   (StreakService) for the current Sun–Sat week (the app's week):
+   a flame for a completed day, ICE (the TI snowflake) for a missed
+   tracked day, a pending outline for today before its first task,
+   a plain empty cell for future days and for days before the
+   history starts. The header count comes from the stats mirror —
+   the same numbers xpOfStats reads; both derive from the one day
+   map, so they cannot disagree. */
+class _StreakWeekCard extends StatefulWidget {
+  final Map<String, dynamic> stats;
+  const _StreakWeekCard({required this.stats});
+
+  @override
+  State<_StreakWeekCard> createState() => _StreakWeekCardState();
+}
+
+class _StreakWeekCardState extends State<_StreakWeekCard> {
+  Set<String> _days = {};
+  String _since = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(_StreakWeekCard old) {
+    super.didUpdateWidget(old);
+    if (statInt(old.stats, 'streak') != statInt(widget.stats, 'streak') ||
+        statInt(old.stats, 'bestStreak') !=
+            statInt(widget.stats, 'bestStreak')) {
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    final h = await StreakService.history();
+    if (!mounted) return;
+    setState(() {
+      _days = h.$1;
+      _since = h.$2;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.stats;
+    final streak = statInt(s, 'streak');
+    final bestStreak = math.max(streak, statInt(s, 'bestStreak'));
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final sunday = today.subtract(Duration(days: now.weekday % 7));
+    // 0 done · 1 ice · 2 today, pending · 3 plain empty
+    int stateOf(int i) {
+      final d = sunday.add(Duration(days: i));
+      final key = dayKeyOf(d);
+      if (_days.contains(key)) return 0;
+      if (d.isAtSameMomentAs(today)) return 2;
+      if (d.isBefore(today) &&
+          _since.isNotEmpty &&
+          key.compareTo(_since) >= 0) {
+        return 1;
+      }
+      return 3;
+    }
+
+    Widget cell(int i) {
+      final st = stateOf(i);
+      final d = sunday.add(Duration(days: i));
+      final isToday = d.isAtSameMomentAs(today);
+      return Column(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: st == 0 ? T.fireGradV : null,
+              color: st == 0
+                  ? null
+                  : (st == 1 ? const Color(0xFF1E2E3A) : T.surfaceHi),
+              border: st == 0
+                  ? null
+                  : Border.all(
+                      color: st == 1
+                          ? const Color(0xFF5B7A8C)
+                          : (st == 2
+                              ? T.ember.withValues(alpha: 0.55)
+                              : T.faint.withValues(alpha: 0.4))),
+              boxShadow: st == 0
+                  ? [
+                      BoxShadow(
+                        color: T.fire.withValues(alpha: 0.4),
+                        blurRadius: 10,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: st == 0
+                ? const TiradIcon(TIGlyph.flame,
+                    size: 15, color: Colors.white, filled: true)
+                : st == 1
+                    ? const TiradIcon(TIGlyph.snowflake,
+                        size: 16, color: Color(0xFFA9CCE3))
+                    : st == 2
+                        ? const TiradIcon(TIGlyph.flame,
+                            size: 15, color: T.faint)
+                        : const Text(
+                            '·',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: T.faint,
+                            ),
+                          ),
+          ),
+          const SizedBox(height: T.s4),
+          Text(
+            [
+              tr('wd_7'),
+              tr('wd_1'),
+              tr('wd_2'),
+              tr('wd_3'),
+              tr('wd_4'),
+              tr('wd_5'),
+              tr('wd_6')
+            ][i],
+            style: T.body(10,
+                color: isToday ? T.ember : T.faint, w: FontWeight.w700),
+          ),
+        ],
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(T.s16),
+      decoration: cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const TiradIcon(TIGlyph.flame,
+                  size: 17, color: T.ember, filled: true),
+              const SizedBox(width: 7),
+              Text(trf('streak_line', {'n': streak}), style: T.head(15)),
+              const Spacer(),
+              Text(
+                trf('record', {'n': bestStreak}),
+                style: T.body(12, color: T.muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: T.s12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [for (var i = 0; i < 7; i++) cell(i)],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /* ---------------- profile tab: «Мой призрак» + about ---------------- */
 
 class ProfileTab extends StatefulWidget {
@@ -14226,6 +14932,88 @@ class _ProfileTabState extends State<ProfileTab> {
     }
   }
 
+  bool _nickSaving = false;
+
+  /* v2.0.25: nickname editing — before, the «Ник призрака» block
+     was a read-only Text: the name was written ONCE at sign-up
+     (from the email prefix) and no code path ever updated
+     profiles.name again, so the owner simply had nowhere to change
+     it. Now: dialog → validated update of the SAME profiles.name
+     every surface reads (map marker, «Общее», sheets, board) →
+     onProfileChanged refreshes the UI at once; the value persists
+     in the DB, so it survives re-login. The DB has a unique index
+     on lower(name) (the sign-up flow relies on it), so a taken
+     nick surfaces as a localized «taken» error; any other failure
+     shows a generic save error — never a silent no-op. */
+  Future<void> _editNick() async {
+    final uid = myUidOrNull;
+    if (uid == null || _nickSaving) return;
+    final current = (widget.profile?['name'] as String?) ?? '';
+    final ctl = TextEditingController(text: current);
+    final res = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: T.surface,
+        title: Text(tr('ghost_nick_label'), style: T.head(16)),
+        content: TextField(
+          controller: ctl,
+          autofocus: true,
+          maxLength: 20,
+          decoration: InputDecoration(hintText: tr('nick_hint')),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(tr('cancel_btn')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(ctl.text),
+            child: Text(tr('save_btn')),
+          ),
+        ],
+      ),
+    );
+    if (res == null || !mounted) return;
+    final name = res.trim();
+    if (name.length < 2 || name == current) return;
+    setState(() => _nickSaving = true);
+    try {
+      await supa.from('profiles').update({'name': name}).eq('id', uid);
+      widget.onProfileChanged({...?widget.profile, 'name': name});
+      if (mounted) snack(context, tr('nick_saved'));
+    } catch (e) {
+      debugPrint('TiradA nickname update failed: $e');
+      if (mounted) {
+        final s = e.toString().toLowerCase();
+        final taken = s.contains('23505') ||
+            s.contains('duplicate') ||
+            s.contains('unique');
+        snack(context, tr(taken ? 'nick_taken' : 'nick_save_fail'));
+      }
+    } finally {
+      if (mounted) setState(() => _nickSaving = false);
+    }
+  }
+
+  /* v2.0.25: sign-out stops the background location service and
+     takes me off the map (location row deleted, online=false)
+     BEFORE the session ends — previously it was a bare signOut()
+     and the ghost stayed «online» at his last spot. */
+  Future<void> _signOut() async {
+    final uid = myUidOrNull;
+    await LocationService.stopAll();
+    if (uid != null) {
+      try {
+        await supa.from('profile_locations').delete().eq('user_id', uid);
+      } catch (_) {}
+      try {
+        await supa.from('profiles').update({'online': false}).eq('id', uid);
+      } catch (_) {}
+    }
+    myModeNotifier.value = 'visible';
+    await supa.auth.signOut();
+  }
+
   Future<void> _setMode(String mode) async {
     final p = {...?widget.profile, 'mode': mode};
     widget.onProfileChanged(p);
@@ -14376,7 +15164,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.24',
+                  'TiradA anon · 2.0.25',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -14636,7 +15424,9 @@ class _ProfileTabState extends State<ProfileTab> {
     final progress = nextXp == null
         ? 1.0
         : ((xp - curThreshold) / (nextXp - curThreshold)).clamp(0.0, 1.0);
-    final nextName = nextXp == null ? null : kLevels[lvNum].$2;
+    /* v2.0.25: this used to pass the raw kStr KEY ('lv_district_ghost')
+       into the line — resolve it through tr() like levelOf() does. */
+    final nextName = nextXp == null ? null : tr(kLevels[lvNum].$2);
     final best = math.max(statInt(s, 'bestStreak'), statInt(s, 'streak'));
     final b = math.min(math.max(0, best), 30);
     final contrib = <String, int>{
@@ -14783,18 +15573,31 @@ class _ProfileTabState extends State<ProfileTab> {
           const SizedBox(height: 20),
           if (signedIn) ...[
             sectionLabel(tr('ghost_nick_label')),
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: kSurface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: kRed.withOpacity(0.25)),
-              ),
-              child: Text(
-                nick,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            /* v2.0.25: the nick block is now a button — tap opens
+               the editor (it used to be a dead read-only label). */
+            GestureDetector(
+              onTap: _editNick,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: kSurface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: kRed.withOpacity(0.25)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _nickSaving ? '…' : nick,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(width: 8),
+                    const TiradIcon(TIGlyph.pencil,
+                        size: 15, color: T.iconGray),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 18),
@@ -14850,6 +15653,15 @@ class _ProfileTabState extends State<ProfileTab> {
                     ),
                   ),
               ],
+            ),
+            const SizedBox(height: 10),
+            /* v2.0.25: what the modes mean for background location —
+               the explanation that accompanies the background
+               permission ask (applySharing requests it when a
+               sharing mode is picked). */
+            Text(
+              tr('bg_loc_hint'),
+              style: T.body(12, color: T.muted),
             ),
             const SizedBox(height: 20),
           ] else ...[
@@ -14925,95 +15737,7 @@ class _ProfileTabState extends State<ProfileTab> {
             ),
           ),
           const SizedBox(height: T.s16),
-          Builder(builder: (_) {
-            final streak = statInt(s, 'streak');
-            final bestStreak =
-                math.max(streak, statInt(s, 'bestStreak'));
-            final weekday = DateTime.now().weekday; // 1 = Пн
-            bool filled(int i) {
-              if (streak >= 7) return true;
-              final daysAgo = weekday - (i + 1);
-              return daysAgo >= 0 && daysAgo < streak;
-            }
-
-            return Container(
-              padding: const EdgeInsets.all(T.s16),
-              decoration: cardDecoration(),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const TiradIcon(TIGlyph.flame,
-                          size: 17, color: T.ember, filled: true),
-                      const SizedBox(width: 7),
-                      Text(trf('streak_line', {'n': streak}),
-                          style: T.head(15)),
-                      const Spacer(),
-                      Text(
-                        trf('record', {'n': bestStreak}),
-                        style: T.body(12, color: T.muted),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: T.s12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      for (var i = 0; i < 7; i++)
-                        Column(
-                          children: [
-                            Container(
-                              width: 34,
-                              height: 34,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                gradient: filled(i) ? T.fireGradV : null,
-                                color: filled(i) ? null : T.surfaceHi,
-                                border: filled(i)
-                                    ? null
-                                    : Border.all(
-                                        color: T.faint.withOpacity(0.4)),
-                                boxShadow: filled(i)
-                                    ? [
-                                        BoxShadow(
-                                          color: T.fire.withOpacity(0.4),
-                                          blurRadius: 10,
-                                        ),
-                                      ]
-                                    : null,
-                              ),
-                              child: filled(i)
-                                  ? const TiradIcon(TIGlyph.flame,
-                                      size: 15,
-                                      color: Colors.white,
-                                      filled: true)
-                                  : const Text(
-                                      '·',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        color: T.faint,
-                                      ),
-                                    ),
-                            ),
-                            const SizedBox(height: T.s4),
-                            Text(
-                              [tr('wd_1'), tr('wd_2'), tr('wd_3'), tr('wd_4'), tr('wd_5'), tr('wd_6'), tr('wd_7')][i],
-                              style: T.body(10,
-                                  color: i + 1 == weekday
-                                      ? T.ember
-                                      : T.faint,
-                                  w: FontWeight.w700),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          }),
+          _StreakWeekCard(stats: s),
           const SizedBox(height: T.s16),
           const StepsCard(),
           const SizedBox(height: T.s16),
@@ -15087,7 +15811,7 @@ class _ProfileTabState extends State<ProfileTab> {
             PressButton(
               text: tr('sign_out'),
               primary: false,
-              onPressed: () => supa.auth.signOut(),
+              onPressed: _signOut,
             ),
           ],
           const SizedBox(height: T.s24),
@@ -15144,7 +15868,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.24',
+            'TiradA anon · 2.0.25',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
