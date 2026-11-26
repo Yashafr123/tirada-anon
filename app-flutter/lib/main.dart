@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.27.
+// TiradA anon — native app (Flutter), v2.0.28.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -352,6 +352,41 @@ class LocationService {
      double-writes. */
   static DateTime? _lastPresenceWriteAt;
 
+  /* v2.0.28: WHY friends can't see me, as a live state for the Map
+     tab's honesty banner: null = sharing works (or doesn't apply —
+     guest / «Невидимка»), otherwise 'denied' (app permission off,
+     still askable), 'permanent' (permission off for good — only the
+     system settings can undo it) or 'gps_off' (location services off
+     on the phone). A signed-in visible/ghost user with NO location
+     row was invisible to everyone while profiles.online said true
+     (owner, live: «все друг друга видят») — the failure was silent
+     on every surface. Now refreshShareIssue() computes the state,
+     kickPresence() feeds it when a one-shot write can't run, and a
+     successful syncPresence() write clears it. */
+  static final ValueNotifier<String?> shareIssue =
+      ValueNotifier<String?>(null);
+
+  static Future<void> refreshShareIssue() async {
+    try {
+      if (myUidOrNull == null || _iAmHidden) {
+        shareIssue.value = null;
+        return;
+      }
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        shareIssue.value = 'gps_off';
+        return;
+      }
+      final status = await Permission.location.status;
+      if (status.isPermanentlyDenied) {
+        shareIssue.value = 'permanent';
+      } else if (!status.isGranted && !status.isLimited) {
+        shareIssue.value = 'denied';
+      } else {
+        shareIssue.value = null;
+      }
+    } catch (_) {}
+  }
+
   static Future<void> syncPresence() async {
     try {
       final uid = myUidOrNull;
@@ -392,6 +427,53 @@ class LocationService {
         'last_seen': DateTime.now().toUtc().toIso8601String(),
       }).eq('id', uid);
       _lastPresenceWriteAt = DateTime.now();
+      // v2.0.28: a location write just landed — friends CAN see me,
+      // so any sharing-issue banner state is stale by definition.
+      shareIssue.value = null;
+    } catch (_) {}
+  }
+
+  /* v2.0.28: guaranteed first location (owner: «все друг друга
+     видят»). A brand-new signed-in user could stay invisible
+     forever: presence writes rode on stream events and the map's
+     30 s cycle, so with no fix in myLocationNotifier syncPresence()
+     returned in silence and no profile_locations row ever landed.
+     This one-shot runs right after sign-in/profile load and on the
+     Map tab's first open, in addition to the stream/heartbeat:
+     fresh fix → notifier → syncPresence(), within seconds, even
+     standing still. Every failure path is silent in code (no crash,
+     no throw to callers) but feeds shareIssue via
+     refreshShareIssue(), so the Map banner can say WHY. */
+  static Future<void> kickPresence() async {
+    try {
+      if (myUidOrNull == null || _iAmHidden) return;
+      var status = await Permission.location.status;
+      if (status.isDenied) {
+        // Same first ask ensureLocation makes — kickPresence can be
+        // the first location code to run after a fast profile load.
+        status = await Permission.location.request();
+      }
+      if (!status.isGranted && !status.isLimited) {
+        await refreshShareIssue();
+        return;
+      }
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        await refreshShareIssue();
+        return;
+      }
+      try {
+        final pos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 10),
+          ),
+        );
+        myLocationNotifier.value = LatLng(pos.latitude, pos.longitude);
+      } catch (_) {
+        await refreshShareIssue();
+        return;
+      }
+      await syncPresence();
     } catch (_) {}
   }
 
@@ -2399,6 +2481,17 @@ const Map<String, (String, String, String)> kStr = {
     'הפעל את שירותי המיקום בטלפון — ואז המפה תראה איפה אתה',
     'Turn on location services on your phone — then the map will show where you are'
   ),
+  'share_banner_perm': (
+    'Друзья не видят тебя на карте: геолокация для приложения выключена',
+    'החברים לא רואים אותך במפה: המיקום לאפליקציה כבוי',
+    "Friends can't see you on the map: location is off for the app"
+  ),
+  'share_banner_gps': (
+    'Друзья не видят тебя на карте: геолокация на телефоне выключена',
+    'החברים לא רואים אותך במפה: שירותי המיקום בטלפון כבויים',
+    "Friends can't see you on the map: location services are off on your phone"
+  ),
+  'share_banner_allow': ('Разрешить', 'אישור', 'Allow'),
   'free': ('Бесплатно', 'חינם', 'Free'),
   'free_lc': ('бесплатно', 'חינם', 'free'),
   'per_person': ('на человека', 'לאדם', 'per person'),
@@ -2502,6 +2595,27 @@ const Map<String, (String, String, String)> kStr = {
     'Empty for now — nobody has sent you a hi yet.'
   ),
   'ping_hi_text': ('👋 Привет!', '👋 היי!', '👋 Hi!'),
+  /* v2.0.28: invites — a ping with a place attached (item H). */
+  'invite_btn': ('Пригласить', 'להזמין', 'Invite'),
+  'invite_place_btn': ('Пригласить куда-то', 'להזמין למקום', 'Invite to a place'),
+  'invite_pick_person': ('Кого пригласить?', 'את מי להזמין?', 'Who to invite?'),
+  'invite_pick_place': ('Куда пригласить?', 'לאן להזמין?', 'Where to invite?'),
+  'invite_sent': ('Приглашение отправлено', 'ההזמנה נשלחה', 'Invite sent'),
+  'invite_nobody': (
+    'Пока некого приглашать',
+    'אין עדיין את מי להזמין',
+    'Nobody to invite yet'
+  ),
+  'invite_no_places': (
+    'Места не нашлись',
+    'לא נמצאו מקומות',
+    'No places found'
+  ),
+  'ping_invite_text': (
+    'приглашает тебя в «{place}»',
+    'מזמין אותך ל«{place}»',
+    'invites you to “{place}”'
+  ),
   'ping_save': ('Сохранить', 'שמירה', 'Save'),
   'ping_saved': ('Сохранено', 'נשמר', 'Saved'),
   'ping_delete': ('Удалить', 'מחיקה', 'Delete'),
@@ -2852,6 +2966,12 @@ const Map<String, (String, String, String)> kStr = {
   'route_show_map': ('Показать на карте', 'הצג במפה', 'Show on map'),
   'route_save': ('Сохранить маршрут', 'שמור מסלול', 'Save route'),
   'delete_route': ('Удалить маршрут', 'מחיקת מסלול', 'Delete route'),
+  'cancel_route': ('Отменить маршрут', 'ביטול המסלול', 'Cancel route'),
+  'deal_no_city': (
+    'Город ещё не загрузился — попробуй через пару секунд',
+    'העיר עדיין לא נטענה — נסה שוב בעוד כמה שניות',
+    'The city has not loaded yet — try again in a few seconds'
+  ),
   'delete_route_title': ('Удалить маршрут?', 'למחוק את המסלול?', 'Delete route?'),
   'delete_route_progress': (
     'Прогресс по точкам будет сброшен',
@@ -3624,6 +3744,34 @@ class DangerButton extends StatelessWidget {
 }
 
 /* Small pill action (chips that behave like buttons). */
+/* v2.0.28: the sort mark — two TI chevrons (up/down) standing in
+   for the stock ↕ glyph the Places sort chip used to print as
+   text (it rendered as a gray boxed system glyph, off-brand next
+   to the TI chips). Drawn from the same monoline chevronBack,
+   rotated into ∧ / ∨. */
+class SortMark extends StatelessWidget {
+  const SortMark({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Transform.rotate(
+          angle: math.pi / 2,
+          child: const TiradIcon(TIGlyph.chevronBack,
+              size: 8, color: T.iconGray),
+        ),
+        Transform.rotate(
+          angle: -math.pi / 2,
+          child: const TiradIcon(TIGlyph.chevronBack,
+              size: 8, color: T.iconGray),
+        ),
+      ],
+    );
+  }
+}
+
 class PillButton extends StatelessWidget {
   final String text;
   final bool selected;
@@ -5888,6 +6036,8 @@ class _HomePageState extends State<HomePage> {
      is ever presented twice. */
   final Set<String> _presentedPingIds = {};
   bool _pingSheetOpen = false;
+  /* v2.0.28: the expired-ping cleanup runs once per launch. */
+  bool _pingsCleanupDone = false;
   Timer? _friendsTimer;
   LatLng? _lastCitySyncPos; // last position the city auto-sync judged
 
@@ -6047,6 +6197,12 @@ class _HomePageState extends State<HomePage> {
       if (profile != null) {
         myModeNotifier.value = (profile['mode'] as String?) ?? 'visible';
         LocationService.applySharing();
+        // v2.0.28: the profile just landed — put me on friends' maps
+        // NOW (one-shot fix + presence write), not whenever the
+        // stream/map cycle happens to produce a first fix.
+        LocationService.kickPresence();
+        // v2.0.28: and clear out my expired (>24 h) pings, once.
+        _cleanupExpiredPings();
         _persistLocal();
         PushService.registerCurrent(); // FCM token → device_tokens
       }
@@ -6187,9 +6343,25 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {}
   }
 
+  /* v2.0.28: resolve a bundled Place by id (invite pings carry
+     one); null when the id isn't in the bundle. */
+  Place? _placeById(String id) {
+    if (id.isEmpty) return null;
+    for (final p in _places) {
+      if (p.id == id) return p;
+    }
+    return null;
+  }
+
   /* v2.0.17: incoming pings (приветы + stickers) for the Friends tab
      inbox and the unseen badge. Latest 30, newest first; sender
-     profiles are fetched in one query and joined in memory. */
+     profiles are fetched in one query and joined in memory.
+     v2.0.28: pings live 24 HOURS (owner). The query asks the server
+     only for rows younger than the cutoff and the in-memory build
+     re-checks every parsed timestamp, so an expired ping can never
+     render or count — not in the «Общее» inbox, not in the badge,
+     not in the on-entry sheet — even while its row still exists.
+     _cleanupExpiredPings() below removes the rows themselves. */
   Future<void> _loadPings() async {
     final uid = myUidOrNull;
     if (uid == null) {
@@ -6197,10 +6369,15 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     try {
+      final cutoff = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(hours: 24));
       final rows = await supa
           .from('pings')
-          .select('id, from_id, kind, sticker, created_at, seen_at')
+          .select(
+              'id, from_id, kind, sticker, place_id, place_name, created_at, seen_at')
           .eq('to_id', uid)
+          .gte('created_at', cutoff.toIso8601String())
           .order('created_at', ascending: false)
           .limit(30);
       final list = rows as List;
@@ -6226,12 +6403,26 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _pings = [
           for (final r in list)
-            if (byId.containsKey(r['from_id']))
+            if (byId.containsKey(r['from_id']) &&
+                // v2.0.28: the 24 h rule, enforced again on the
+                // parsed instant — a row the server still returns
+                // (clock skew, cached read) dies here, not on screen.
+                (DateTime.tryParse((r['created_at'] ?? '').toString()) ??
+                        DateTime.now())
+                    .isAfter(cutoff))
               Ping(
                 id: (r['id'] ?? '').toString(),
                 from: byId[r['from_id']]!,
                 kind: (r['kind'] as String?) ?? 'hi',
                 sticker: r['sticker'] as String?,
+                // v2.0.28: invite payload — resolve the bundled
+                // Place now (the card's tap target); an id outside
+                // the bundle keeps placeName as plain text.
+                placeId: (r['place_id'] ?? '').toString().isEmpty
+                    ? null
+                    : (r['place_id'] ?? '').toString(),
+                placeName: r['place_name'] as String?,
+                place: _placeById((r['place_id'] ?? '').toString()),
                 createdAt:
                     DateTime.tryParse((r['created_at'] ?? '').toString()) ??
                         DateTime.now(),
@@ -6243,6 +6434,41 @@ class _HomePageState extends State<HomePage> {
       _maybePresentPings();
     } catch (e) {
       debugPrint('TiradA pings load failed: $e');
+    }
+  }
+
+  /* v2.0.28: delete my expired pings (older than 24 h) in BOTH
+     directions — addressed to me and sent by me — once per launch,
+     best-effort. Each direction is attempted independently: if the
+     RLS delete policy refuses one of them, that failure stays
+     silent (debugPrint only) and the 24 h DISPLAY filter in
+     _loadPings remains the guarantee for that direction. */
+  Future<void> _cleanupExpiredPings() async {
+    if (_pingsCleanupDone) return;
+    final uid = myUidOrNull;
+    if (uid == null) return;
+    _pingsCleanupDone = true;
+    final cutoff = DateTime.now()
+        .toUtc()
+        .subtract(const Duration(hours: 24))
+        .toIso8601String();
+    try {
+      await supa
+          .from('pings')
+          .delete()
+          .eq('to_id', uid)
+          .lt('created_at', cutoff);
+    } catch (e) {
+      debugPrint('TiradA pings cleanup (incoming) failed: $e');
+    }
+    try {
+      await supa
+          .from('pings')
+          .delete()
+          .eq('from_id', uid)
+          .lt('created_at', cutoff);
+    } catch (e) {
+      debugPrint('TiradA pings cleanup (sent) failed: $e');
     }
   }
 
@@ -6299,7 +6525,10 @@ class _HomePageState extends State<HomePage> {
         context: context,
         backgroundColor: Colors.transparent,
         isScrollControlled: true,
-        builder: (_) => NewPingsSheet(pings: items),
+        builder: (_) => NewPingsSheet(
+          pings: items,
+          onOpenPlace: _openPlaceFromPing,
+        ),
       );
     } finally {
       _pingSheetOpen = false;
@@ -6496,20 +6725,50 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /* v2.0.28: an invite ping's place tap — open the place's card
+     with the shell's real wiring (favs, check-in, photo callback),
+     whichever surface the ping was tapped on. */
+  void _openPlaceFromPing(Place place) {
+    showPlaceSheet(
+      context,
+      place,
+      favs: _favs,
+      onToggleFav: _toggleFav,
+      cityPlaces: _cityPlaces,
+      city: _city,
+      onCheckIn: _checkIn,
+      onPhotoUploaded: _onPhotoUploaded,
+    );
+  }
+
   Future<void> _openDeal() async {
     HapticFeedback.mediumImpact();
     // v2.0.14: first «Ты в деле» is a sensible moment to (re)ask the
     // notification permission — «друг в деле» pushes are its point.
     PushService.ensurePermission();
-    await _loadFriends();
-    if (!mounted || _city == null) return;
+    // v2.0.28: the sheet used to be GATED on `await _loadFriends()`
+    // — a network fetch with no timeout — and on a silent
+    // `if (_city == null) return;` (owner, live: «Ты в деле не
+    // открывается»). On a stalled connection the centre button was
+    // a dead tap for as long as the fetch hung. Now the sheet opens
+    // IMMEDIATELY with the in-memory friends list (kept fresh by
+    // the load + the 30 s cadence) while the refresh runs in the
+    // background, and a missing city falls back to the first loaded
+    // one — or says so honestly instead of dying in silence.
+    _loadFriends();
+    if (!mounted) return;
+    final city = _city ?? (_cities.isNotEmpty ? _cities.first : null);
+    if (city == null) {
+      snack(context, tr('deal_no_city'));
+      return;
+    }
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (_) => DealSheet(
-        places: _cityPlaces,
-        city: _city!,
+        places: _places.where((p) => p.city == city.id).toList(),
+        city: city,
         cities: _cities,
         friends: _friends,
         signedIn: myUidOrNull != null,
@@ -6743,7 +7002,16 @@ class _HomePageState extends State<HomePage> {
     // (the permission may have been granted in Settings meanwhile).
     if (idx == 0 && !_mapTabOpened) {
       _mapTabOpened = true;
-      LocationService.ensureLocation(context);
+      // v2.0.28: once that flow settles, kick a one-shot presence
+      // write — a first-open user appears on friends' maps within
+      // seconds instead of waiting for a stream event.
+      LocationService.ensureLocation(context)
+          .then((_) => LocationService.kickPresence());
+    }
+    // v2.0.28: EVERY map open re-judges the sharing-issue state, so
+    // the honesty banner tracks reality (fixed in Settings → gone).
+    if (idx == 0) {
+      LocationService.refreshShareIssue();
     }
     if (idx == 2) {
       _loadPings();
@@ -7054,6 +7322,7 @@ class _HomePageState extends State<HomePage> {
                     pings: _pings,
                     onOpenFriend: (f) => showFriendSheet(context, f),
                     onPingsChanged: _loadPings,
+                    onOpenPlace: _openPlaceFromPing,
                   ),
                   RouteTab(
                     places: _cityPlaces,
@@ -7900,6 +8169,25 @@ class _PlaceSheetState extends State<PlaceSheet> {
   /* Publish a photo to this place: pick → EXIF-stripped re-encode →
      consent sheet (Всем / Только друзьям / Не показывать) → upload to
      the place-photos bucket → place_photos row → stats via HomePage. */
+  /* v2.0.28: «Пригласить» — pick a person and send them an invite
+     ping to THIS place (InvitePersonSheet / sendInvitePing).
+     Guests get the standard ping login prompt, as elsewhere. */
+  Future<void> _openInvite() async {
+    if (myUidOrNull == null) {
+      snack(context, tr('ping_signin'));
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const LoginPage()),
+      );
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => InvitePersonSheet(place: _place),
+    );
+  }
+
   Future<void> _addPhoto() async {
     final uid = myUidOrNull;
     if (uid == null) {
@@ -8245,6 +8533,13 @@ class _PlaceSheetState extends State<PlaceSheet> {
               onPressed: _uploading ? () {} : _addPhoto,
             ),
             const SizedBox(height: T.s12),
+            GhostButton(
+              text: tr('invite_btn'),
+              small: true,
+              icon: TIGlyph.paperPlane,
+              onPressed: _openInvite,
+            ),
+            const SizedBox(height: T.s12),
             Row(
               children: [
                 Expanded(
@@ -8554,7 +8849,7 @@ class MapTab extends StatefulWidget {
   State<MapTab> createState() => _MapTabState();
 }
 
-class _MapTabState extends State<MapTab> {
+class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
   MapLibreMapController? _ctl;
   String? _style;
   bool _styleReady = false;
@@ -8596,9 +8891,11 @@ class _MapTabState extends State<MapTab> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     MapRouteBus.line.addListener(_onRouteLineChanged);
     myLocationNotifier.addListener(_onMyLocation);
     myModeNotifier.addListener(_onMyModeChanged);
+    LocationService.shareIssue.addListener(_onShareIssueChanged);
     rootBundle.loadString('assets/map-style.json').then((s) {
       if (mounted) setState(() => _style = s);
     });
@@ -8606,12 +8903,59 @@ class _MapTabState extends State<MapTab> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     MapRouteBus.line.removeListener(_onRouteLineChanged);
     myLocationNotifier.removeListener(_onMyLocation);
     myModeNotifier.removeListener(_onMyModeChanged);
+    LocationService.shareIssue.removeListener(_onShareIssueChanged);
     _timer?.cancel();
     _zoomDragPointer = null;
     super.dispose();
+  }
+
+  /* v2.0.28: returning to the app (e.g. from the system Settings,
+     where the permission/GPS was just fixed) re-judges the sharing
+     state at once — the honesty banner must not outlive its cause. */
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      LocationService.refreshShareIssue();
+    }
+  }
+
+  /* v2.0.28: the sharing-issue banner's memory. A dismissal hides
+     the CURRENT issue only; when the issue itself changes (denied →
+     gps_off, or back after a fix), the banner earns a fresh say. */
+  String? _shareIssueSeen;
+  bool _shareBannerHidden = false;
+
+  void _onShareIssueChanged() {
+    final v = LocationService.shareIssue.value;
+    if (v != _shareIssueSeen) {
+      _shareIssueSeen = v;
+      _shareBannerHidden = false;
+    }
+    if (mounted) setState(() {});
+  }
+
+  /* v2.0.28: the banner's one button does the fix that matches the
+     issue: a still-askable denial re-asks in place; a permanent one
+     can only be undone in the app settings; GPS-off goes to the
+     phone's location settings. Afterwards the state is re-judged
+     and a presence kick runs, so a fixed user lands on the map (and
+     the banner clears) without any further taps. */
+  Future<void> _shareBannerAction(String issue) async {
+    try {
+      if (issue == 'denied') {
+        await Permission.location.request();
+      } else if (issue == 'gps_off') {
+        await Geolocator.openLocationSettings();
+      } else {
+        await openAppSettings();
+      }
+    } catch (_) {}
+    await LocationService.refreshShareIssue();
+    LocationService.kickPresence();
   }
 
   /* v2.0.25: my mode changed (in the Profile tab) — presence and
@@ -9127,7 +9471,12 @@ class _MapTabState extends State<MapTab> {
     // 168 px (was 112) with all radii scaled ×1.5; iconSize stays
     // 0.55, so on screen ≈92 px (was ≈62). The status ring also gets
     // a thicker stroke so the online green actually reads at a glance.
-    const double size = 168;
+    // v2.0.28: STILL too small (owner: «аватарки больше») — bitmap
+    // re-painted at 252 px (×1.5 again, every radius/glyph/stroke
+    // scaled with it, so the photo source stays sharp) and
+    // _refreshFriends shows it at iconSize 0.6: on screen ≈151 px,
+    // ≈1.64× the v2.0.10 size.
+    const double size = 252;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, size, size));
     final center = const Offset(size / 2, size / 2);
@@ -9158,17 +9507,17 @@ class _MapTabState extends State<MapTab> {
       );
       canvas.save();
       canvas.clipPath(
-        Path()..addOval(Rect.fromCircle(center: center, radius: 72)),
+        Path()..addOval(Rect.fromCircle(center: center, radius: 108)),
       );
       canvas.drawImageRect(
         photo,
         crop.isEmpty ? src : crop,
-        Rect.fromCircle(center: center, radius: 72),
+        Rect.fromCircle(center: center, radius: 108),
         Paint(),
       );
       canvas.restore();
     } else {
-      canvas.drawCircle(center, 72, Paint()..color = kSurface2);
+      canvas.drawCircle(center, 108, Paint()..color = kSurface2);
       // v2.0.12: the ghost-mode and default fallbacks are the TI ghost
       // glyph (vector). A friend's CHOSEN avatar emoji stays text —
       // that is their identity data, not app iconography.
@@ -9184,7 +9533,7 @@ class _MapTabState extends State<MapTab> {
         TIPaint.paint(
           canvas,
           chosenGlyph,
-          Rect.fromCenter(center: center, width: 96, height: 96),
+          Rect.fromCenter(center: center, width: 144, height: 144),
           T.iconGray,
           strokeScale: 1.1,
         );
@@ -9192,7 +9541,7 @@ class _MapTabState extends State<MapTab> {
         TIPaint.paint(
           canvas,
           TIGlyph.ghost,
-          Rect.fromCenter(center: center, width: 96, height: 96),
+          Rect.fromCenter(center: center, width: 144, height: 144),
           T.iconGray,
           strokeScale: 1.1,
         );
@@ -9200,7 +9549,7 @@ class _MapTabState extends State<MapTab> {
         final tp = TextPainter(
           text: TextSpan(
             text: chosen,
-            style: const TextStyle(fontSize: 75),
+            style: const TextStyle(fontSize: 112),
           ),
           textDirection: TextDirection.ltr,
         )..layout();
@@ -9212,11 +9561,11 @@ class _MapTabState extends State<MapTab> {
     // uses — muted gray otherwise. Ring only; the avatar is untouched.
     canvas.drawCircle(
       center,
-      75,
+      112.5,
       Paint()
         ..color = f.online ? kGreen : kMuted
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 8,
+        ..strokeWidth = 12,
     );
     final pic = recorder.endRecording();
     final img = await pic.toImage(size.toInt(), size.toInt());
@@ -9293,7 +9642,9 @@ class _MapTabState extends State<MapTab> {
           SymbolOptions(
             geometry: LatLng(friend.lat!, friend.lng!),
             iconImage: 'friend-$id',
-            iconSize: 0.55,
+            // v2.0.28: 252 px bitmap at 0.6 ≈ 151 px on screen
+            // (was 168 px at 0.55 ≈ 92 px) — «аватарки больше».
+            iconSize: 0.6,
             iconOpacity: 0, // faded in below — no popping
           ),
         );
@@ -9377,7 +9728,7 @@ class _MapTabState extends State<MapTab> {
           SymbolOptions(
             geometry: pos,
             iconImage: imgName,
-            iconSize: 0.75, // 176 px bitmap → ≈132 px on screen
+            iconSize: 0.8, // v2.0.28: 264 px bitmap → ≈211 px on screen
           ),
         );
       } else {
@@ -9493,12 +9844,15 @@ class _MapTabState extends State<MapTab> {
     final cacheKey = ghost ? 'me-marker-bitmap-ghost' : 'me-marker-bitmap';
     final cached = _markerCache[cacheKey];
     if (cached != null) return cached;
-    const double size = 176;
+    // v2.0.28: scaled with the friend markers («аватарки больше») —
+    // bitmap 264 px (was 176), every radius/glyph ×1.5; shown at
+    // iconSize 0.8 in _updateMeMarker → ≈211 px on screen (was ≈132).
+    const double size = 264;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, size, size));
     final center = const Offset(size / 2, size / 2);
-    canvas.drawCircle(center, 86, Paint()..color = T.fire);
-    canvas.drawCircle(center, 77, Paint()..color = Colors.white);
+    canvas.drawCircle(center, 129, Paint()..color = T.fire);
+    canvas.drawCircle(center, 115.5, Paint()..color = Colors.white);
     final photo = ghost ? null : await _loadMePhoto();
     if (photo != null) {
       final side = math.min(photo.width, photo.height).toDouble();
@@ -9510,17 +9864,17 @@ class _MapTabState extends State<MapTab> {
       );
       canvas.save();
       canvas.clipPath(
-        Path()..addOval(Rect.fromCircle(center: center, radius: 68)),
+        Path()..addOval(Rect.fromCircle(center: center, radius: 102)),
       );
       canvas.drawImageRect(
         photo,
         crop,
-        Rect.fromCircle(center: center, radius: 68),
+        Rect.fromCircle(center: center, radius: 102),
         Paint(),
       );
       canvas.restore();
     } else {
-      canvas.drawCircle(center, 68, Paint()..color = kSurface2);
+      canvas.drawCircle(center, 102, Paint()..color = kSurface2);
       // v2.0.12: TI ghost glyph fallback (vector, no emoji).
       // v2.0.16: if the user picked a glyph avatar ('ti:<name>'),
       // paint THAT glyph; a legacy emoji keeps the previous
@@ -9530,7 +9884,7 @@ class _MapTabState extends State<MapTab> {
       TIPaint.paint(
         canvas,
         myGlyph ?? TIGlyph.ghost,
-        Rect.fromCenter(center: center, width: 92, height: 92),
+        Rect.fromCenter(center: center, width: 138, height: 138),
         T.iconGray,
         strokeScale: 1.1,
       );
@@ -9676,6 +10030,79 @@ class _MapTabState extends State<MapTab> {
      used by the Friends tab. */
   void _showFriend(Friend f) => showFriendSheet(context, f);
 
+  /* v2.0.28: the honesty banner (owner: «все друг друга видят»).
+     A signed-in visible/ghost user whose phone can't share a
+     position was previously invisible in total silence — this says
+     so, on the map itself, with the one tap that fixes it. It
+     renders only while LocationService.shareIssue names a cause and
+     the user hasn't dismissed THAT cause; a successful presence
+     write clears the state and the banner is gone. Inset 56 dp
+     sideways so the invisible side-zoom strips keep their edges. */
+  Widget _shareBanner() {
+    final issue = LocationService.shareIssue.value;
+    if (issue == null || _shareBannerHidden) {
+      return const SizedBox.shrink();
+    }
+    // Guests and «Невидимка» never see it — refreshShareIssue keeps
+    // the state null for them; this is the render-side lock.
+    if (myUidOrNull == null || myModeNotifier.value == 'offline') {
+      return const SizedBox.shrink();
+    }
+    return Positioned(
+      top: 58,
+      left: 56,
+      right: 56,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(T.s12, T.s8, T.s8, T.s8),
+        decoration: BoxDecoration(
+          color: T.surface.withOpacity(0.94),
+          borderRadius: BorderRadius.circular(T.rCard),
+          border: Border.all(color: T.fire.withOpacity(0.55)),
+          boxShadow: T.cardDepth,
+        ),
+        child: Row(
+          children: [
+            const TiradIcon(TIGlyph.mapPin, size: 18, color: T.fire),
+            const SizedBox(width: T.s8),
+            Expanded(
+              child: Text(
+                tr(issue == 'gps_off'
+                    ? 'share_banner_gps'
+                    : 'share_banner_perm'),
+                style: T.body(12.5, w: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(width: T.s8),
+            GestureDetector(
+              onTap: () => _shareBannerAction(issue),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: T.fire.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(T.rPill),
+                  border: Border.all(color: T.fire.withOpacity(0.6)),
+                ),
+                child: Text(
+                  tr(issue == 'denied' ? 'share_banner_allow' : 'settings'),
+                  style: T.body(12, color: T.salmon, w: FontWeight.w700),
+                ),
+              ),
+            ),
+            const SizedBox(width: T.s4),
+            GestureDetector(
+              onTap: () => setState(() => _shareBannerHidden = true),
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: TiradIcon(TIGlyph.x, size: 14, color: T.muted),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final city = widget.city;
@@ -9760,6 +10187,9 @@ class _MapTabState extends State<MapTab> {
         // catch touches; the map centre stays fully pan/pinch-able.
         _zoomPanel(leftSide: true),
         _zoomPanel(leftSide: false),
+        // v2.0.28: the sharing-issue honesty banner (inset past the
+        // zoom strips, under the route chip's line).
+        _shareBanner(),
       ],
     );
   }
@@ -9821,6 +10251,15 @@ class _PlacesTabState extends State<PlacesTab> {
     'rating': 'sort_rating',
     'price': 'sort_price',
     'name': 'sort_name',
+  };
+
+  /* v2.0.28: a TI glyph per sort mode, for the restyled menu. */
+  static const _sortIcons = {
+    'vibe': TIGlyph.flame,
+    'dist': TIGlyph.mapPin,
+    'rating': TIGlyph.star,
+    'price': TIGlyph.bag,
+    'name': TIGlyph.pencil,
   };
 
   @override
@@ -10099,28 +10538,93 @@ class _PlacesTabState extends State<PlacesTab> {
                             T.s16, T.s4, T.s16, T.s4),
                         child: Row(
                           children: [
+                            /* v2.0.28 (item I): the sort control,
+                               restyled to the brand — the chip now
+                               matches its PillButton neighbours
+                               (same 14/9 rhythm, near-black surface,
+                               red-tinted border) and carries TI
+                               vector marks (SortMark + a rotated
+                               chevron) instead of the stock ↕ / ▾
+                               text glyphs; the menu is a TiradA
+                               panel — #0E0E12 surface, 18-radius,
+                               red-tinted border, a TI glyph per
+                               mode, the active sort in salmon with
+                               an ember check. Behaviour unchanged:
+                               same five modes, same _sort state. */
                             PopupMenuButton<String>(
-                              color: T.surfaceHi,
+                              color: const Color(0xFF0E0E12),
+                              elevation: 10,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(18),
+                                side: BorderSide(
+                                    color: T.fire.withOpacity(0.25)),
+                              ),
                               initialValue: _sort,
                               onSelected: (v) => setState(() => _sort = v),
                               itemBuilder: (_) => [
                                 for (final e in _sortLabels.entries)
                                   PopupMenuItem(
                                     value: e.key,
-                                    child: Text(tr(e.value), style: T.body(13.5)),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        TiradIcon(
+                                          _sortIcons[e.key] ??
+                                              TIGlyph.flame,
+                                          size: 16,
+                                          color: e.key == _sort
+                                              ? T.ember
+                                              : T.iconGray,
+                                          filled: e.key == _sort,
+                                        ),
+                                        const SizedBox(width: T.s8),
+                                        Text(
+                                          tr(e.value),
+                                          style: e.key == _sort
+                                              ? T.body(13.5,
+                                                  color: T.salmon,
+                                                  w: FontWeight.w800)
+                                              : T.body(13.5,
+                                                  w: FontWeight.w600),
+                                        ),
+                                        if (e.key == _sort) ...[
+                                          const SizedBox(width: T.s12),
+                                          const TiradIcon(TIGlyph.check,
+                                              size: 14, color: T.ember),
+                                        ],
+                                      ],
+                                    ),
                                   ),
                               ],
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 8),
+                                    horizontal: 14, vertical: 9),
                                 decoration: BoxDecoration(
                                   color: T.surface,
-                                  borderRadius: BorderRadius.circular(T.rPill),
-                                  border: Border.all(color: T.stroke),
+                                  borderRadius:
+                                      BorderRadius.circular(T.rPill),
+                                  border: Border.all(
+                                      color: T.fire.withOpacity(0.30)),
                                 ),
-                                child: Text(
-                                  '↕ ${tr(_sortLabels[_sort] ?? 'sort_vibe')} ▾',
-                                  style: T.body(12.5, w: FontWeight.w600),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const SortMark(),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      tr(_sortLabels[_sort] ?? 'sort_vibe'),
+                                      style: T.body(12.5,
+                                          w: FontWeight.w700),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Transform.rotate(
+                                      angle: -math.pi / 2,
+                                      child: const TiradIcon(
+                                          TIGlyph.chevronBack,
+                                          size: 10,
+                                          color: T.iconGray),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
@@ -10442,52 +10946,19 @@ class _RouteTabState extends State<RouteTab> {
     _requestDeleteRoute();
   }
 
-  /* «Удалить маршрут» (v2.0.12): stops tracking the active route.
-     Nothing completed yet → wipe immediately, no dialog. Some stops
-     already done → one confirm sheet in the app's style first. XP
-     already credited (tasks/routes stats) is NEVER revoked — only
-     the tracking state (stops/done/counted + persisted copy) goes. */
-  Future<void> _requestDeleteRoute() async {
+  /* «Отменить маршрут» (v2.0.12 as «Удалить маршрут»; v2.0.28: ONE
+     TAP, no confirm — the owner: «нельзя отменить маршрут»). The
+     old flow put a confirm sheet in front of any route with
+     progress and then _deleteActiveRoute silently built a FRESH
+     evening route in its place, so a cancelled route looked just
+     like a live one and the cancel read as broken. Now the tap
+     itself wipes the tracking state (see _deleteActiveRoute) and
+     the tab rests with NO active route. XP already credited
+     (tasks/routes stats) is NEVER revoked. */
+  void _requestDeleteRoute() {
     if (_stops.isEmpty) {
       if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
       return;
-    }
-    if (_done.isNotEmpty) {
-      final ok = await showModalBottomSheet<bool>(
-        context: context,
-        backgroundColor: Colors.transparent,
-        builder: (_) => SheetShell(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(T.s20, T.s4, T.s20, T.s20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(tr('delete_route_title'), style: T.head(17)),
-                const SizedBox(height: T.s8),
-                Text(
-                  tr('delete_route_progress'),
-                  style: T.body(13.5, color: T.muted),
-                ),
-                const SizedBox(height: T.s16),
-                FireButton(
-                  text: tr('btn_delete'),
-                  icon: TIGlyph.trash,
-                  small: true,
-                  onPressed: () => Navigator.of(context).pop(true),
-                ),
-                const SizedBox(height: T.s8),
-                GhostButton(
-                  text: tr('btn_cancel'),
-                  small: true,
-                  onPressed: () => Navigator.of(context).pop(false),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-      if (ok != true || !mounted) return;
     }
     _deleteActiveRoute();
   }
@@ -10496,15 +10967,29 @@ class _RouteTabState extends State<RouteTab> {
     if (MapRouteBus.line.value?.kind == 'route') MapRouteBus.clear();
     _done.clear();
     _counted = false;
+    // The route's task ticks (the check-in ticks of THIS route) die
+    // with it — in memory and in prefs — so nothing about the
+    // cancelled route can resurrect inside a later one.
+    _routeTasksDone.clear();
+    final deadKey = _routeKey;
+    if (deadKey.isNotEmpty) {
+      () async {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove('route_tasks_done_$deadKey');
+        } catch (_) {}
+      }();
+    }
     _stops = [];
+    _start = null;
+    _startIsCenter = false;
     _road = null;
     _roadSig = '';
-    // The tab's resting state is a fresh, untouched evening route for
-    // the selected city (exactly what first open builds): it replaces
-    // the persisted active_route_v1, so the deleted route's stops,
-    // done set and counted flag are gone everywhere. The builder and
-    // the ready routes below are visible again.
-    _buildEvening();
+    _routeTitleMap = null;
+    // Persist the CLEARED state — no replacement route is built.
+    // (The next launch's _load treats empty stops as a first open
+    // and builds the evening route then, exactly as designed.)
+    _persistActive();
     if (mounted) {
       setState(() {});
       snack(context, tr('route_deleted'));
@@ -11231,7 +11716,7 @@ class _RouteTabState extends State<RouteTab> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              TiradIcon(g, size: 13, color: T.ember),
+              TiradIcon(g, size: 13, color: T.iconGray),
               const SizedBox(width: 6),
               Flexible(
                 child: Text(
@@ -11244,12 +11729,22 @@ class _RouteTabState extends State<RouteTab> {
             ],
           ),
         );
+    /* v2.0.28 (owner: the strip «имеет no style»): restyled into the
+       app's panel language — the Places/Общее card surface (T.surface
+       near-black) instead of the flat lighter T.surfaceHi, a subtle
+       RED-TINTED border instead of the neutral stroke, the stat
+       glyphs in the TI soft gray (#9A9AA0, T.iconGray) instead of
+       ember orange, the roomier 18 dp card radius and the s12
+       padding rhythm. The orange-red gradient stays reserved for
+       the primary action (the «Показать на карте» button below) —
+       nothing in the strip competes with it. Purely visual: same
+       cells, same texts, same flexes. */
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: T.s8, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: T.s12, vertical: T.s12),
       decoration: BoxDecoration(
-        color: T.surfaceHi,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: T.stroke),
+        color: T.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: T.fire.withOpacity(0.18)),
       ),
       child: Row(
         children: [
@@ -11258,7 +11753,7 @@ class _RouteTabState extends State<RouteTab> {
             _startIsCenter ? tr('from_center') : tr('from_you'),
             flex: 2,
           ),
-          Container(width: 1, height: 18, color: T.stroke),
+          Container(width: 1, height: 20, color: T.fire.withOpacity(0.14)),
           cell(
             TIGlyph.routePath,
             trf('route_summary', {
@@ -11268,7 +11763,7 @@ class _RouteTabState extends State<RouteTab> {
                 (_counted ? tr('route_summary_done') : ''),
             flex: 4,
           ),
-          Container(width: 1, height: 18, color: T.stroke),
+          Container(width: 1, height: 20, color: T.fire.withOpacity(0.14)),
           cell(
             TIGlyph.clock,
             trf('mins_short', {
@@ -12074,10 +12569,12 @@ class _RouteTabState extends State<RouteTab> {
           ],
           // v2.0.12: stop tracking this route — danger action under
           // the route card, in the app's button language.
+          // v2.0.28: labelled as what it is — «Отменить маршрут»,
+          // one tap, no confirm (see _requestDeleteRoute).
           if (_stops.isNotEmpty) ...[
             const SizedBox(height: T.s24),
             DangerButton(
-              text: tr('delete_route'),
+              text: tr('cancel_route'),
               small: true,
               onPressed: _requestDeleteRoute,
             ),
@@ -13469,8 +13966,16 @@ class _BadgesPageState extends State<BadgesPage> {
 class Ping {
   final String id;
   final Friend from;
-  final String kind; // 'hi' | 'sticker'
+  final String kind; // 'hi' | 'sticker' | 'invite'
   final String? sticker;
+  /* v2.0.28: the invite payload (kind == 'invite'): the place the
+     sender invites to, as stored on the pings row. [place] is the
+     bundled Place the loader resolved from [placeId]; null when it
+     isn't in the bundle — the card then renders [placeName] as
+     plain, non-tappable text. */
+  final String? placeId;
+  final String? placeName;
+  final Place? place;
   final DateTime createdAt;
   final bool seen;
   const Ping({
@@ -13478,6 +13983,9 @@ class Ping {
     required this.from,
     required this.kind,
     this.sticker,
+    this.placeId,
+    this.placeName,
+    this.place,
     required this.createdAt,
     this.seen = false,
   });
@@ -13487,6 +13995,9 @@ class Ping {
         from: from,
         kind: kind,
         sticker: sticker,
+        placeId: placeId,
+        placeName: placeName,
+        place: place,
         createdAt: createdAt,
         seen: seen ?? this.seen,
       );
@@ -13776,6 +14287,10 @@ class PingCard extends StatelessWidget {
   final VoidCallback? onSave;
   final VoidCallback? onDelete;
   final VoidCallback onOpenSender;
+  /* v2.0.28: an invite ping's place tap — the host (HomePage via
+     «Общее» / the entry sheet) opens the place's card with its real
+     favs/check-in wiring. Null → a minimal sheet fallback. */
+  final void Function(Place)? onOpenPlace;
   final double stickerSize;
   const PingCard({
     super.key,
@@ -13784,8 +14299,62 @@ class PingCard extends StatelessWidget {
     this.saved = false,
     this.onSave,
     this.onDelete,
+    this.onOpenPlace,
     this.stickerSize = 96,
   });
+
+  /* v2.0.28: an invite ping's body — «приглашает тебя в «…»» with
+     the place name accented; the whole line opens the place's card
+     when the loader resolved the bundled Place. Unresolved → the
+     same text, plain and non-tappable. The split on '{place}'
+     keeps every language's word order intact. */
+  Widget _inviteBody(BuildContext context) {
+    final p = ping;
+    final name = p.place?.name ?? p.placeName ?? '';
+    final raw = tr('ping_invite_text');
+    if (!raw.contains('{place}')) {
+      return Text(
+        trf('ping_invite_text', {'place': name}),
+        style: T.body(15),
+      );
+    }
+    final parts = raw.split('{place}');
+    final text = Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: parts.first),
+          TextSpan(
+            text: name,
+            style: T.body(15, color: T.ember, w: FontWeight.w800),
+          ),
+          if (parts.length > 1)
+            TextSpan(text: parts.sublist(1).join('{place}')),
+        ],
+      ),
+      style: T.body(15),
+    );
+    final place = p.place;
+    if (place == null) return text;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        final cb = onOpenPlace;
+        if (cb != null) {
+          cb(place);
+        } else {
+          showPlaceSheet(
+            context,
+            place,
+            favs: const {},
+            onToggleFav: (_) {},
+            cityPlaces: [place],
+            city: null,
+          );
+        }
+      },
+      child: text,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -13849,6 +14418,8 @@ class PingCard extends StatelessWidget {
           const SizedBox(height: T.s8),
           if (p.kind == 'hi')
             Text(tr('ping_hi_text'), style: T.body(16))
+          else if (p.kind == 'invite')
+            _inviteBody(context)
           else if (p.sticker != null)
             stickerImage(p.sticker!, size: stickerSize),
           if (canSave) ...[
@@ -13908,6 +14479,383 @@ Future<Uint8List?> pickAndProcessSticker() async {
 /* The friend bottom sheet — opened from a map marker tap and from
    the Friends tab. v2.0.17 adds the actions area: «Привет» and
    «Стикер» throw a ping at the friend (pings table). */
+/* v2.0.28: the bundled places, parsed once and cached — the same
+   assets/places.json + Place.fromJson HomePage loads at startup.
+   The invite place picker opens from a person's card, where no
+   HomePage list is in scope, so it reads the bundle through here. */
+List<Place>? _bundledPlacesCache;
+
+Future<List<Place>> loadBundledPlaces() async {
+  final cached = _bundledPlacesCache;
+  if (cached != null) return cached;
+  try {
+    final raw = await rootBundle.loadString('assets/places.json');
+    final list = (jsonDecode(raw) as List)
+        .map((e) => Place.fromJson(e as Map<String, dynamic>))
+        .toList();
+    _bundledPlacesCache = list;
+    return list;
+  } catch (e) {
+    debugPrint('TiradA bundled places load failed: $e');
+    return const [];
+  }
+}
+
+/* v2.0.28: send an invite ping — a pings row {kind: 'invite',
+   place_id, place_name} plus the same EventPush.ping() the hi /
+   sticker sends fire, so send-fcm composes the recipient's push
+   from the row. False on any failure (the caller surfaces the
+   standard error snack and keeps its picker open). */
+Future<bool> sendInvitePing({
+  required String toId,
+  required Place place,
+}) async {
+  final uid = myUidOrNull;
+  if (uid == null) return false;
+  try {
+    final row = await supa.from('pings').insert({
+      'from_id': uid,
+      'to_id': toId,
+      'kind': 'invite',
+      'place_id': place.id,
+      'place_name': place.name,
+    }).select('id').single();
+    final pingId = (row as Map)['id']?.toString();
+    if (pingId != null) EventPush.ping(pingId);
+    return true;
+  } catch (e) {
+    debugPrint('TiradA invite insert failed: $e');
+    return false;
+  }
+}
+
+/* v2.0.28: «Пригласить» on a place card — pick WHO to invite here.
+   The list is the same everyone-list «Общее» shows (every profile
+   except me, same query/sort as _loadFriends), ghost-masked by
+   construction via friendFromProfile. A tap sends the invite for
+   THIS sheet's place at once. */
+class InvitePersonSheet extends StatefulWidget {
+  final Place place;
+  const InvitePersonSheet({super.key, required this.place});
+
+  @override
+  State<InvitePersonSheet> createState() => _InvitePersonSheetState();
+}
+
+class _InvitePersonSheetState extends State<InvitePersonSheet> {
+  List<Friend> _people = [];
+  bool _loading = true;
+  bool _sending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final uid = myUidOrNull;
+    if (uid == null) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+    try {
+      final profs = await supa
+          .from('profiles')
+          .select('id, name, avatar, avatar_url, online, mode, city')
+          .neq('id', uid)
+          .limit(500);
+      if (!mounted) return;
+      final list = <Friend>[
+        for (final p in profs as List)
+          friendFromProfile(Map<String, dynamic>.from(p as Map)),
+      ]..sort((a, b) {
+          if (a.online != b.online) return a.online ? -1 : 1;
+          return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        });
+      setState(() {
+        _people = list;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('TiradA invite people load failed: $e');
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _pick(Friend f) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    final ok = await sendInvitePing(toId: f.id, place: widget.place);
+    if (!mounted) return;
+    if (!ok) {
+      setState(() => _sending = false);
+      snack(context, tr('friends_error'));
+      return;
+    }
+    // The standard sent-snack, shown on the root context so it
+    // survives this sheet closing (the _sendHi pattern).
+    final nav = Navigator.of(context);
+    nav.pop();
+    snack(nav.context, tr('invite_sent'));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.72,
+      ),
+      child: SheetShell(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding:
+                  const EdgeInsets.fromLTRB(T.s20, T.s4, T.s20, T.s12),
+              child: Text(tr('invite_pick_person'), style: T.head(17)),
+            ),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(T.s24),
+                child: Center(
+                  child: CircularProgressIndicator(color: kRed),
+                ),
+              )
+            else if (_people.isEmpty)
+              Padding(
+                padding:
+                    const EdgeInsets.fromLTRB(T.s20, 0, T.s20, T.s20),
+                child: Text(
+                  tr('invite_nobody'),
+                  style: T.body(13.5, color: T.muted),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _people.length,
+                  itemBuilder: (_, i) {
+                    final f = _people[i];
+                    return Pressable(
+                      onTap: _sending ? null : () => _pick(f),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: T.s20, vertical: T.s8),
+                        child: Row(
+                          children: [
+                            friendAvatar(f, radius: 20),
+                            const SizedBox(width: T.s12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    f.mode == 'ghost'
+                                        ? tr('ghost')
+                                        : f.name,
+                                    style:
+                                        T.body(14.5, w: FontWeight.w700),
+                                  ),
+                                  Text(
+                                    f.online
+                                        ? tr('online_now')
+                                        : tr('seen_recently'),
+                                    style: T.body(12,
+                                        color: f.online
+                                            ? T.online
+                                            : T.faint),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const TiradIcon(TIGlyph.paperPlane,
+                                size: 17, color: T.iconGray),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/* v2.0.28: «Пригласить куда-то» on a person's card — pick WHERE to
+   invite this person. Searchable over the bundled places, nearest
+   first when a live position is known (vibe order otherwise).
+   Pops with true after a successful send; the host FriendSheet
+   then closes too, mirroring its _sendHi ending. */
+class InvitePlaceSheet extends StatefulWidget {
+  final Friend friend;
+  const InvitePlaceSheet({super.key, required this.friend});
+
+  @override
+  State<InvitePlaceSheet> createState() => _InvitePlaceSheetState();
+}
+
+class _InvitePlaceSheetState extends State<InvitePlaceSheet> {
+  List<Place> _all = [];
+  bool _loading = true;
+  bool _sending = false;
+  String _q = '';
+  final TextEditingController _searchCtl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final list = await loadBundledPlaces();
+    if (!mounted) return;
+    final origin = myLocationNotifier.value;
+    final sorted = [...list];
+    if (origin != null) {
+      sorted.sort((a, b) => haversineKm(
+              origin.latitude, origin.longitude, a.lat, a.lng)
+          .compareTo(
+              haversineKm(origin.latitude, origin.longitude, b.lat, b.lng)));
+    } else {
+      sorted.sort((a, b) => vibeOf(b).compareTo(vibeOf(a)));
+    }
+    setState(() {
+      _all = sorted;
+      _loading = false;
+    });
+  }
+
+  List<Place> get _filtered {
+    final q = _q.trim().toLowerCase();
+    final base = q.isEmpty
+        ? _all
+        : _all.where((p) => p.name.toLowerCase().contains(q));
+    return base.take(60).toList();
+  }
+
+  Future<void> _pick(Place p) async {
+    if (_sending) return;
+    setState(() => _sending = true);
+    final ok = await sendInvitePing(toId: widget.friend.id, place: p);
+    if (!mounted) return;
+    if (!ok) {
+      setState(() => _sending = false);
+      snack(context, tr('friends_error'));
+      return;
+    }
+    final nav = Navigator.of(context);
+    nav.pop(true);
+    snack(nav.context, tr('invite_sent'));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final list = _filtered;
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.78,
+      ),
+      child: SheetShell(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding:
+                  const EdgeInsets.fromLTRB(T.s20, T.s4, T.s20, T.s8),
+              child: Text(tr('invite_pick_place'), style: T.head(17)),
+            ),
+            Padding(
+              padding:
+                  const EdgeInsets.fromLTRB(T.s20, 0, T.s20, T.s12),
+              child: TextField(
+                controller: _searchCtl,
+                onChanged: (v) => setState(() => _q = v),
+                decoration: InputDecoration(hintText: tr('search_hint')),
+              ),
+            ),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(T.s24),
+                child: Center(
+                  child: CircularProgressIndicator(color: kRed),
+                ),
+              )
+            else if (list.isEmpty)
+              Padding(
+                padding:
+                    const EdgeInsets.fromLTRB(T.s20, 0, T.s20, T.s20),
+                child: Text(
+                  tr('invite_no_places'),
+                  style: T.body(13.5, color: T.muted),
+                ),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: list.length,
+                  itemBuilder: (_, i) {
+                    final p = list[i];
+                    return Pressable(
+                      onTap: _sending ? null : () => _pick(p),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: T.s20, vertical: T.s8),
+                        child: Row(
+                          children: [
+                            TiradIcon(typeGlyph(p.type),
+                                size: 17, color: T.iconGray),
+                            const SizedBox(width: T.s12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    p.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style:
+                                        T.body(14.5, w: FontWeight.w700),
+                                  ),
+                                  Text(
+                                    tr(kTypeNames[p.type] ?? 'type_other'),
+                                    style: T.body(12, color: T.faint),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const TiradIcon(TIGlyph.paperPlane,
+                                size: 17, color: T.iconGray),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 void showFriendSheet(BuildContext context, Friend f) {
   showModalBottomSheet<void>(
     context: context,
@@ -13990,6 +14938,26 @@ class _FriendSheetState extends State<FriendSheet> {
     // v2.0.26: real push to the recipient (fire-and-forget).
     if (pingId != null) EventPush.ping(pingId);
     _stickerSent = true;
+  }
+
+  /* v2.0.28: «Пригласить куда-то» — pick a place and send this
+     person an invite ping to it (InvitePlaceSheet/sendInvitePing).
+     On success the picker pops with true and this sheet closes
+     too, exactly like _sendHi's ending. */
+  Future<void> _openInvitePlace() async {
+    if (myUidOrNull == null) {
+      _promptLogin();
+      return;
+    }
+    final sent = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => InvitePlaceSheet(friend: widget.friend),
+    );
+    if (sent == true && mounted) {
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _openStickers() async {
@@ -14085,6 +15053,13 @@ class _FriendSheetState extends State<FriendSheet> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: T.s12),
+            GhostButton(
+              text: tr('invite_place_btn'),
+              small: true,
+              icon: TIGlyph.paperPlane,
+              onPressed: _openInvitePlace,
             ),
           ],
         ),
@@ -14373,7 +15348,9 @@ class _StickerPickerSheetState extends State<StickerPickerSheet> {
    loads its own saved-paths set and runs the same insert. */
 class NewPingsSheet extends StatefulWidget {
   final List<Ping> pings;
-  const NewPingsSheet({super.key, required this.pings});
+  /* v2.0.28: an invite ping's place tap (see PingCard.onOpenPlace). */
+  final void Function(Place)? onOpenPlace;
+  const NewPingsSheet({super.key, required this.pings, this.onOpenPlace});
 
   @override
   State<NewPingsSheet> createState() => _NewPingsSheetState();
@@ -14468,6 +15445,7 @@ class _NewPingsSheetState extends State<NewPingsSheet> {
                           _savedPaths.contains(p.sticker),
                       onSave: () => _saveSticker(p),
                       onOpenSender: () => _openSender(p),
+                      onOpenPlace: widget.onOpenPlace,
                     ),
                 ],
               ),
@@ -14500,12 +15478,15 @@ class FriendsTab extends StatefulWidget {
   final List<Ping> pings;
   final void Function(Friend) onOpenFriend;
   final VoidCallback onPingsChanged;
+  /* v2.0.28: an invite ping's place tap (see PingCard.onOpenPlace). */
+  final void Function(Place)? onOpenPlace;
   const FriendsTab({
     super.key,
     required this.friends,
     required this.pings,
     required this.onOpenFriend,
     required this.onPingsChanged,
+    this.onOpenPlace,
   });
 
   @override
@@ -14643,6 +15624,7 @@ class _FriendsTabState extends State<FriendsTab> {
       onSave: () => _savePingSticker(p),
       onDelete: () => _deletePing(p),
       onOpenSender: () => widget.onOpenFriend(p.from),
+      onOpenPlace: widget.onOpenPlace,
     );
   }
 
@@ -15455,7 +16437,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.27',
+                  'TiradA anon · 2.0.28',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -16159,7 +17141,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.27',
+            'TiradA anon · 2.0.28',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
