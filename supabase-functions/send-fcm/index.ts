@@ -257,7 +257,7 @@ Deno.serve(async (req) => {
   if (event === "ping") {
     const pingId = String(payload?.ping_id ?? "");
     if (!UUID_RE.test(pingId)) return Response.json({ error: "bad ping_id" }, { status: 400 });
-    const rows = await rest(`pings?select=id,from_id,to_id,kind,created_at&id=eq.${pingId}&limit=1`);
+    const rows = await rest(`pings?select=id,from_id,to_id,kind,place_name,created_at&id=eq.${pingId}&limit=1`);
     const ping = Array.isArray(rows) ? rows[0] : null;
     if (!ping) return Response.json({ sent: 0, note: "ping not found" });
     if (ping.from_id !== caller) return new Response("forbidden", { status: 403 });
@@ -267,7 +267,12 @@ Deno.serve(async (req) => {
     const sender = await senderProfile(caller);
     if (!sender) return Response.json({ sent: 0, note: "no sender profile" });
     const title = displayName(sender);
-    const body = ping.kind === "sticker" ? "Прислал тебе стикер" : "Прислал тебе привет";
+    // v4 (2.0.28): kind 'invite' carries a place — «Приглашает тебя в …».
+    const body = ping.kind === "sticker"
+      ? "Прислал тебе стикер"
+      : ping.kind === "invite"
+        ? `Приглашает тебя в «${String(ping.place_name ?? "").slice(0, 80)}»`
+        : "Прислал тебе привет";
     const targets = await targetsForUsers([String(ping.to_id)]);
     return deliver(sa, targets, title, body, "ping",
       { ping_id: pingId, from_id: caller });
@@ -312,10 +317,13 @@ Deno.serve(async (req) => {
       }
     }
     const name = displayName(sender);
-    const body = `${name} зашёл в «${placeName}»`;
+    // v5 (2.0.28): the PERSON is the headline, the place is the text —
+    // owner: a check-in push titled just «Макдональдс» didn't tell the
+    // friend that HE is there. Body wording is his: «находится в …».
+    const body = `Находится в «${placeName}»`;
     const recipients = await allOtherUserIds(caller);
     const targets = await targetsForUsers(recipients);
-    return deliver(sa, targets, placeName, body, "checkin",
+    return deliver(sa, targets, name, body, "checkin",
       { place_id: placeId, from_id: caller });
   }
 
