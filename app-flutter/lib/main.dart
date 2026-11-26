@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.23.
+// TiradA anon — native app (Flutter), v2.0.24.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -722,32 +722,500 @@ String priceDetailText(Place p) {
 String ghostLabelFor(String uid) =>
     trf('ghost_label', {'n': 1000 + stableHash(uid) % 9000});
 
-/* «Сколько людей отдыхает сейчас» — a deterministic estimate from the
-   place type, the hour and its vibe, seeded by the place id so it does
-   not flicker between rebuilds within the same hour. */
-int crowdOf(Place p) {
-  final h = DateTime.now().hour;
-  final seed = stableHash('${p.id}|crowd|$h') % 13;
-  var n = (vibeOf(p) - 18) * 0.85 + seed;
-  switch (p.type) {
-    case 'club':
-    case 'bar':
-      n *= 1.7;
-    case 'restaurant':
-    case 'cafe':
-      n *= 1.25;
-    case 'market':
-      n *= 1.1;
-    case 'park':
-    case 'beach':
-      n *= 0.8;
-    case 'view':
-    case 'culture':
-      n *= 0.55;
-  }
-  if (h >= 2 && h < 8) n *= 0.15; // deep night: almost everyone is home
-  return n.round().clamp(0, 260);
+/* =====================================================================
+   v2.0.24 — realistic busyness («движ» % and «people here now»).
+
+   The old model was 30 + rating/hash noise with a flat evening boost:
+   every place sat at 30–60% around the clock, a cemetery-grade quiet
+   park could read 55% at 3 AM, and the headcount re-rolled its seed
+   every hour. The owner: «процент жарко вообще не выглядит
+   реалистичным».
+
+   The new model is ONE deterministic function of (place, time):
+   - each category owns an hour-by-hour occupancy curve (fraction of
+     a typical place's busy level) in three Israel-aware day tables:
+     workday (Sun–Thu), Friday, Saturday (Shabbat);
+   - a stable per-place popularity factor (seeded from the place id,
+     tilted by real rating/reviews when the data has them) scales the
+     curve inside the category's plausible band, and a hard per-
+     category cap clamps it — only nightlife may pass ~90%, and only
+     at its peak hours;
+   - the curve is interpolated between hourly anchors and carries a
+     slow, small deterministic wobble, so the number DRIFTS with time
+     (a few points over 10–15 min on a slope) but never jumps or
+     flickers between two views a minute apart;
+   - the headcount is the same % of a per-place capacity seeded
+     inside a per-category range, so % and people always agree.
+
+   Friday nightlife (owner's correction): bars are packed on Friday
+   EVENING — the Friday table stays quiet by day, climbs from ~19:00
+   to the week's peak at 21:00–24:00 and eases after midnight
+   (Saturday table, hours 0–2). Thursday night is the other big
+   going-out night: a boost on Thu ≥19:00 plus a strong authored
+   tail in the Friday table's hours 0–2. Saturday-night sessions run
+   past midnight into Sunday 00:00–02:00 via satTail.
+   ===================================================================== */
+
+/* One category's day: three 24-anchor tables + plausibility limits. */
+class _BusyProfile {
+  final List<double> work, fri, sat;
+  /* Sunday 00:00–02:00 anchors for nightlife: the Saturday-night
+     session still running past midnight. */
+  final List<double> satTail;
+  final int capPct; // hard ceiling for the % of this category
+  final int peopleLo, peopleHi; // plausible capacity range per place
+  final bool nightlife, h24;
+  const _BusyProfile(
+    this.work,
+    this.fri,
+    this.sat, {
+    this.satTail = const [0.02, 0.01, 0.01],
+    required this.capPct,
+    required this.peopleLo,
+    required this.peopleHi,
+    this.nightlife = false,
+    this.h24 = false,
+  });
 }
+
+/* Copy of [base] with per-hour overrides — builds Friday/Saturday
+   tables out of the workday one where the shape mostly matches. */
+List<double> _ov(List<double> base, Map<int, double> o) {
+  final l = List<double>.of(base);
+  o.forEach((h, v) => l[h] = v);
+  return l;
+}
+
+final _cafeWork = <double>[
+  .01, .01, .01, .01, .01, .02, .08, .38, .68, .82, .72, .58, //
+  .62, .56, .46, .42, .48, .58, .66, .60, .48, .34, .18, .07
+];
+final _bpCafe = _BusyProfile(
+  _cafeWork,
+  _ov(_cafeWork, const {
+    7: .45, 8: .78, 9: .88, 10: .85, 11: .78, 12: .62, 13: .40, 14: .22,
+    15: .12, 16: .08, 17: .06, 18: .06, 19: .07, 20: .10, 21: .14, 22: .17,
+    23: .12
+  }),
+  const [
+    .01, .01, .01, .01, .01, .01, .01, .01, .02, .02, .03, .04, //
+    .04, .04, .03, .03, .04, .08, .22, .45, .62, .58, .42, .25
+  ],
+  capPct: 88,
+  peopleLo: 12,
+  peopleHi: 55,
+);
+
+final _restWork = <double>[
+  .06, .03, .01, .01, .01, .01, .02, .05, .10, .16, .24, .45, //
+  .78, .88, .62, .36, .22, .28, .52, .82, .95, .90, .62, .32
+];
+final _bpRestaurant = _BusyProfile(
+  _restWork,
+  _ov(_restWork, const {
+    11: .50, 12: .85, 13: .90, 14: .60, 15: .30, 16: .15, 17: .10, 18: .10,
+    19: .14, 20: .20, 21: .24, 22: .20, 23: .12
+  }),
+  const [
+    .08, .03, .01, .01, .01, .01, .01, .01, .01, .02, .02, .02, //
+    .02, .02, .02, .02, .02, .05, .15, .45, .82, .95, .85, .55
+  ],
+  capPct: 92,
+  peopleLo: 25,
+  peopleHi: 120,
+);
+
+final _barWork = <double>[
+  .55, .35, .15, .05, .02, .01, .01, .01, .02, .02, .03, .04, //
+  .06, .06, .05, .05, .07, .12, .22, .38, .55, .68, .78, .82
+];
+final _bpBar = _BusyProfile(
+  _barWork,
+  // Friday: dead by day, the week's peak in the EVENING (owner).
+  const [
+    .82, .62, .38, .08, .03, .01, .01, .01, .02, .02, .03, .04, //
+    .05, .05, .04, .03, .04, .08, .18, .38, .62, .85, .95, .97
+  ],
+  // Saturday: hours 0–2 are the Friday evening easing after midnight;
+  // the day is shut, the night surges again.
+  const [
+    .55, .30, .12, .04, .02, .01, .01, .01, .01, .02, .02, .02, //
+    .02, .02, .02, .02, .03, .05, .12, .30, .52, .74, .88, .95
+  ],
+  satTail: const [.88, .62, .32],
+  capPct: 95,
+  peopleLo: 30,
+  peopleHi: 150,
+  nightlife: true,
+);
+
+final _clubWork = <double>[
+  .60, .40, .18, .05, .01, .01, .01, .01, .01, .01, .01, .02, //
+  .02, .02, .02, .02, .02, .03, .04, .05, .08, .14, .30, .58
+];
+final _bpClub = _BusyProfile(
+  _clubWork,
+  const [
+    .85, .65, .40, .10, .03, .01, .01, .01, .01, .01, .01, .01, //
+    .02, .02, .02, .02, .02, .03, .05, .10, .22, .48, .78, .93
+  ],
+  const [
+    .60, .35, .15, .05, .01, .01, .01, .01, .01, .01, .01, .01, //
+    .01, .01, .01, .01, .02, .03, .05, .10, .22, .42, .70, .92
+  ],
+  satTail: const [.95, .78, .48],
+  capPct: 97,
+  peopleLo: 80,
+  peopleHi: 400,
+  nightlife: true,
+);
+
+final _hookahWork = <double>[
+  .45, .25, .10, .03, .01, .01, .01, .02, .03, .04, .05, .06, //
+  .07, .07, .09, .10, .13, .18, .28, .48, .66, .78, .83, .80
+];
+final _bpHookah = _BusyProfile(
+  _hookahWork,
+  _ov(_hookahWork, const {
+    0: .70, 1: .50, 2: .25, 3: .08, 14: .06, 15: .06, 16: .08, 17: .12,
+    18: .20, 19: .35, 20: .58, 21: .82, 22: .90, 23: .92
+  }),
+  const [
+    .50, .28, .10, .03, .01, .01, .01, .01, .02, .02, .03, .03, //
+    .03, .03, .04, .04, .06, .10, .18, .32, .55, .76, .86, .88
+  ],
+  satTail: const [.70, .50, .28],
+  capPct: 85,
+  peopleLo: 20,
+  peopleHi: 80,
+  nightlife: true,
+);
+
+final _parkWork = <double>[
+  .01, .01, .01, .01, .01, .01, .06, .16, .30, .42, .48, .52, //
+  .48, .44, .42, .46, .52, .55, .44, .30, .18, .10, .05, .02
+];
+final _bpPark = _BusyProfile(
+  _parkWork,
+  _ov(_parkWork, const {
+    8: .40, 9: .55, 10: .62, 11: .65, 12: .60, 13: .50, 14: .40, 15: .32,
+    16: .26, 17: .20, 18: .14, 19: .10, 20: .07, 21: .05, 22: .03, 23: .01
+  }),
+  _ov(_parkWork, const {
+    7: .25, 8: .45, 9: .62, 10: .72, 11: .75, 12: .72, 13: .65, 14: .55,
+    15: .50, 16: .50, 17: .48, 18: .38, 19: .26, 20: .16, 21: .09, 22: .04,
+    23: .02
+  }),
+  capPct: 75,
+  peopleLo: 80,
+  peopleHi: 500,
+);
+
+final _beachWork = <double>[
+  .01, .01, .01, .01, .01, .01, .04, .10, .22, .38, .55, .68, //
+  .75, .78, .75, .70, .62, .50, .38, .24, .12, .06, .03, .01
+];
+final _bpBeach = _BusyProfile(
+  _beachWork,
+  _ov(_beachWork, const {
+    9: .45, 10: .65, 11: .80, 12: .88, 13: .88, 14: .80, 15: .62, 16: .45,
+    17: .30, 18: .18, 19: .10, 20: .05, 21: .03
+  }),
+  _ov(_beachWork, const {
+    8: .30, 9: .50, 10: .70, 11: .85, 12: .92, 13: .92, 14: .88, 15: .80,
+    16: .68, 17: .52, 18: .36, 19: .20, 20: .10, 21: .05, 22: .02
+  }),
+  capPct: 88,
+  peopleLo: 150,
+  peopleHi: 700,
+);
+
+final _viewWork = <double>[
+  .01, .01, .01, .01, .01, .01, .03, .08, .15, .22, .28, .32, //
+  .30, .28, .26, .28, .34, .48, .52, .35, .18, .10, .05, .02
+];
+final _bpView = _BusyProfile(
+  _viewWork,
+  _ov(_viewWork, const {
+    9: .28, 10: .36, 11: .40, 12: .38, 13: .35, 14: .30, 17: .55, 18: .58,
+    19: .40
+  }),
+  _ov(_viewWork, const {
+    9: .28, 10: .36, 11: .40, 12: .38, 13: .35, 14: .30, 17: .55, 18: .58,
+    19: .40
+  }),
+  capPct: 60,
+  peopleLo: 15,
+  peopleHi: 100,
+);
+
+final _cultureWork = <double>[
+  .01, .01, .01, .01, .01, .01, .01, .02, .05, .18, .38, .45, //
+  .42, .40, .38, .36, .38, .42, .45, .55, .58, .50, .30, .10
+];
+final _bpCulture = _BusyProfile(
+  _cultureWork,
+  _ov(_cultureWork, const {
+    10: .42, 11: .48, 12: .45, 13: .38, 14: .25, 15: .12, 16: .08, 17: .08,
+    18: .10, 19: .18, 20: .25, 21: .20, 22: .10, 23: .04
+  }),
+  _ov(_cultureWork, const {
+    9: .15, 10: .40, 11: .48, 12: .46, 13: .42, 14: .38, 15: .36, 16: .38,
+    17: .40, 18: .42, 19: .50, 20: .55, 21: .45, 22: .25, 23: .08
+  }),
+  capPct: 70,
+  peopleLo: 40,
+  peopleHi: 300,
+);
+
+final _sportWork = <double>[
+  .01, .01, .01, .01, .01, .15, .45, .62, .55, .35, .28, .26, //
+  .32, .30, .26, .30, .45, .68, .82, .85, .75, .55, .30, .10
+];
+final _bpSport = _BusyProfile(
+  _sportWork,
+  _ov(_sportWork, const {
+    9: .32, 10: .30, 11: .28, 12: .25, 13: .18, 14: .10, 15: .05, 16: .03,
+    17: .03, 18: .04, 19: .06, 20: .08, 21: .06, 22: .03, 23: .01
+  }),
+  const [
+    .03, .01, .01, .01, .01, .01, .01, .02, .02, .02, .02, .02, //
+    .02, .02, .02, .02, .03, .08, .20, .45, .62, .60, .40, .15
+  ],
+  capPct: 85,
+  peopleLo: 30,
+  peopleHi: 180,
+);
+
+final _marketWork = <double>[
+  .01, .01, .01, .01, .01, .02, .15, .45, .68, .75, .72, .65, //
+  .58, .50, .40, .30, .22, .15, .10, .06, .03, .02, .01, .01
+];
+final _bpMarket = _BusyProfile(
+  _marketWork,
+  _ov(_marketWork, const {
+    6: .20, 7: .60, 8: .85, 9: .90, 10: .85, 11: .75, 12: .60, 13: .40,
+    14: .20, 15: .08, 16: .03, 17: .03, 18: .02, 19: .02, 20: .01
+  }),
+  const [
+    .01, .01, .01, .01, .01, .01, .01, .01, .01, .01, .01, .01, //
+    .01, .01, .01, .01, .02, .02, .04, .10, .20, .22, .15, .06
+  ],
+  capPct: 80,
+  peopleLo: 100,
+  peopleHi: 450,
+);
+
+final _retailWork = <double>[
+  .01, .01, .01, .01, .01, .01, .01, .02, .04, .20, .45, .58, //
+  .62, .60, .55, .52, .55, .62, .68, .70, .62, .40, .15, .04
+];
+final _bpRetail = _BusyProfile(
+  _retailWork,
+  _ov(_retailWork, const {
+    9: .30, 10: .60, 11: .72, 12: .75, 13: .60, 14: .30, 15: .10, 16: .04,
+    17: .03, 18: .03, 19: .05, 20: .08, 21: .10, 22: .06, 23: .02
+  }),
+  const [
+    .01, .01, .01, .01, .01, .01, .01, .01, .01, .01, .01, .01, //
+    .01, .01, .01, .01, .01, .03, .10, .35, .60, .70, .55, .30
+  ],
+  capPct: 85,
+  peopleLo: 200,
+  peopleHi: 1200,
+);
+
+final _h24Table = <double>[
+  .20, .18, .16, .15, .15, .17, .20, .24, .28, .30, .30, .30, //
+  .30, .30, .29, .28, .28, .29, .30, .30, .29, .27, .24, .22
+];
+final _bpH24 = _BusyProfile(
+  _h24Table,
+  _h24Table,
+  _h24Table,
+  capPct: 40,
+  peopleLo: 60,
+  peopleHi: 300,
+  h24: true,
+);
+
+final _eduWork = <double>[
+  .01, .01, .01, .01, .01, .01, .02, .30, .65, .70, .68, .66, //
+  .60, .58, .50, .40, .30, .20, .12, .08, .05, .03, .01, .01
+];
+final _bpEducation = _BusyProfile(
+  _eduWork,
+  _ov(_eduWork, const {
+    8: .62, 9: .65, 10: .60, 11: .55, 12: .45, 13: .25, 14: .08, 15: .02,
+    16: .02, 17: .02, 18: .01, 19: .01, 20: .01, 21: .01
+  }),
+  const [
+    .01, .01, .01, .01, .01, .01, .01, .01, .01, .01, .01, .01, //
+    .01, .01, .01, .01, .01, .01, .02, .02, .02, .02, .01, .01
+  ],
+  capPct: 80,
+  peopleLo: 200,
+  peopleHi: 800,
+);
+
+final _relWork = <double>[
+  .01, .01, .01, .01, .01, .02, .05, .10, .12, .08, .05, .04, //
+  .04, .04, .04, .04, .05, .08, .12, .10, .06, .03, .02, .01
+];
+final _bpReligious = _BusyProfile(
+  _relWork,
+  _ov(_relWork, const {
+    16: .08, 17: .20, 18: .35, 19: .40, 20: .25, 21: .10, 22: .04
+  }),
+  _ov(_relWork, const {
+    7: .15, 8: .30, 9: .50, 10: .55, 11: .45, 12: .25, 13: .10, 14: .06,
+    15: .05, 16: .08, 17: .15, 18: .12, 19: .06, 20: .04
+  }),
+  capPct: 55,
+  peopleLo: 30,
+  peopleHi: 200,
+);
+
+final _memorialTable = <double>[
+  .005, .005, .005, .005, .005, .005, .010, .015, .020, .025, .025, .025, //
+  .020, .020, .020, .020, .020, .015, .010, .008, .005, .005, .005, .005
+];
+final _bpMemorial = _BusyProfile(
+  _memorialTable,
+  _memorialTable,
+  _memorialTable,
+  capPct: 8,
+  peopleLo: 20,
+  peopleHi: 120,
+);
+
+final _genericWork = <double>[
+  .01, .01, .01, .01, .01, .01, .02, .05, .10, .20, .30, .35, //
+  .36, .34, .30, .28, .30, .34, .36, .34, .28, .18, .09, .04
+];
+final _bpGeneric = _BusyProfile(
+  _genericWork,
+  _ov(_genericWork, const {
+    14: .22, 15: .15, 16: .10, 17: .07, 18: .06, 19: .07, 20: .09, 21: .08,
+    22: .05, 23: .02
+  }),
+  const [
+    .01, .01, .01, .01, .01, .01, .01, .02, .03, .05, .08, .10, //
+    .10, .09, .08, .07, .07, .08, .12, .22, .30, .30, .22, .10
+  ],
+  capPct: 65,
+  peopleLo: 15,
+  peopleHi: 90,
+);
+
+/* Every place type in the data (plus plausible future ones) maps onto
+   a profile; anything unknown lands on the generic daytime shape. */
+_BusyProfile _busyProfileOf(String type) {
+  switch (type) {
+    case 'cafe':
+      return _bpCafe;
+    case 'restaurant':
+      return _bpRestaurant;
+    case 'bar':
+      return _bpBar;
+    case 'club':
+      return _bpClub;
+    case 'hookah':
+      return _bpHookah;
+    case 'park':
+      return _bpPark;
+    case 'beach':
+      return _bpBeach;
+    case 'view':
+      return _bpView;
+    case 'culture':
+      return _bpCulture;
+    case 'sport':
+    case 'gym':
+    case 'fitness':
+      return _bpSport;
+    case 'market':
+      return _bpMarket;
+    case 'shop':
+    case 'mall':
+    case 'store':
+      return _bpRetail;
+    case 'hospital':
+    case 'pharmacy':
+    case 'clinic':
+    case 'gas':
+    case 'fuel':
+      return _bpH24;
+    case 'school':
+    case 'university':
+    case 'college':
+      return _bpEducation;
+    case 'synagogue':
+    case 'church':
+    case 'mosque':
+    case 'religious':
+      return _bpReligious;
+    case 'cemetery':
+    case 'memorial':
+      return _bpMemorial;
+    default:
+      return _bpGeneric;
+  }
+}
+
+/* One hourly anchor, with the Sunday-past-midnight nightlife tail. */
+double _busyAnchorAt(_BusyProfile prof, int weekday, int hour) {
+  if (prof.nightlife && weekday == DateTime.sunday && hour < 3) {
+    return prof.satTail[hour];
+  }
+  final t = weekday == DateTime.friday
+      ? prof.fri
+      : (weekday == DateTime.saturday ? prof.sat : prof.work);
+  return t[hour];
+}
+
+/* The category curve at [now], interpolated between hourly anchors
+   (wrapping into the next day's table at 23:xx) — no steps, ever. */
+double _busyAnchor(_BusyProfile prof, DateTime now) {
+  final t = now.hour + now.minute / 60.0 + now.second / 3600.0;
+  final h0 = t.floor();
+  final frac = t - h0;
+  final wd = now.weekday;
+  final a0 = _busyAnchorAt(prof, wd, h0);
+  final nextWd = h0 == 23 ? (wd == DateTime.sunday ? 1 : wd + 1) : wd;
+  final a1 = _busyAnchorAt(prof, nextWd, (h0 + 1) % 24);
+  return a0 + (a1 - a0) * frac;
+}
+
+/* Stable per-place popularity, 0.35–1.30: seeded from the place id
+   (identical on every launch). Where the data carries a real review
+   footprint, the seed is BLENDED with a review-derived popularity
+   (a place thousands of people reviewed is famous, full stop — it
+   must not land at the bottom of the band on a hash coin flip); the
+   rating adds a small tilt. A famous spot can near its category cap
+   at peak; an obscure one never reads absurd. */
+double _popOf(Place p) {
+  var pop = 0.45 + (stableHash('${p.id}|pop') % 1000) / 1000.0 * 0.75;
+  final rev = p.reviews;
+  if (rev != null && rev > 0) {
+    final revPop = 0.55 + 0.75 * (math.log(rev + 1) / math.log(2234));
+    pop = (pop + revPop) / 2;
+  }
+  final r = p.rating;
+  if (r != null) pop *= 0.92 + (r - 3.5) * 0.07;
+  return pop.clamp(0.35, 1.30);
+}
+
+/* This place's plausible capacity, seeded inside its category range. */
+int _capacityOf(Place p) {
+  final prof = _busyProfileOf(p.type);
+  return prof.peopleLo +
+      stableHash('${p.id}|cap') % (prof.peopleHi - prof.peopleLo + 1);
+}
+
+/* «Сколько людей отдыхает сейчас» — the same % as vibeOf, applied to
+   this place's capacity, so the two numbers can never disagree. */
+int crowdOf(Place p) => (vibeOf(p) * _capacityOf(p) / 100).round();
 
 /* Deterministic small hash (FNV-1a) — stable across runs. */
 int stableHash(String s) {
@@ -759,18 +1227,32 @@ int stableHash(String s) {
   return h;
 }
 
-/* «Движ» of a place right now: rating + per-place hash + time of day. */
+/* «Движ» of a place right now, 0–100% — v2.0.24: the category day
+   curve at the current minute × this place's stable popularity,
+   plus a slow ±2-point deterministic wobble (4-hour period, seeded
+   per place) so the number breathes instead of sitting frozen.
+   Everything derives from (place id, current time) only — reopen
+   the app at any moment and you get the current value, with no jump
+   from the one a minute ago. See the model comment above crowdOf. */
 int vibeOf(Place p) {
-  final h = DateTime.now().hour;
-  var v = 30 + ((p.rating ?? 3.8) - 3.0) * 22 + (stableHash(p.id) % 25);
-  final night = h >= 20 || h <= 1;
-  final evening = h >= 17 && h < 20;
-  if (night || evening) {
-    final boost = night ? 18.0 : 10.0;
-    final hot = p.type == 'bar' || p.type == 'club' || p.type == 'restaurant';
-    v += hot ? boost : boost * 0.4;
+  final now = DateTime.now();
+  final prof = _busyProfileOf(p.type);
+  var anchor = _busyAnchor(prof, now);
+  // Thursday night is a going-out night too: lift the nightlife
+  // curve from 19:00 (its past-midnight tail is authored into the
+  // Friday table's hours 0–2).
+  if (prof.nightlife && now.weekday == DateTime.thursday && now.hour >= 19) {
+    anchor *= 1.22;
   }
-  return v.round().clamp(5, 98);
+  var v = anchor * _popOf(p) * 100.0;
+  final phase = (stableHash('${p.id}|wob') % 6283) / 1000.0;
+  final mins = now.hour * 60.0 + now.minute + now.second / 60.0;
+  v += math.sin(2 * math.pi * (mins / 240.0) + phase) * 2.2 * (0.25 + anchor);
+  // Deep night: by 03:00 everything but genuine 24h places is shut.
+  if (!prof.h24 && now.hour >= 3 && now.hour < 6) {
+    v = math.min(v, 6);
+  }
+  return v.round().clamp(0, prof.capPct);
 }
 
 String vibeWord(int v) =>
@@ -1315,6 +1797,20 @@ int xpOfStats(Map<String, dynamic> raw) {
 }
 
 int dayIndex() => DateTime.now().millisecondsSinceEpoch ~/ 86400000;
+
+/* v2.0.24: the weekly quest follows the real calendar week,
+   Sunday→Saturday (owner: «с воскресенье до субботы»). The old
+   dayIndex()~/7 bucket counted 7-day blocks from the epoch, so it
+   flipped every Thursday and the quest changed mid-week. weekId()
+   is a stable integer per local calendar week: the epoch-day of
+   this week's Sunday (weekday % 7 is the offset back to Sunday,
+   Mon=1..Sun=7). Constant Sun..Sat, changes on Sunday. */
+int weekId() {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final sunday = today.subtract(Duration(days: now.weekday % 7));
+  return sunday.millisecondsSinceEpoch ~/ 86400000;
+}
 
 String dayKeyOf(DateTime d) {
   String p(int n) => n < 10 ? '0$n' : '$n';
@@ -6581,6 +7077,7 @@ class _PlaceSheetState extends State<PlaceSheet> {
   int _crowdFriends = 0;
   bool _uploading = false;
   int _myRating = 5;
+  Timer? _vibeTimer;
   final TextEditingController _reviewCtl = TextEditingController();
 
   @override
@@ -6590,10 +7087,17 @@ class _PlaceSheetState extends State<PlaceSheet> {
     _loadPhotos();
     _loadReviews();
     _loadCrowd();
+    // v2.0.24: the busyness numbers are time-derived — while the
+    // sheet stays open, re-render once a minute so the % drifts
+    // with the curve instead of sitting frozen.
+    _vibeTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _vibeTimer?.cancel();
     _reviewCtl.dispose();
     super.dispose();
   }
@@ -8734,6 +9238,7 @@ class _PlacesTabState extends State<PlacesTab> {
   String _sort = 'vibe';
   bool _hotOnly = false;
   dynamic _dailyEntry;
+  Timer? _vibeTimer;
 
   static const _sortLabels = {
     'vibe': 'sort_vibe',
@@ -8747,6 +9252,17 @@ class _PlacesTabState extends State<PlacesTab> {
   void initState() {
     super.initState();
     _loadDaily();
+    // v2.0.24: busyness is time-derived — refresh the list once a
+    // minute so an open tab shows the numbers moving, not frozen.
+    _vibeTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _vibeTimer?.cancel();
+    super.dispose();
   }
 
   /* «Задание дня» banner data (v2.0.14, Item 6 — replaces the
@@ -11412,16 +11928,18 @@ class _TasksPageState extends State<TasksPage> {
   List<dynamic> _daily = [];
   List<dynamic> _week = [];
   bool _dailyDone = false;
-  /* Weekly quest ticks (v2.0.14, Item 7): persisted per rotation
-     bucket — the same dayIndex()~/7 bucket that selects this week's
-     quest — as 'week_done_<bucket>' (JSON step indices) plus a
-     'week_counted_<bucket>' flag so the finish credits stats.quests
-     exactly once. One-way ticks: no un-tick, no XP farming. */
+  /* Weekly quest ticks (v2.0.14, Item 7): persisted per calendar
+     week — the weekId() bucket (Sunday→Saturday, v2.0.24) that also
+     selects this week's quest — as 'week_done_<bucket>' (JSON step
+     indices) plus a 'week_counted_<bucket>' flag so the finish
+     credits stats.quests exactly once. One-way ticks: no un-tick,
+     no XP farming. Ticks stored under the pre-v2.0.24 epoch bucket
+     are orphaned: the current week's ticks reset once. */
   final Set<int> _weekDone = {};
   bool _weekCounted = false;
   SharedPreferences? _prefs;
 
-  int get _weekBucket => dayIndex() ~/ 7;
+  int get _weekBucket => weekId();
 
   @override
   void initState() {
@@ -11498,7 +12016,7 @@ class _TasksPageState extends State<TasksPage> {
         : aiText(_daily[dayIndex() % _daily.length]);
     final weekQuest = _week.isEmpty
         ? null
-        : (_week[(dayIndex() ~/ 7) % _week.length] as Map).cast<String, dynamic>();
+        : (_week[weekId() % _week.length] as Map).cast<String, dynamic>();
     return Scaffold(
       body: GlowBackground(
         child: SafeArea(
@@ -13858,7 +14376,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.23',
+                  'TiradA anon · 2.0.24',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -14626,7 +15144,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.23',
+            'TiradA anon · 2.0.24',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
