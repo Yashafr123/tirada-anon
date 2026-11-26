@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.30.
+// TiradA anon — native app (Flutter), v2.0.31.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -8894,7 +8894,15 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
   // Route / directions overlay (v2.0.9): one line + its markers, owned
   // separately from place pins and friend avatars so redraws of those
   // never wipe it.
-  Line? _routeLineObj;
+  // v2.0.31: the line itself is no longer an annotation — it lives in
+  // its own GeoJSON source + two style layers (deep-red casing under
+  // a dashed ember line; the annotation LineOptions has no dash). The
+  // layers are created once per style load; geometry swaps via
+  // setGeoJsonSource, and an empty FeatureCollection clears the path.
+  static const _routeSrcId = 'tirada-route-line';
+  static const _routeCasingId = 'tirada-route-casing';
+  static const _routeDashId = 'tirada-route-dash';
+  bool _routeLayersReady = false;
   final List<Symbol> _routeSymbols = [];
   final Map<String, Uint8List> _routePinCache = {};
   final Set<String> _routeImagesOnMap = {};
@@ -9209,30 +9217,38 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
     return bytes;
   }
 
+  /* v2.0.31: the stop dots are repainted in the radar language —
+     every dot gets the soft fire halo (the «радар» ring), a specGrad
+     disc and a bold white rim, so the dots read as part of the path
+     instead of pins dropped on it. Start = filled gradient dot with
+     a white core; finish = white disc, thick fire rim and the TI
+     target glyph (see _routeEndPin); numbered stops keep their
+     number on the gradient disc. */
   Future<Uint8List> _routeNumPin(int n) => _routePinBitmap('num$n', (canvas, center) {
+        canvas.drawCircle(center, 66, Paint()..color = T.fire.withOpacity(0.16));
         canvas.drawCircle(
           center,
-          46,
+          44,
           Paint()
             ..shader = ui.Gradient.linear(
               const Offset(0, 0),
               const Offset(140, 140),
-              [T.fire, T.ember],
+              [const Color(0xFFE8301E), const Color(0xFFFF6A1A)],
             ),
         );
         canvas.drawCircle(
           center,
-          46,
+          44,
           Paint()
-            ..color = Colors.white.withOpacity(0.9)
+            ..color = Colors.white.withOpacity(0.95)
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 4,
+            ..strokeWidth = 5,
         );
         final tp = TextPainter(
           text: TextSpan(
             text: '$n',
             style: const TextStyle(
-              fontSize: 58,
+              fontSize: 54,
               fontWeight: FontWeight.w900,
               color: Colors.white,
             ),
@@ -9243,17 +9259,49 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
       });
 
   Future<Uint8List> _routeStartPin() => _routePinBitmap('start', (canvas, center) {
-        canvas.drawCircle(center, 58, Paint()..color = Colors.white.withOpacity(0.16));
-        canvas.drawCircle(center, 30, Paint()..color = Colors.white);
+        canvas.drawCircle(center, 66, Paint()..color = T.fire.withOpacity(0.16));
         canvas.drawCircle(
           center,
-          30,
+          40,
+          Paint()
+            ..shader = ui.Gradient.linear(
+              const Offset(0, 0),
+              const Offset(140, 140),
+              [const Color(0xFFE8301E), const Color(0xFFFF6A1A)],
+            ),
+        );
+        canvas.drawCircle(
+          center,
+          40,
+          Paint()
+            ..color = Colors.white.withOpacity(0.95)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 6,
+        );
+        canvas.drawCircle(center, 10, Paint()..color = Colors.white);
+      });
+
+  /* v2.0.31: the finish dot of a route — until now the last stop
+     wore the same numbered pin as every other stop, so the path had
+     no visible end. White disc + thick fire rim + TI target glyph. */
+  Future<Uint8List> _routeEndPin() => _routePinBitmap('end', (canvas, center) {
+        canvas.drawCircle(center, 68, Paint()..color = T.fire.withOpacity(0.18));
+        canvas.drawCircle(center, 47, Paint()..color = Colors.white);
+        canvas.drawCircle(
+          center,
+          47,
           Paint()
             ..color = T.fire
             ..style = PaintingStyle.stroke
-            ..strokeWidth = 7,
+            ..strokeWidth = 9,
         );
-        canvas.drawCircle(center, 10, Paint()..color = T.fire);
+        TIPaint.paint(
+          canvas,
+          TIGlyph.target,
+          Rect.fromCircle(center: center, radius: 27),
+          T.fire,
+          strokeScale: 1.25,
+        );
       });
 
   Future<Uint8List> _routeTargetPin() => _routePinBitmap('target', (canvas, center) {
@@ -9281,9 +9329,90 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
     }
 
     await reg('route-start', _routeStartPin());
+    await reg('route-end', _routeEndPin());
     await reg('route-target', _routeTargetPin());
     for (var i = 1; i <= stopCount; i++) {
       await reg('route-num-$i', _routeNumPin(i));
+    }
+  }
+
+  /* GeoJSON for the route path source: one LineString feature, or
+     an empty collection (which is how the path is cleared). */
+  Map<String, dynamic> _routeGeoJson(List<LatLng> pts) => {
+        'type': 'FeatureCollection',
+        'features': [
+          if (pts.length >= 2)
+            {
+              'type': 'Feature',
+              'properties': <String, dynamic>{},
+              'geometry': {
+                'type': 'LineString',
+                'coordinates': [
+                  for (final p in pts) [p.longitude, p.latitude],
+                ],
+              },
+            },
+        ],
+      };
+
+  /* v2.0.31: creates the route path's source + two layers once per
+     style load, then just swaps the geometry. The style (owner,
+     asked repeatedly: «измени стиль этого пути, добавь точки»):
+     a solid DEEP-RED casing (#6E0B0B, 9 px, round caps) as the
+     track body, and on top a DASHED ember line (#FF7A1A, 4.6 px,
+     dasharray [1.5, 1.15] in line-width units ≈ 7 px dash / 5 px
+     gap, round caps so the dashes read as soft beads) — the fire
+     family on the dark CARTO map, no longer the plain solid red
+     polyline the annotation API used to draw. Both layers are
+     inserted BELOW the symbol layer, so place pins, friend avatars
+     and the stop dots always paint over the path. Two static
+     layers + one source swap per redraw — no per-frame cost. */
+  Future<void> _syncRouteLineLayers(List<LatLng> pts) async {
+    final ctl = _ctl;
+    if (ctl == null) return;
+    try {
+      if (!_routeLayersReady) {
+        await ctl.addGeoJsonSource(_routeSrcId, _routeGeoJson(pts));
+        String? belowSymbols;
+        try {
+          final ids = ctl.symbolManager?.layerIds;
+          if (ids != null && ids.isNotEmpty) belowSymbols = ids.first;
+        } catch (_) {}
+        await ctl.addLineLayer(
+          _routeSrcId,
+          _routeCasingId,
+          const LineLayerProperties(
+            lineColor: '#6E0B0B',
+            lineWidth: 9.0,
+            lineOpacity: 0.85,
+            lineCap: 'round',
+            lineJoin: 'round',
+          ),
+          belowLayerId: belowSymbols,
+          enableInteraction: false,
+        );
+        await ctl.addLineLayer(
+          _routeSrcId,
+          _routeDashId,
+          LineLayerProperties(
+            lineColor: '#FF7A1A',
+            lineWidth: 4.6,
+            lineOpacity: 0.98,
+            lineDasharray: [1.5, 1.15],
+            lineCap: 'round',
+            lineJoin: 'round',
+          ),
+          belowLayerId: belowSymbols,
+          enableInteraction: false,
+        );
+        _routeLayersReady = true;
+      } else {
+        await ctl.setGeoJsonSource(_routeSrcId, _routeGeoJson(pts));
+      }
+    } catch (_) {
+      // A platform hiccup must not kill the map; the next redraw
+      // retries the layer setup from scratch.
+      _routeLayersReady = false;
     }
   }
 
@@ -9294,12 +9423,6 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
   Future<void> _drawRouteLine() async {
     final ctl = _ctl;
     if (ctl == null || !_styleReady) return;
-    if (_routeLineObj != null) {
-      try {
-        await ctl.removeLine(_routeLineObj!);
-      } catch (_) {}
-      _routeLineObj = null;
-    }
     for (final s in _routeSymbols) {
       try {
         await ctl.removeSymbol(s);
@@ -9307,27 +9430,21 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
     }
     _routeSymbols.clear();
     final data = MapRouteBus.line.value;
+    // Road geometry from OSRM when it has arrived; the straight
+    // waypoint line until then (and on any routing failure). An
+    // empty point set clears the path layers.
+    final linePts = (data == null || data.points.length < 2)
+        ? const <LatLng>[]
+        : (data.roadGeometry ?? data.points);
+    await _syncRouteLineLayers(linePts);
     if (data == null || data.points.length < 2) return;
     await _ensureRouteImages(data.stops.length);
-    // Road geometry from OSRM when it has arrived; the straight
-    // waypoint line until then (and on any routing failure).
-    final linePts = data.roadGeometry ?? data.points;
-    try {
-      _routeLineObj = await ctl.addLine(
-        LineOptions(
-          geometry: linePts,
-          lineColor: '#E11D1D',
-          lineWidth: 4.5,
-          lineOpacity: 0.92,
-        ),
-      );
-    } catch (_) {}
     try {
       final s = await ctl.addSymbol(
         SymbolOptions(
           geometry: data.points.first,
           iconImage: 'route-start',
-          iconSize: 0.4,
+          iconSize: 0.5,
         ),
       );
       _routeSymbols.add(s);
@@ -9346,12 +9463,15 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
     } else {
       for (var i = 0; i < data.stops.length; i++) {
         final p = data.stops[i];
+        // v2.0.31: the LAST stop of a route wears the finish dot
+        // (target ring), not another numbered pin.
+        final isFinish = data.kind == 'route' && i == data.stops.length - 1;
         try {
           final s = await ctl.addSymbol(
             SymbolOptions(
               geometry: LatLng(p.lat, p.lng),
-              iconImage: 'route-num-${i + 1}',
-              iconSize: 0.42,
+              iconImage: isFinish ? 'route-end' : 'route-num-${i + 1}',
+              iconSize: isFinish ? 0.55 : 0.5,
             ),
           );
           _routeSymbols.add(s);
@@ -9436,46 +9556,75 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
                     ),
                   ),
                   const SizedBox(width: T.s8),
-                  // v2.0.12: a real «Delete route» button replaces the
-                  // tiny ✕. Directions lines clear right here; a ROUTE
-                  // line goes through the RouteTab, which owns the
-                  // tracking state (confirm sheet if progress exists,
-                  // then stops/done/counted are wiped there).
-                  GestureDetector(
-                    onTap: () {
-                      if (data.kind == 'route') {
-                        MapRouteBus.requestDeleteRoute();
-                      } else {
-                        MapRouteBus.clear();
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: T.fire.withOpacity(0.16),
-                        borderRadius: BorderRadius.circular(T.rPill),
-                        border:
-                            Border.all(color: T.fire.withOpacity(0.6)),
+                  // v2.0.12: a real «Delete route» button replaced the
+                  // tiny ✕. v2.0.31: for a ROUTE line the action is
+                  // now the full-size «Отменить маршрут» — TI ✕ +
+                  // the same words as the RouteTab button, big enough
+                  // to read as THE cancel (the old 11.5 px «Удалить
+                  // маршрут» pill next to the summary text did not).
+                  // One tap → RouteTab wipes the tracking state (no
+                  // confirm since v2.0.28). A DIRECTIONS line keeps
+                  // the small pill — it only clears the overlay here.
+                  if (data.kind == 'route')
+                    GestureDetector(
+                      onTap: () => MapRouteBus.requestDeleteRoute(),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 9),
+                        decoration: BoxDecoration(
+                          color: T.fire.withOpacity(0.24),
+                          borderRadius: BorderRadius.circular(T.rPill),
+                          border:
+                              Border.all(color: T.fire.withOpacity(0.85)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const TiradIcon(
+                              TIGlyph.x,
+                              size: 15,
+                              color: T.salmon,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              tr('cancel_route'),
+                              style: T.body(13,
+                                  color: T.salmon, w: FontWeight.w800),
+                            ),
+                          ],
+                        ),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const TiradIcon(
-                            TIGlyph.trash,
-                            size: 13,
-                            color: T.salmon,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            tr('delete_route'),
-                            style: T.body(11.5,
-                                color: T.salmon, w: FontWeight.w800),
-                          ),
-                        ],
+                    )
+                  else
+                    GestureDetector(
+                      onTap: () => MapRouteBus.clear(),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: T.fire.withOpacity(0.16),
+                          borderRadius: BorderRadius.circular(T.rPill),
+                          border:
+                              Border.all(color: T.fire.withOpacity(0.6)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const TiradIcon(
+                              TIGlyph.trash,
+                              size: 13,
+                              color: T.salmon,
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              tr('delete_route'),
+                              style: T.body(11.5,
+                                  color: T.salmon, w: FontWeight.w800),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -10020,7 +10169,7 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
     _ctl = ctl;
     _pinsRegistered = false; // new controller → pin images must re-register
     _routeImagesOnMap.clear(); // …and so must the route-marker images
-    _routeLineObj = null;
+    _routeLayersReady = false; // …and the route path's source + layers
     _routeSymbols.clear();
     _meSymbol = null; // …and the «me» marker belongs to the old style
     _meImgNames.clear();
@@ -10210,7 +10359,6 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
     final hot = widget.places.where((p) => vibeOf(p) >= 70).length;
     return Stack(
       children: [
-        _routeChip(),
         MapLibreMap(
           styleString: _style!,
           initialCameraPosition: CameraPosition(
@@ -10220,6 +10368,7 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
       onMapCreated: _onMapCreated,
       onStyleLoadedCallback: () {
         _styleReady = true;
+        _routeLayersReady = false; // style reload wipes sources/layers
         _prepareSymbolLayer(); // overlap flags first, then draws places
         _drawRouteLine();
         _refreshFriends();
@@ -10290,6 +10439,12 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
         _shareBanner(),
         // v2.0.29 (item B): centre-on-me, bottom-right.
         _centerOnMeButton(),
+        // v2.0.31: the route chip renders LAST (topmost). It used
+        // to be the FIRST Stack child — underneath the MapLibreMap
+        // platform view — the only overlay in this tab placed below
+        // the map, so the chip (and its cancel) could hide behind
+        // the native surface while every other overlay sits above.
+        _routeChip(),
       ],
     );
   }
@@ -12513,6 +12668,25 @@ class _RouteTabState extends State<RouteTab> {
                     },
                   ),
                 ],
+                /* v2.0.31: «Отменить маршрут» lives HERE, at the end
+                   of the hero panel — first screen, no scrolling. Up
+                   to now the only copy sat at the very BOTTOM of this
+                   tab's ListView, under the saved routes, the ready
+                   routes, every stop card and the tasks checklist;
+                   the owner never reached it and reported (rightly)
+                   that route cancel does not exist. One tap, no
+                   confirm, full clear — see _requestDeleteRoute. */
+                if (_stops.isNotEmpty) ...[
+                  const SizedBox(height: T.s16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: DangerButton(
+                      text: tr('cancel_route'),
+                      icon: TIGlyph.x,
+                      onPressed: _requestDeleteRoute,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -12667,18 +12841,12 @@ class _RouteTabState extends State<RouteTab> {
               ),
             ),
           ],
-          // v2.0.12: stop tracking this route — danger action under
-          // the route card, in the app's button language.
-          // v2.0.28: labelled as what it is — «Отменить маршрут»,
-          // one tap, no confirm (see _requestDeleteRoute).
-          if (_stops.isNotEmpty) ...[
-            const SizedBox(height: T.s24),
-            DangerButton(
-              text: tr('cancel_route'),
-              small: true,
-              onPressed: _requestDeleteRoute,
-            ),
-          ],
+          // v2.0.31: the «Отменить маршрут» DangerButton that used
+          // to sit HERE — at the very bottom of the scroll, below
+          // every stop card and the tasks checklist — moved up into
+          // the hero panel (first screen, no scrolling); see the
+          // note at the hero card. One canonical copy in this tab,
+          // plus the map chip's cancel.
         ],
       ),
     );
@@ -16537,7 +16705,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.30',
+                  'TiradA anon · 2.0.31',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -17241,7 +17409,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.30',
+            'TiradA anon · 2.0.31',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
