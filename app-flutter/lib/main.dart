@@ -816,7 +816,7 @@ class RoutingService {
       final uri = Uri.parse('$base/$coords'
           '?overview=full&geometries=geojson&annotations=false');
       final req = await client.getUrl(uri).timeout(const Duration(seconds: 6));
-      req.headers.set(HttpHeaders.userAgentHeader,
+      req.headers.set('User-Agent',
           'TiradA-anon/2.0.32 (Flutter; github.com/Yashafr123/tirada-anon)');
       final resp = await req.close().timeout(const Duration(seconds: 6));
       if (resp.statusCode != 200) return null;
