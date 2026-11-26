@@ -52,8 +52,8 @@ jobs:
           p = 'android/app/build.gradle.kts'
           s = open(p).read()
           s = s.replace('applicationId = "app.tirada.tirada_anon"', 'applicationId = "app.tirada.anon"')
-          s = s.replace('versionCode = 1', 'versionCode = 28')
-          s = s.replace('versionName = "1.0"', 'versionName = "2.0.24"')
+          s = s.replace('versionCode = 1', 'versionCode = 29')
+          s = s.replace('versionName = "1.0"', 'versionName = "2.0.25"')
           s += '''
 
           android {
@@ -90,6 +90,9 @@ jobs:
               '<uses-permission android:name="android.permission.INTERNET" />',
               '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />',
               '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />',
+              '<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />',
+              '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
+              '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />',
               '<uses-permission android:name="android.permission.CAMERA" />',
               '<uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />',
               '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
