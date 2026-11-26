@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.26.
+// TiradA anon — native app (Flutter), v2.0.27.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -297,6 +297,17 @@ class LocationService {
               notificationTitle: 'TiradA anon',
               notificationText: tr('bg_loc_note'),
               enableWakeLock: false,
+              /* v2.0.27: as quiet as Android allows (owner's decision:
+                 the «Ты на радаре» entry STAYS but minimal). The
+                 plugin itself creates its channel at IMPORTANCE_NONE
+                 — no sound, no vibration, no heads-up, no status-bar
+                 icon; that is the floor for a foreground service, and
+                 geolocator exposes no importance/priority knob to
+                 Dart at all. setOngoing stays FALSE so the entry is
+                 dismissible (the service keeps running after a
+                 swipe-away). What still shows in the shade is
+                 Android's system-enforced minimum for any FGS. */
+              setOngoing: false,
             ),
           )
         : const LocationSettings(
@@ -316,14 +327,123 @@ class LocationService {
       _sub = null;
       _fgsStream = false;
     }
+    /* v2.0.27: the heartbeat lives and dies with the foreground-
+       service stream — see _heartbeatTick. */
+    if (_fgsStream) {
+      _startHeartbeat();
+    } else {
+      _stopHeartbeat();
+    }
   }
 
   static Future<void> _stopStream() async {
+    _stopHeartbeat();
     try {
       await _sub?.cancel();
     } catch (_) {}
     _sub = null;
     _fgsStream = false;
+  }
+
+  /* v2.0.27: the ONE presence write, shared by MapTab's 30 s cycle
+     (its _presence() delegates here) and the background heartbeat
+     below — one path, one semantics. Stamps _lastPresenceWriteAt on
+     a successful position upsert so the heartbeat can avoid
+     double-writes. */
+  static DateTime? _lastPresenceWriteAt;
+
+  static Future<void> syncPresence() async {
+    try {
+      final uid = myUidOrNull;
+      if (uid == null) return; // guest: nowhere to write presence
+      /* v2.0.25: presence RESPECTS the mode. Before, this writer
+         upserted a fresh location and online=true unconditionally —
+         a «Невидимка» user kept broadcasting a live position (and
+         showed as online) forever; only the map's render filter
+         hid him. Now «Невидимка» deletes the location row and goes
+         offline in the DB, so NO surface can place or count him. */
+      if (myModeNotifier.value == 'offline') {
+        await supa.from('profile_locations').delete().eq('user_id', uid);
+        await supa.from('profiles').update({
+          'online': false,
+          'last_seen': DateTime.now().toUtc().toIso8601String(),
+        }).eq('id', uid);
+        return;
+      }
+      // v2.0.12: the position comes from the geolocator-fed
+      // myLocationNotifier (LocationService), NOT from MapLibre's
+      // requestMyLocationLatLng() — that API only works while the
+      // native location puck is enabled, and the puck's own disc was
+      // drawn by the native LocationComponent ON TOP of the custom
+      // «me» avatar symbol (owner: «кружок поверх моей аватарки»).
+      // The puck is now disabled (myLocationEnabled: false); nothing
+      // else read position from MapLibre — centring, distances and
+      // presence all already flow through the notifier.
+      final pos = myLocationNotifier.value;
+      if (pos == null) return;
+      await supa.from('profile_locations').upsert({
+        'user_id': uid,
+        'lat': pos.latitude,
+        'lng': pos.longitude,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+      await supa.from('profiles').update({
+        'online': true,
+        'last_seen': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', uid);
+      _lastPresenceWriteAt = DateTime.now();
+    } catch (_) {}
+  }
+
+  /* v2.0.27: background heartbeat (owner: «нужно чтоб оно всегда
+     обновлялось»). The movement stream only fires after a 25 m move,
+     so a user standing still went stale on friends' maps — the point
+     just stopped refreshing. While background sharing is active
+     (foreground-service stream running), a timer takes a FRESH fix
+     every 5 minutes and writes it through syncPresence() — the same
+     path the stream-fed MapTab cycle uses. Rules:
+     · a presence write younger than ~2 min (movement stream via
+       MapTab's cycle, or a previous heartbeat) → skip, no double-write;
+     · the fix FAILS (timeout / GPS off) → write NOTHING. No cached
+       fallback: a stale point must never get a fresh timestamp;
+     · never for guests, never in «Невидимка» (the timer is cancelled
+       with the stream anyway; the tick re-checks as a second lock).
+     Started/stopped with the FGS stream in _startStream/_stopStream,
+     so offline mode and sign-out (stopAll) kill it too. */
+  static Timer? _heartbeat;
+
+  static void _startHeartbeat() {
+    _heartbeat?.cancel();
+    _heartbeat = Timer.periodic(
+      const Duration(minutes: 5),
+      (_) => _heartbeatTick(),
+    );
+  }
+
+  static void _stopHeartbeat() {
+    _heartbeat?.cancel();
+    _heartbeat = null;
+  }
+
+  static Future<void> _heartbeatTick() async {
+    try {
+      if (myUidOrNull == null || _iAmHidden) return;
+      final last = _lastPresenceWriteAt;
+      if (last != null &&
+          DateTime.now().difference(last) < const Duration(minutes: 2)) {
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      myLocationNotifier.value = LatLng(pos.latitude, pos.longitude);
+      await syncPresence();
+    } catch (_) {
+      // Failed fix: no write — see the rules above.
+    }
   }
 
   /* v2.0.25: stop everything (sign-out, «Невидимка»). Cancelling the
@@ -9506,47 +9626,10 @@ class _MapTabState extends State<MapTab> {
     );
   }
 
-  Future<void> _presence() async {
-    try {
-      final uid = myUidOrNull;
-      if (uid == null) return; // guest: nowhere to write presence
-      /* v2.0.25: presence RESPECTS the mode. Before, this writer
-         upserted a fresh location and online=true unconditionally —
-         a «Невидимка» user kept broadcasting a live position (and
-         showed as online) forever; only the map's render filter
-         hid him. Now «Невидимка» deletes the location row and goes
-         offline in the DB, so NO surface can place or count him. */
-      if (myModeNotifier.value == 'offline') {
-        await supa.from('profile_locations').delete().eq('user_id', uid);
-        await supa.from('profiles').update({
-          'online': false,
-          'last_seen': DateTime.now().toUtc().toIso8601String(),
-        }).eq('id', uid);
-        return;
-      }
-      // v2.0.12: the position comes from the geolocator-fed
-      // myLocationNotifier (LocationService), NOT from MapLibre's
-      // requestMyLocationLatLng() — that API only works while the
-      // native location puck is enabled, and the puck's own disc was
-      // drawn by the native LocationComponent ON TOP of the custom
-      // «me» avatar symbol (owner: «кружок поверх моей аватарки»).
-      // The puck is now disabled (myLocationEnabled: false); nothing
-      // else read position from MapLibre — centring, distances and
-      // presence all already flow through the notifier.
-      final pos = myLocationNotifier.value;
-      if (pos == null) return;
-      await supa.from('profile_locations').upsert({
-        'user_id': uid,
-        'lat': pos.latitude,
-        'lng': pos.longitude,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      });
-      await supa.from('profiles').update({
-        'online': true,
-        'last_seen': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', uid);
-    } catch (_) {}
-  }
+  /* v2.0.27: the write itself lives in LocationService.syncPresence
+     (shared with the background heartbeat — one path, one semantics);
+     this 30 s foreground cycle is unchanged. */
+  Future<void> _presence() => LocationService.syncPresence();
 
   void _onMapCreated(MapLibreMapController ctl) {
     _ctl = ctl;
@@ -15372,7 +15455,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.26',
+                  'TiradA anon · 2.0.27',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -16076,7 +16159,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.26',
+            'TiradA anon · 2.0.27',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
