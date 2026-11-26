@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.25.
+// TiradA anon — native app (Flutter), v2.0.26.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -1709,23 +1709,48 @@ class LocalNotify {
    forever), on every app start with a session, and on token refresh;
    the Android 13+ permission is re-asked after sign-in and from the
    «Ты в деле» sheet, not only once at first launch. Server-side
-   triggers are a separate wiring (send-fcm) — this is the client. */
+   triggers are a separate wiring (send-fcm) — this is the client.
+   v2.0.26 ROOT-CAUSE FIX (owner: «тестовое уведомление работает, но
+   обычные не приходят» — and the server held NO device_tokens row
+   for him, ever): every stage of this chain used to fail into a
+   bare `catch (_) {}` — registerCurrent() didn't even keep the
+   error — and init() awaited requestPermission() FIRST, inside the
+   same single try as the listener wiring and the first
+   registration, so one throw/hang in the permission stage aborted
+   the whole init. The write path itself is proven good (the exact
+   upsert payload succeeds over REST; the shipped APK carries the
+   full Firebase wiring and google_app_id), so the failure lived
+   inside the Firebase calls on the handset and was invisible by
+   construction. Now: each stage is isolated, registration never
+   waits on the permission call, every failure is kept in
+   [lastError] + the log, and the Settings check (probe()) reports
+   each stage separately instead of one ambiguous line. */
 class PushService {
   static final ValueNotifier<RemoteMessage?> foreground =
       ValueNotifier<RemoteMessage?>(null);
   static bool _inited = false;
 
+  /* The last registration failure, verbatim — surfaced by the
+     Settings notification check so a broken stage names itself
+     instead of vanishing into a silent catch. */
+  static String? lastError;
+
   static Future<void> init() async {
     if (_inited) return;
     _inited = true;
+    // 1) Listeners first, each in its own try: no single failure
+    //    may take the rest of the wiring down with it.
     try {
-      final m = FirebaseMessaging.instance;
-      await m.requestPermission();
       FirebaseMessaging.onMessage.listen((msg) => foreground.value = msg);
-      m.onTokenRefresh.listen(_saveToken);
-      // A sign-in after a guest first launch is exactly when the
-      // token must land in device_tokens — and when the permission
-      // deserves a second ask if the first one was dismissed.
+      FirebaseMessaging.instance.onTokenRefresh.listen(_saveToken);
+    } catch (e) {
+      lastError = '$e';
+      debugPrint('TiradA FCM listener wiring failed: $e');
+    }
+    // 2) A sign-in after a guest first launch is exactly when the
+    //    token must land in device_tokens — and when the permission
+    //    deserves a second ask if the first one was dismissed.
+    try {
       supa.auth.onAuthStateChange.listen((state) {
         if (state.event == AuthChangeEvent.signedIn ||
             state.event == AuthChangeEvent.tokenRefreshed) {
@@ -1733,8 +1758,16 @@ class PushService {
           registerCurrent();
         }
       });
-      await registerCurrent();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('TiradA FCM auth listener failed: $e');
+    }
+    // 3) Registration — deliberately NOT gated on the permission
+    //    call (v2.0.26: it used to run after an awaited
+    //    requestPermission() inside the same try, so a permission
+    //    failure aborted registration for the whole session).
+    await registerCurrent();
+    // 4) The permission ask, last and separate.
+    await ensurePermission();
   }
 
   /* Ask for the notification permission if it is not granted yet.
@@ -1749,14 +1782,26 @@ class PushService {
         return;
       }
       await FirebaseMessaging.instance.requestPermission();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('TiradA FCM permission ask failed: $e');
+    }
   }
 
   static Future<void> registerCurrent() async {
     try {
       final t = await FirebaseMessaging.instance.getToken();
-      if (t != null) await _saveToken(t);
-    } catch (_) {}
+      if (t == null) {
+        // Was a bare catch (_) {} — a null/failed token died here
+        // without a trace, at every call site, forever.
+        lastError = 'getToken() returned null';
+        debugPrint('TiradA FCM: getToken() returned null');
+        return;
+      }
+      await _saveToken(t);
+    } catch (e) {
+      lastError = '$e';
+      debugPrint('TiradA FCM getToken failed: $e');
+    }
   }
 
   static Future<void> _saveToken(String token) async {
@@ -1769,9 +1814,9 @@ class PushService {
         'platform': 'android',
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
+      lastError = null; // the full chain just succeeded end to end
     } catch (e) {
-      // Was a silent catch — a failed registration must at least be
-      // visible in the log; the Settings self-test surfaces it in UI.
+      lastError = 'device_tokens: $e';
       debugPrint('TiradA device_tokens upsert failed: $e');
     }
   }
@@ -1792,6 +1837,105 @@ class PushService {
       if (t != null && (last == null || t.isAfter(last))) last = t;
     }
     return (count: (rows as List).length, last: last);
+  }
+
+  /* v2.0.26: staged probe for the Settings notification check —
+     each stage of the registration chain reported on its own
+     (Firebase initialised? permission? token fetched on THIS
+     phone? the exact error when one stage fails), so the check
+     stops being one ambiguous «token: yes/no» line. Fetching the
+     token here doubles as another registration attempt. */
+  static Future<
+      ({
+        bool firebase,
+        bool permGranted,
+        bool tokenOk,
+        String? error,
+      })> probe() async {
+    var firebase = false;
+    var permGranted = false;
+    var tokenOk = false;
+    String? error;
+    try {
+      firebase = Firebase.apps.isNotEmpty;
+    } catch (e) {
+      error = '$e';
+    }
+    try {
+      final s = await FirebaseMessaging.instance.getNotificationSettings();
+      permGranted =
+          s.authorizationStatus == AuthorizationStatus.authorized ||
+              s.authorizationStatus == AuthorizationStatus.provisional;
+    } catch (e) {
+      error ??= '$e';
+    }
+    try {
+      final t = await FirebaseMessaging.instance.getToken();
+      tokenOk = t != null;
+      if (t != null) {
+        await _saveToken(t);
+      } else {
+        error ??= 'getToken() returned null';
+      }
+    } catch (e) {
+      error = '$e';
+    }
+    error ??= lastError;
+    return (
+      firebase: firebase,
+      permGranted: permGranted,
+      tokenOk: tokenOk,
+      error: error,
+    );
+  }
+}
+
+/* v2.0.26: real event pushes, client-triggered. The app never
+   composes push text and never names recipients for these — it
+   only tells send-fcm WHAT happened (an event + the id of the DB
+   row that proves it), authenticated with the signed-in user's own
+   Supabase JWT (functions.invoke attaches it automatically). The
+   function validates the row server-side (sender == caller,
+   fresh), derives the sender's display name/mode and the
+   recipients from the database, and composes the text itself —
+   so a client can never push in someone else's name or to an
+   arbitrary audience. The webhook-secret path stays for server
+   callers. Every call is fire-and-forget: a failed push must never
+   fail or block the user action that caused it. */
+class EventPush {
+  static Future<void> _send(Map<String, dynamic> body, String what) async {
+    try {
+      await supa.functions.invoke('send-fcm', body: body);
+    } catch (e) {
+      debugPrint('TiradA event push ($what) failed: $e');
+    }
+  }
+
+  /* A ping (hi / sticker) was just inserted — [pingId] is its row. */
+  static void ping(String pingId) {
+    _send({'event': 'ping', 'ping_id': pingId}, 'ping');
+  }
+
+  /* A place photo was just published — [photoId] is its
+     place_photos row (the server-side check-in record carrying the
+     Всем/Только друзьям consent; «Не показывать» creates no row,
+     so it can never reach this call). */
+  static void checkinPhoto(String photoId, String placeName) {
+    _send(
+      {'event': 'checkin_photo', 'photo_id': photoId, 'place_name': placeName},
+      'checkin_photo',
+    );
+  }
+
+  /* The plain «Я здесь» check-in (no server row of its own): the
+     JWT is the signature — the function takes the sender's name
+     and mode from the caller's own profile, requires a live
+     presence row, and refuses outright for «Невидимка». */
+  static void checkinPlace(Place place) {
+    _send(
+      {'event': 'checkin', 'place_id': place.id, 'place_name': place.name},
+      'checkin',
+    );
   }
 }
 
@@ -2728,6 +2872,24 @@ const Map<String, (String, String, String)> kStr = {
     'לאורח לא מגיעות התראות: לשרת אין לאן לשלוח. היכנס לחשבון — ולחץ על בדיקה',
     'Guests get no pushes: the server has nowhere to send them. Sign in — then run the check'
   ),
+  /* v2.0.26: staged notification-check lines (see _runPushCheck). */
+  'notif_check_perm': ('Разрешение', 'הרשאה', 'Permission'),
+  'notif_check_token': (
+    'Токен на телефоне',
+    'טוקן בטלפון',
+    'Token on this phone'
+  ),
+  'notif_check_server': ('Токен на сервере', 'טוקן בשרת', 'Token on server'),
+  'notif_check_display': (
+    'Показ уведомлений',
+    'הצגת התראות',
+    'Notification display'
+  ),
+  'notif_check_error': ('Ошибка: {e}', 'שגיאה: {e}', 'Error: {e}'),
+  'notif_st_yes': ('да', 'כן', 'yes'),
+  'notif_st_no': ('нет', 'לא', 'no'),
+  'notif_st_granted': ('разрешено', 'אושר', 'allowed'),
+  'notif_st_denied': ('не разрешено', 'לא אושר', 'not allowed'),
   'b_first_night': ('Первая ночь', 'הלילה הראשון', 'First Night'),
   'c_1_night': ('1 ночь в деле', 'לילה אחד בפנים', '1 night in'),
   'c_5_nights': ('5 ночей в деле', '5 לילות בפנים', '5 nights in'),
@@ -6108,7 +6270,8 @@ class _HomePageState extends State<HomePage> {
         .map((e) => e.toString())
         .toList();
     var changed = false;
-    if (!places.contains(p.id)) {
+    final isNewPlace = !places.contains(p.id);
+    if (isNewPlace) {
       places.add(p.id);
       _stats['places'] = places;
       changed = true;
@@ -6124,6 +6287,17 @@ class _HomePageState extends State<HomePage> {
       /* v2.0.25: a place check-in no longer marks the streak day —
          the owner's rule is that a streak day counts ONLY when a
          task is completed (the _bumpStat funnel). */
+    }
+    /* v2.0.26: a FIRST check-in at a place also pushes the other
+       users («<name> зашёл в «<place>»») — fire-and-forget via
+       send-fcm, which re-derives the sender from the JWT and
+       refuses for «Невидимка» (mirrored here so an offline-mode
+       user doesn't even ask). Repeat taps on an already-visited
+       place never re-push. */
+    if (isNewPlace &&
+        myUidOrNull != null &&
+        myModeNotifier.value != 'offline') {
+      EventPush.checkinPlace(p);
     }
     _cityQuestMark('checkin', p);
   }
@@ -7715,13 +7889,15 @@ class _PlaceSheetState extends State<PlaceSheet> {
       return;
     }
     final url = supa.storage.from('place-photos').getPublicUrl(path);
+    String? photoId;
     try {
-      await supa.from('place_photos').insert({
+      final row = await supa.from('place_photos').insert({
         'place_id': _place.id,
         'user_id': uid,
         'url': url,
         'visibility': vis,
-      });
+      }).select('id').single();
+      photoId = (row as Map)['id']?.toString();
     } catch (e) {
       debugPrint('TiradA place_photos insert failed: $e');
       if (mounted) {
@@ -7730,6 +7906,10 @@ class _PlaceSheetState extends State<PlaceSheet> {
       }
       return;
     }
+    // v2.0.26: real push about this check-in (fire-and-forget).
+    // Only reachable for 'public'/'friends' — «Не показывать»
+    // cancelled the flow above and created no row to validate.
+    if (photoId != null) EventPush.checkinPhoto(photoId, _place.name);
     widget.onPhotoUploaded?.call(_place);
     if (!mounted) return;
     fireConfetti(context);
@@ -13680,12 +13860,14 @@ class _FriendSheetState extends State<FriendSheet> {
     }
     if (_sendingHi) return;
     setState(() => _sendingHi = true);
+    String? pingId;
     try {
-      await supa.from('pings').insert({
+      final row = await supa.from('pings').insert({
         'from_id': uid,
         'to_id': widget.friend.id,
         'kind': 'hi',
-      });
+      }).select('id').single();
+      pingId = (row as Map)['id']?.toString();
     } catch (e) {
       debugPrint('TiradA ping (hi) insert failed: $e');
       if (mounted) {
@@ -13694,6 +13876,9 @@ class _FriendSheetState extends State<FriendSheet> {
       }
       return;
     }
+    // v2.0.26: real push to the recipient — fire-and-forget, the
+    // function validates this ping row against the caller's JWT.
+    if (pingId != null) EventPush.ping(pingId);
     if (!mounted) return;
     final nav = Navigator.of(context);
     nav.pop();
@@ -13705,18 +13890,22 @@ class _FriendSheetState extends State<FriendSheet> {
   Future<void> _sendStickerRef(String ref) async {
     final uid = myUidOrNull;
     if (uid == null) throw StateError('guest');
+    String? pingId;
     try {
-      await supa.from('pings').insert({
+      final row = await supa.from('pings').insert({
         'from_id': uid,
         'to_id': widget.friend.id,
         'kind': 'sticker',
         'sticker': ref,
-      });
+      }).select('id').single();
+      pingId = (row as Map)['id']?.toString();
     } catch (e) {
       debugPrint('TiradA ping (sticker) insert failed: $e');
       if (mounted) snack(context, tr('friends_error'));
       rethrow;
     }
+    // v2.0.26: real push to the recipient (fire-and-forget).
+    if (pingId != null) EventPush.ping(pingId);
     _stickerSent = true;
   }
 
@@ -14748,11 +14937,17 @@ class _ProfileTabState extends State<ProfileTab> {
   String? _pushCheckResult;
   bool _pushChecking = false;
 
-  /* Settings → «Проверить уведомления»: (1) re-ask the Android 13+
-     permission, (2) re-register the FCM token for the signed-in
-     user, (3) read back what the server actually holds in
-     device_tokens, (4) fire a real local test notification so the
-     display path is proven on screen, not just believed. */
+  /* Settings → «Проверить уведомления». v2.0.26: a STAGED report
+     instead of the old single line — the old check read back only
+     the (empty) device_tokens table and showed the same
+     «notif_token_none» text even when the real failure was the
+     display path (its result was `shown ? status : token_none`),
+     so it could never say WHERE the chain breaks. Now each stage
+     is named: Firebase initialised → permission → token fetched
+     on this phone (probe() also re-registers it) → token row on
+     the server → a real local test notification for the display
+     path. The stages are independent: the local notification
+     firing proves ONLY the display path, never FCM delivery. */
   Future<void> _runPushCheck(void Function(VoidCallback) setPageState) async {
     if (_pushChecking) return;
     setPageState(() {
@@ -14761,34 +14956,47 @@ class _ProfileTabState extends State<ProfileTab> {
     });
     await PushService.ensurePermission();
     await LocalNotify.requestPermission();
-    await PushService.registerCurrent();
     String status;
     if (myUidOrNull == null) {
       status = tr('notif_guest_push');
     } else {
+      final p = await PushService.probe();
+      String yn(bool v) => tr(v ? 'notif_st_yes' : 'notif_st_no');
+      var server = yn(false);
       try {
         final s = await PushService.tokenStatus();
         if (s.count > 0) {
           final t = s.last?.toLocal();
           final when = t == null
               ? ''
-              : '${t.day.toString().padLeft(2, '0')}.${t.month.toString().padLeft(2, '0')} '
+              : ' · ${t.day.toString().padLeft(2, '0')}.${t.month.toString().padLeft(2, '0')} '
                   '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-          status = trf('notif_token_ok', {'t': when});
-        } else {
-          status = tr('notif_token_none');
+          server = '${yn(true)}$when';
         }
       } catch (e) {
         debugPrint('TiradA device_tokens status failed: $e');
-        status = tr('notif_token_none');
       }
+      final lines = <String>[
+        'Firebase: ${yn(p.firebase)}',
+        '${tr('notif_check_perm')}: '
+            '${tr(p.permGranted ? 'notif_st_granted' : 'notif_st_denied')}',
+        '${tr('notif_check_token')}: ${yn(p.tokenOk)}',
+        '${tr('notif_check_server')}: $server',
+        if (p.error != null) trf('notif_check_error', {'e': p.error!}),
+      ];
+      status = lines.join('\n');
     }
     final shown =
         await LocalNotify.show(tr('notif_test_title'), tr('notif_test_body'));
     if (!mounted) return;
     setPageState(() {
       _pushChecking = false;
-      _pushCheckResult = shown ? status : tr('notif_token_none');
+      // The display stage is its own line — it no longer overwrites
+      // the registration stages the way the old single line did.
+      _pushCheckResult = myUidOrNull == null
+          ? status
+          : '$status\n${tr('notif_check_display')}: '
+              '${tr(shown ? 'notif_st_yes' : 'notif_st_no')}';
     });
   }
 
@@ -15164,7 +15372,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Center(child: glowIcon(118)),
                 const SizedBox(height: 12),
                 Text(
-                  'TiradA anon · 2.0.25',
+                  'TiradA anon · 2.0.26',
                   textAlign: TextAlign.center,
                   style: T.body(11.5, color: T.faint),
                 ),
@@ -15868,7 +16076,7 @@ class _ProfileTabState extends State<ProfileTab> {
           ),
           const SizedBox(height: T.s16),
           Text(
-            'TiradA anon · 2.0.25',
+            'TiradA anon · 2.0.26',
             textAlign: TextAlign.center,
             style: T.body(11.5, color: T.faint),
           ),
