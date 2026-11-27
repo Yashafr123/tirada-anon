@@ -1,4 +1,4 @@
-// TiradA anon — native app (Flutter), v2.0.31.
+// TiradA anon — native app (Flutter), v2.0.33.
 //
 // A premium design system over the same product: token-driven colors,
 // spacing and type (Inter / Montserrat / Unbounded), a shared component
@@ -405,6 +405,18 @@ class LocationService {
         }).eq('id', uid);
         return;
       }
+      /* v2.0.33: «online» means the APP is alive, not «has a GPS
+         fix» — stamp profiles FIRST, so a signed-in user whose GPS
+         is off (or who has no fix yet) still shows a truthful
+         online / last-seen; the position upsert below still governs
+         the map alone. Before, the stamp rode on the position write,
+         so no fix = no stamp = a frozen «online» from long ago
+         (owner: «если я не в сети показывает что я в сети»). */
+      await supa.from('profiles').update({
+        'online': true,
+        'last_seen': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', uid);
+      _lastPresenceWriteAt = DateTime.now();
       // v2.0.12: the position comes from the geolocator-fed
       // myLocationNotifier (LocationService), NOT from MapLibre's
       // requestMyLocationLatLng() — that API only works while the
@@ -422,14 +434,25 @@ class LocationService {
         'lng': pos.longitude,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
-      await supa.from('profiles').update({
-        'online': true,
-        'last_seen': DateTime.now().toUtc().toIso8601String(),
-      }).eq('id', uid);
-      _lastPresenceWriteAt = DateTime.now();
       // v2.0.28: a location write just landed — friends CAN see me,
       // so any sharing-issue banner state is stale by definition.
       shareIssue.value = null;
+    } catch (_) {}
+  }
+
+  /* v2.0.33: best-effort goodbye — the shell calls this when the
+     app process is being detached (swiped away / killed), so the
+     profile flips offline at once instead of waiting for readers
+     to notice the frozen last_seen. The read-side freshness rule
+     covers the cases where this write never lands. */
+  static Future<void> markOffline() async {
+    try {
+      final uid = myUidOrNull;
+      if (uid == null) return;
+      await supa.from('profiles').update({
+        'online': false,
+        'last_seen': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', uid);
     } catch (_) {}
   }
 
@@ -809,7 +832,7 @@ class RoutingService {
          NEVER landed and the map kept the straight waypoint line
          forever. Send an explicit UA, on the client and the request. */
       client.userAgent =
-          'TiradA-anon/2.0.32 (Flutter; github.com/Yashafr123/tirada-anon)';
+          'TiradA-anon/2.0.33 (Flutter; github.com/Yashafr123/tirada-anon)';
       
       final coords =
           waypoints.map((p) => '${p.longitude},${p.latitude}').join(';');
@@ -817,7 +840,7 @@ class RoutingService {
           '?overview=full&geometries=geojson&annotations=false');
       final req = await client.getUrl(uri).timeout(const Duration(seconds: 6));
       req.headers.set('User-Agent',
-          'TiradA-anon/2.0.32 (Flutter; github.com/Yashafr123/tirada-anon)');
+          'TiradA-anon/2.0.33 (Flutter; github.com/Yashafr123/tirada-anon)');
       final resp = await req.close().timeout(const Duration(seconds: 6));
       if (resp.statusCode != 200) return null;
       final body =
@@ -2232,12 +2255,146 @@ int xpOfStats(Map<String, dynamic> raw) {
       b * b * 2;
 }
 
+/* v2.0.33: 999+ levels (owner: «почему там существует только 3
+   уровня, сделай 999+ уровней, у всех свое название»). The first
+   eight rungs keep the historic thresholds and names (kLevels).
+   From level 9 the ladder is generated: thresholds keep growing
+   (each next step costs more than the last), and every level's
+   name is a unique grade + core pair — 40 grades × 25 cores =
+   1000 names for levels 9–1008; past that a realm suffix joins
+   (12 realms), so names stay unique up to level 13008. */
+const kMaxLevel = 13008;
+
+const kLevelCores = <(String, String, String)>[
+  ('Призрак', 'רוח רפאים', 'Ghost'),
+  ('Фантом', 'פנטום', 'Phantom'),
+  ('Тень', 'צל', 'Shadow'),
+  ('Странник', 'נווד', 'Wanderer'),
+  ('Охотник', 'צייד', 'Hunter'),
+  ('Хранитель', 'שומר', 'Keeper'),
+  ('Владыка', 'שליט', 'Lord'),
+  ('Скиталец', 'משוטט', 'Drifter'),
+  ('Номад', 'נודד', 'Nomad'),
+  ('Рейнджер', 'סייר', 'Ranger'),
+  ('Визионер', 'חוזה', 'Visionary'),
+  ('Мираж', 'תעתוע', 'Mirage'),
+  ('Эхо', 'הד', 'Echo'),
+  ('Комета', 'שביט', 'Comet'),
+  ('Метеор', 'מטאור', 'Meteor'),
+  ('Волк', 'זאב', 'Wolf'),
+  ('Ворон', 'עורב', 'Raven'),
+  ('Сокол', 'בז', 'Falcon'),
+  ('Тигр', 'נמר', 'Tiger'),
+  ('Дракон', 'דרקון', 'Dragon'),
+  ('Феникс', 'פניקס', 'Phoenix'),
+  ('Голем', 'גולם', 'Golem'),
+  ('Левиафан', 'לווייתן', 'Leviathan'),
+  ('Сфинкс', 'ספינקס', 'Sphinx'),
+  ('Кентавр', 'קנטאור', 'Centaur'),
+];
+
+const kLevelGrades = <(String, String, String)>[
+  ('Младший', 'הצעיר', 'Junior'),
+  ('Тихий', 'השקט', 'Silent'),
+  ('Скрытный', 'החשאי', 'Hidden'),
+  ('Ночной', 'הלילי', 'Nocturnal'),
+  ('Уличный', 'הרחובי', 'Street'),
+  ('Дикий', 'הפראי', 'Wild'),
+  ('Быстрый', 'המהיר', 'Swift'),
+  ('Ловкий', 'הזריז', 'Nimble'),
+  ('Смелый', 'האמיץ', 'Bold'),
+  ('Хитрый', 'הערמומי', 'Sly'),
+  ('Мудрый', 'החכם', 'Wise'),
+  ('Железный', 'הברזל', 'Iron'),
+  ('Неоновый', 'הניאון', 'Neon'),
+  ('Огненный', 'הלוהט', 'Fiery'),
+  ('Ледяной', 'הקפוא', 'Frozen'),
+  ('Грозовой', 'הסוער', 'Stormy'),
+  ('Лунный', 'הירחי', 'Lunar'),
+  ('Звёздный', 'הכוכבי', 'Stellar'),
+  ('Солнечный', 'השמשי', 'Solar'),
+  ('Туманный', 'הערפילי', 'Misty'),
+  ('Глубинный', 'התהומי', 'Abyssal'),
+  ('Древний', 'הקדום', 'Ancient'),
+  ('Вечный', 'הנצחי', 'Eternal'),
+  ('Королевский', 'המלכותי', 'Royal'),
+  ('Имперский', 'הקיסרי', 'Imperial'),
+  ('Избранный', 'הנבחר', 'Chosen'),
+  ('Верховный', 'העליון', 'Supreme'),
+  ('Высший', 'הנעלה', 'Exalted'),
+  ('Небесный', 'השמימי', 'Heavenly'),
+  ('Божественный', 'האלוהי', 'Divine'),
+  ('Космический', 'הקוסמי', 'Cosmic'),
+  ('Бесконечный', 'האינסופי', 'Infinite'),
+  ('Абсолютный', 'המוחלט', 'Absolute'),
+  ('Легендарный', 'האגדי', 'Legendary'),
+  ('Мифический', 'המיתולוגי', 'Mythical'),
+  ('Бессмертный', 'בן־האלמוות', 'Immortal'),
+  ('Первозданный', 'הבראשיתי', 'Primordial'),
+  ('Запредельный', 'העל־טבעי', 'Transcendent'),
+  ('Всемогущий', 'הכל־יכול', 'Almighty'),
+  ('Единый', 'האחד', 'The One'),
+];
+
+const kLevelRealms = <(String, String, String)>[
+  ('Ночи', 'הלילה', 'of the Night'),
+  ('Города', 'העיר', 'of the City'),
+  ('Улиц', 'הרחובות', 'of the Streets'),
+  ('Движа', 'הוייב', 'of the Vibe'),
+  ('Неона', 'הניאון', 'of Neon'),
+  ('Тумана', 'הערפל', 'of the Mist'),
+  ('Рассвета', 'השחר', 'of the Dawn'),
+  ('Заката', 'השקיעה', 'of the Sunset'),
+  ('Ветров', 'הרוחות', 'of the Winds'),
+  ('Глубин', 'התהומות', 'of the Depths'),
+  ('Звёзд', 'הכוכבים', 'of the Stars'),
+  ('Тишины', 'הדממה', 'of the Silence'),
+];
+
+int levelThreshold(int level) {
+  if (level <= 1) return 0;
+  if (level <= kLevels.length) return kLevels[level - 1].$1;
+  final k = level - 8;
+  return 4000 + 1500 * k + 125 * (k - 1) * k;
+}
+
+String generatedLevelName(int level) {
+  final idx = level - 9;
+  final core = kLevelCores[idx % kLevelCores.length];
+  final grade =
+      kLevelGrades[(idx ~/ kLevelCores.length) % kLevelGrades.length];
+  final band = idx ~/ 1000;
+  final realm =
+      band == 0 ? null : kLevelRealms[(band - 1) % kLevelRealms.length];
+  return switch (appLang.value) {
+    'he' => realm == null
+        ? '${core.$2} ${grade.$2}'
+        : '${core.$2} ${realm.$2} ${grade.$2}',
+    'en' => realm == null
+        ? '${grade.$3} ${core.$3}'
+        : '${grade.$3} ${core.$3} ${realm.$3}',
+    _ => realm == null
+        ? '${grade.$1} ${core.$1}'
+        : '${grade.$1} ${core.$1} ${realm.$1}',
+  };
+}
+
+String levelName(int level) {
+  if (level <= kLevels.length) return tr(kLevels[level - 1].$2);
+  return generatedLevelName(level);
+}
+
 (int, String, int?) levelOf(int xp) {
-  var i = 0;
-  while (i + 1 < kLevels.length && xp >= kLevels[i + 1].$1) {
-    i++;
+  var lo = 1, hi = kMaxLevel;
+  while (lo < hi) {
+    final mid = (lo + hi + 1) ~/ 2;
+    if (xp >= levelThreshold(mid)) {
+      lo = mid;
+    } else {
+      hi = mid - 1;
+    }
   }
-  return (i + 1, tr(kLevels[i].$2), i + 1 < kLevels.length ? kLevels[i + 1].$1 : null);
+  return (lo, levelName(lo), lo < kMaxLevel ? levelThreshold(lo + 1) : null);
 }
 
 int dayIndex() => DateTime.now().millisecondsSinceEpoch ~/ 86400000;
@@ -2845,6 +3002,22 @@ const Map<String, (String, String, String)> kStr = {
   'similar_places': ('Похожие места', 'מקומות דומים', 'Similar places'),
   'online_now': ('Сейчас в сети', 'מחובר עכשיו', 'Online now'),
   'seen_recently': ('Был(а) недавно', 'נראה לאחרונה', 'Seen recently'),
+  'seen_today_at': (
+    'Был(а) в сети сегодня в {t}',
+    'נראה לאחרונה היום בשעה {t}',
+    'Last seen today at {t}'
+  ),
+  'seen_yesterday_at': (
+    'Был(а) в сети вчера в {t}',
+    'נראה לאחרונה אתמול בשעה {t}',
+    'Last seen yesterday at {t}'
+  ),
+  'seen_date_at': (
+    'Был(а) в сети {d} в {t}',
+    'נראה לאחרונה ב־{d} בשעה {t}',
+    'Last seen {d} at {t}'
+  ),
+  'levels_total': ('Всего уровней: 1000+', 'סך הרמות: +1000', 'Total levels: 1000+'),
   'pulse_chip': (
     '{city} · {n} мест · {hot} жарких',
     '{city} · {n} מקומות · {hot} חמים',
@@ -5454,7 +5627,20 @@ class SheetShell extends StatelessWidget {
               borderRadius: BorderRadius.circular(3),
             ),
           ),
-          child,
+          /* v2.0.33: the child gets a BOUNDED height (owner: «не могу
+             пролистать вниз в разделе я в деле» + «на местах, когда
+             пишу отзыв, я не вижу, что я пишу»). This Column is
+             mainAxisSize.min, so a bare child was measured with
+             UNBOUNDED height: a SingleChildScrollView inside sized
+             itself to its full content, the sheet clamped at the
+             screen, and the «scroll view» never scrolled — the same
+             disease the city picker got its local fix for in
+             v2.0.30, now cured at the root for every sheet. With a
+             real viewport the Deal sheet scrolls to the bottom, and
+             in the Place sheet the keyboard shrinks the viewport so
+             the focused review field is revealed above it. Short
+             children still hug their content (min column + flex). */
+          Flexible(child: child),
         ],
       ),
     );
@@ -6006,6 +6192,7 @@ class Friend {
   final String id, name;
   final String? avatar, avatarUrl, mode, cityId;
   final bool online;
+  final DateTime? lastSeen;
   final double? lat, lng;
   const Friend({
     required this.id,
@@ -6015,6 +6202,7 @@ class Friend {
     this.mode,
     this.cityId,
     this.online = false,
+    this.lastSeen,
     this.lat,
     this.lng,
   });
@@ -6027,7 +6215,8 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage>
+    with WidgetsBindingObserver {
   int _tab = 0; // 0 map · 1 places · 2 friends · 3 route · 4 profile
   bool _mapTabOpened = false;
   List<Place> _places = [];
@@ -6057,10 +6246,13 @@ class _HomePageState extends State<HomePage> {
   bool _pingsCleanupDone = false;
   Timer? _friendsTimer;
   LatLng? _lastCitySyncPos; // last position the city auto-sync judged
+  bool _entryCitySynced = false; // v2.0.33: nearest city won this entry
+  bool _cityPickedManually = false; // v2.0.33: a hand pick beats auto-sync
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
     SharedPreferences.getInstance().then((p) {
       hapticsOn = p.getBool('haptics_on') ?? true;
@@ -6106,6 +6298,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _friendsTimer?.cancel();
     appLang.removeListener(_onLangChanged);
     AiXpBus.pending.removeListener(_drainAiXp);
@@ -6113,6 +6306,22 @@ class _HomePageState extends State<HomePage> {
     MapRouteBus.showTick.removeListener(_onShowMapRequest);
     myLocationNotifier.removeListener(_syncCityToLocation);
     super.dispose();
+  }
+
+  /* v2.0.33: process detached = the user is gone — say so in the
+     DB at once (see LocationService.markOffline). A resume earns a
+     fresh presence stamp the same way. */
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      LocationService.markOffline();
+    } else if (state == AppLifecycleState.resumed) {
+      // A resume is a new entry: fresh fix first, then the entry
+      // city sync judges it (v2.0.33).
+      LocationService.kickPresence();
+      _entryCitySynced = false;
+      _tryEntryCitySync();
+    }
   }
 
   /* Bonus XP posted by deep widgets (sharing, steps, city quest) lands
@@ -6345,7 +6554,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final profs = await supa
           .from('profiles')
-          .select('id, name, avatar, avatar_url, online, mode, city')
+          .select('id, name, avatar, avatar_url, online, mode, city, last_seen')
           .neq('id', uid)
           .limit(500);
       if (!mounted) return;
@@ -6409,7 +6618,7 @@ class _HomePageState extends State<HomePage> {
       if (senderIds.isNotEmpty) {
         final profs = await supa
             .from('profiles')
-            .select('id, name, avatar, avatar_url, online, mode, city')
+            .select('id, name, avatar, avatar_url, online, mode, city, last_seen')
             .inFilter('id', senderIds.toList());
         for (final p in profs as List) {
           final m = Map<String, dynamic>.from(p as Map);
@@ -6695,7 +6904,38 @@ class _HomePageState extends State<HomePage> {
      and routes rescope), plus one subtle snackbar per switch.
      Manual picks stay possible at any time; with no position,
      nothing changes at all. */
+  /* v2.0.33: ENTRY city sync (owner: «когда заходили на
+     приложение, запрашивали местоположение и сразу переходило на
+     город, в котором ты находишься»). The movement sync below
+     judges only position CHANGES and switches conservatively, and
+     _load() restores the remembered/profile city — so a returning
+     user could sit in the wrong city all session. Once per entry
+     (and once per resume), as soon as BOTH the city list and the
+     first fix are in, the NEAREST city wins outright — unless the
+     user picked a city by hand this session. Called from
+     _syncCityToLocation (every fix) and from _load's tail, so the
+     load-order race between cities and GPS cannot skip it. */
+  void _tryEntryCitySync() {
+    if (_entryCitySynced || _cityPickedManually || !mounted) return;
+    final pos = myLocationNotifier.value;
+    if (pos == null || _cities.isEmpty) return;
+    _entryCitySynced = true;
+    City? nearest;
+    var nd = double.infinity;
+    for (final c in _cities) {
+      final d = haversineKm(pos.latitude, pos.longitude, c.lat, c.lng);
+      if (d < nd) {
+        nd = d;
+        nearest = c;
+      }
+    }
+    if (nearest == null || nearest.id == _city?.id) return;
+    _onCity(nearest);
+    snack(context, trf('you_in_city', {'city': nearest.name}));
+  }
+
   void _syncCityToLocation() {
+    _tryEntryCitySync();
     final pos = myLocationNotifier.value;
     if (pos == null || !mounted || _cities.isEmpty) return;
     final last = _lastCitySyncPos;
@@ -6858,6 +7098,7 @@ class _HomePageState extends State<HomePage> {
                           : null,
                       onTap: () {
                         Navigator.of(ctx).pop();
+                        _cityPickedManually = true;
                         _onCity(c);
                       },
                     );
@@ -8097,12 +8338,19 @@ class _PlaceSheetState extends State<PlaceSheet> {
       } catch (_) {}
       final rows = await supa
           .from('profile_locations')
-          .select('user_id, lat, lng')
+          .select('user_id, lat, lng, updated_at')
           .limit(300);
       var n = 0;
       for (final r in rows as List) {
         if (r['user_id'] == uid) continue;
         if (hidden.contains(r['user_id'])) continue;
+        // v2.0.33: same freshness rule as the map — a frozen row is
+        // not «at this place right now».
+        final upd = DateTime.tryParse((r['updated_at'] ?? '').toString());
+        if (upd == null ||
+            DateTime.now().difference(upd) >= kPresenceWindow) {
+          continue;
+        }
         final lat = (r['lat'] as num?)?.toDouble();
         final lng = (r['lng'] as num?)?.toDouble();
         if (lat == null || lng == null) continue;
@@ -9777,16 +10025,27 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
       // (mode 'offline' is never placed, ghost mode renders ghostly).
       final profs = await supa
           .from('profiles')
-          .select('id, name, avatar, avatar_url, online, mode')
+          .select('id, name, avatar, avatar_url, online, mode, last_seen')
           .neq('id', uid)
           .limit(500);
       if ((profs as List).isEmpty) return;
       final locs = await supa
           .from('profile_locations')
-          .select('user_id, lat, lng')
+          .select('user_id, lat, lng, updated_at')
           .limit(500);
       final locMap = <String, (double, double)>{};
       for (final l in locs as List) {
+        /* v2.0.33: a location row freezes the moment its owner's
+           app dies — a stale row must not keep a person standing on
+           the map as if he were here now (owner: «неправильное
+           местоположение»). Live phones re-write the row on every
+           presence cycle (30 s foreground / 5 min background), so
+           the same 7-minute window as presence applies. */
+        final upd = DateTime.tryParse((l['updated_at'] ?? '').toString());
+        if (upd == null ||
+            DateTime.now().difference(upd) >= kPresenceWindow) {
+          continue;
+        }
         locMap[l['user_id'] as String] = (
           (l['lat'] as num).toDouble(),
           (l['lng'] as num).toDouble(),
@@ -9814,6 +10073,8 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
            the real avatarUrl reached _friendMarker, whose photo
            branch ran BEFORE any mode check: a ghost with a photo
            stood on the map with his real face. */
+        final pLastSeen =
+            DateTime.tryParse((p['last_seen'] ?? '').toString());
         final friend = Friend(
           id: id,
           name: mode == 'ghost'
@@ -9822,7 +10083,8 @@ class _MapTabState extends State<MapTab> with WidgetsBindingObserver {
           avatar: mode == 'ghost' ? null : p['avatar'] as String?,
           avatarUrl: mode == 'ghost' ? null : p['avatar_url'] as String?,
           mode: mode,
-          online: p['online'] == true,
+          online: effectiveOnline(p['online'] == true, pLastSeen),
+          lastSeen: pLastSeen,
           lat: loc.$1,
           lng: loc.$2,
         );
@@ -13771,7 +14033,9 @@ List<TitleDef> titlesOf(Map<String, dynamic> stats) {
 String? ghostTitle(Map<String, dynamic> stats, String cityName) {
   final xp = xpOfStats(stats);
   final places = (stats['places'] as List?)?.length ?? 0;
-  if (xp >= 4000) return '${tr('lv_myth')} · $cityName';
+  // v2.0.33: past the historic top rung the title follows the
+  // generated ladder (levelName(8) is still «Миф» at 4000 XP).
+  if (xp >= 4000) return '${levelName(levelOf(xp).$1)} · $cityName';
   if (xp >= 2500) return '${tr('lv_keeper')} · $cityName';
   if (xp >= 1500) return '${tr('lv_night_legend')} · $cityName';
   if (statInt(stats, 'nights') >= 10) return '${tr('t_king')} · $cityName';
@@ -13830,6 +14094,10 @@ class _BadgesPageState extends State<BadgesPage> {
     final s = widget.stats;
     final xp = xpOfStats(s);
     final (lvNum, _, nextXp) = levelOf(xp);
+    // v2.0.33: the ladder is 999+ rungs now — show a window around
+    // the user's own level instead of the whole staircase.
+    final ladderStart = math.max(1, lvNum - 3);
+    final ladderEnd = math.min(kMaxLevel, lvNum + 6);
     final badges = badgesOf(s);
     final titles = titlesOf(s);
     final myTitle = ghostTitle(s, widget.cityName);
@@ -14016,8 +14284,8 @@ class _BadgesPageState extends State<BadgesPage> {
                     horizontal: T.s16, vertical: T.s8),
                 child: Column(
                   children: [
-                    for (var i = 0; i < kLevels.length; i++) ...[
-                      if (i > 0) hairline(opacity: 0.6),
+                    for (var n = ladderStart; n <= ladderEnd; n++) ...[
+                      if (n > ladderStart) hairline(opacity: 0.6),
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: T.s8),
                         child: Row(
@@ -14029,17 +14297,17 @@ class _BadgesPageState extends State<BadgesPage> {
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 gradient:
-                                    lvNum == i + 1 ? T.fireGradV : null,
-                                color: lvNum == i + 1 ? null : T.surfaceHi,
-                                border: lvNum == i + 1
+                                    lvNum == n ? T.fireGradV : null,
+                                color: lvNum == n ? null : T.surfaceHi,
+                                border: lvNum == n
                                     ? null
                                     : Border.all(
                                         color: T.faint.withOpacity(0.4)),
                               ),
                               child: Text(
-                                '${i + 1}',
+                                '$n',
                                 style: T.num(14,
-                                    color: lvNum == i + 1
+                                    color: lvNum == n
                                         ? Colors.white
                                         : T.muted),
                               ),
@@ -14047,28 +14315,39 @@ class _BadgesPageState extends State<BadgesPage> {
                             const SizedBox(width: T.s12),
                             Expanded(
                               child: Text(
-                                tr(kLevels[i].$2),
+                                levelName(n),
                                 style: T.body(13.5,
                                     w: FontWeight.w600,
-                                    color: lvNum == i + 1
+                                    color: lvNum == n
                                         ? T.text
-                                        : (xp >= kLevels[i].$1
+                                        : (xp >= levelThreshold(n)
                                             ? T.text
                                             : T.muted)),
                               ),
                             ),
                             Text(
-                              lvNum == i + 1 && nextXp != null
+                              lvNum == n && nextXp != null
                                   ? trf('xp_left', {'n': nextXp - xp})
-                                  : trf('xp_from', {'n': kLevels[i].$1}),
+                                  : trf('xp_from', {'n': levelThreshold(n)}),
                               style: T.body(11.5,
-                                  color: lvNum == i + 1 ? T.ember : T.faint,
+                                  color: lvNum == n ? T.ember : T.faint,
                                   w: FontWeight.w600),
                             ),
                           ],
                         ),
                       ),
                     ],
+                    hairline(opacity: 0.6),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: T.s8),
+                      child: Center(
+                        child: Text(
+                          tr('levels_total'),
+                          style: T.body(11.5,
+                              color: T.faint, w: FontWeight.w600),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -14293,9 +14572,67 @@ class Ping {
    every surface that renders a Friend (list rows, sheets, ping
    cards, avatar zoom, the DealSheet) is disguised by construction
    and none of them can leak the photo or the real name. */
+/* v2.0.33: REAL presence (owner: «ненастоящее время сети — если я
+   не в сети, показывает, что я в сети»). profiles.online is only a
+   claim; the truth is last_seen. A live app stamps last_seen on
+   every presence write (map cycle 30 s, background heartbeat
+   5 min), so a stamp older than this window means the app is gone
+   — whatever the flag still says. (Live case: a user whose
+   last_seen was yesterday 23:51 still rendered «Сейчас в сети».) */
+const kPresenceWindow = Duration(minutes: 7);
+
+bool effectiveOnline(bool raw, DateTime? lastSeen) {
+  if (!raw || lastSeen == null) return false;
+  return DateTime.now().difference(lastSeen) < kPresenceWindow;
+}
+
+String _fmtHM(DateTime t) {
+  String p(int n) => n < 10 ? '0$n' : '$n';
+  return '${p(t.hour)}:${p(t.minute)}';
+}
+
+String _fmtDM(DateTime t) {
+  String p(int n) => n < 10 ? '0$n' : '$n';
+  return '${p(t.day)}.${p(t.month)}';
+}
+
+/* The presence line under a friend's name — the owner's rules:
+   · «Невидимка» (mode offline): NO line at all — null;
+   · «Призрак» (mode ghost): always «Был(а) недавно» — a ghost never
+     shows an exact time or a green «в сети»;
+   · visible: green «Сейчас в сети» while truly online, otherwise
+     the real last-seen time (today / yesterday / date). */
+(String, bool)? presenceLine(Friend f) {
+  if (f.mode == 'offline') return null;
+  if (f.mode == 'ghost') return (tr('seen_recently'), false);
+  if (f.online) return (tr('online_now'), true);
+  final ls = f.lastSeen?.toLocal();
+  if (ls == null) return (tr('seen_recently'), false);
+  final now = DateTime.now();
+  final dayDiff = DateTime(now.year, now.month, now.day)
+      .difference(DateTime(ls.year, ls.month, ls.day))
+      .inDays;
+  final hm = _fmtHM(ls);
+  if (dayDiff == 0) return (trf('seen_today_at', {'t': hm}), false);
+  if (dayDiff == 1) return (trf('seen_yesterday_at', {'t': hm}), false);
+  return (trf('seen_date_at', {'d': _fmtDM(ls), 't': hm}), false);
+}
+
+Widget presenceLabel(Friend f, {bool plain = false}) {
+  final line = presenceLine(f);
+  if (line == null) return const SizedBox.shrink();
+  if (plain) {
+    return Text(line.$1,
+        style: TextStyle(color: line.$2 ? kGreen : kMuted));
+  }
+  return Text(line.$1,
+      style: T.body(12, color: line.$2 ? T.online : T.faint));
+}
+
 Friend friendFromProfile(Map<String, dynamic> p) {
   final mode = p['mode'] as String?;
   final ghost = mode == 'ghost';
+  final lastSeen = DateTime.tryParse((p['last_seen'] ?? '').toString());
   return Friend(
     id: p['id'] as String,
     name: ghost ? tr('ghost') : ((p['name'] as String?) ?? tr('ghost')),
@@ -14303,7 +14640,8 @@ Friend friendFromProfile(Map<String, dynamic> p) {
     avatarUrl: ghost ? null : p['avatar_url'] as String?,
     mode: mode,
     cityId: p['city'] as String?,
-    online: p['online'] == true,
+    online: effectiveOnline(p['online'] == true, lastSeen),
+    lastSeen: lastSeen,
   );
 }
 
@@ -14403,7 +14741,7 @@ Widget friendAvatar(Friend f, {double radius = 22}) {
                 glyphSize: radius, emojiSize: radius - 2, ghostForDefault: true)
             : null,
       ),
-      if (f.online)
+      if (f.online && f.mode != 'ghost')
         Positioned(
           right: 0,
           bottom: 0,
@@ -14846,7 +15184,7 @@ class _InvitePersonSheetState extends State<InvitePersonSheet> {
     try {
       final profs = await supa
           .from('profiles')
-          .select('id, name, avatar, avatar_url, online, mode, city')
+          .select('id, name, avatar, avatar_url, online, mode, city, last_seen')
           .neq('id', uid)
           .limit(500);
       if (!mounted) return;
@@ -14944,15 +15282,7 @@ class _InvitePersonSheetState extends State<InvitePersonSheet> {
                                     style:
                                         T.body(14.5, w: FontWeight.w700),
                                   ),
-                                  Text(
-                                    f.online
-                                        ? tr('online_now')
-                                        : tr('seen_recently'),
-                                    style: T.body(12,
-                                        color: f.online
-                                            ? T.online
-                                            : T.faint),
-                                  ),
+                                  presenceLabel(f),
                                 ],
                               ),
                             ),
@@ -15308,10 +15638,7 @@ class _FriendSheetState extends State<FriendSheet> {
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    Text(
-                      f.online ? tr('online_now') : tr('seen_recently'),
-                      style: TextStyle(color: f.online ? kGreen : kMuted),
-                    ),
+                    presenceLabel(f, plain: true),
                   ],
                 ),
               ],
@@ -15887,10 +16214,7 @@ class _FriendsTabState extends State<FriendsTab> {
           f.mode == 'ghost' ? tr('ghost') : f.name,
           style: T.body(15, w: FontWeight.w700),
         ),
-        subtitle: Text(
-          f.online ? tr('online_now') : tr('seen_recently'),
-          style: T.body(12, color: f.online ? T.online : T.faint),
-        ),
+        subtitle: presenceLabel(f),
       ),
     );
   }
@@ -16977,13 +17301,13 @@ class _ProfileTabState extends State<ProfileTab> {
     final s = widget.stats;
     final xp = xpOfStats(s);
     final (lvNum, lvName, nextXp) = levelOf(xp);
-    final curThreshold = kLevels[lvNum - 1].$1;
+    final curThreshold = levelThreshold(lvNum);
     final progress = nextXp == null
         ? 1.0
         : ((xp - curThreshold) / (nextXp - curThreshold)).clamp(0.0, 1.0);
     /* v2.0.25: this used to pass the raw kStr KEY ('lv_district_ghost')
        into the line — resolve it through tr() like levelOf() does. */
-    final nextName = nextXp == null ? null : tr(kLevels[lvNum].$2);
+    final nextName = nextXp == null ? null : levelName(lvNum + 1);
     final best = math.max(statInt(s, 'bestStreak'), statInt(s, 'streak'));
     final b = math.min(math.max(0, best), 30);
     final contrib = <String, int>{
